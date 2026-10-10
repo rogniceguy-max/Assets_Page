@@ -80,13 +80,19 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         </CardHeader>
 
         <div className="px-6 pb-7 space-y-4">
-          {/* 状态徽标条 */}
-          <div className="gsap-dash-item p-2.5 rounded-[8px] bg-secondary border border-border text-xs flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-success inline-block" />
-              <span className="font-medium text-foreground">已连接到局域网资产服务</span>
+          {/* 状态指示框：明确区分网页登录与本地挂载状态 */}
+          <div className="gsap-dash-item p-3 rounded-[8px] bg-secondary border border-border text-xs space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-success inline-block" />
+                <span className="font-medium text-foreground">网页工作台已登录 (账号已授权)</span>
+              </div>
+              <span className="text-[11px] text-muted font-mono">192.168.1.153</span>
             </div>
-            <span className="text-[11px] text-muted font-mono">192.168.1.153</span>
+            <div className="flex items-center justify-between pt-1.5 border-t border-border/50 text-[11px]">
+              <span className="text-muted">本地 Z: 盘状态</span>
+              <span className="text-accent font-medium">需运行挂载工具建立映射</span>
+            </div>
           </div>
 
           {/* 员工账户参数框 */}
@@ -118,7 +124,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               className="w-full h-10 text-xs font-semibold inline-flex items-center justify-center gap-2"
             >
               <Download className="h-4 w-4" aria-hidden="true" />
-              <span>获取挂载脚本 (Z: 盘)</span>
+              <span>下载 Windows 挂载工具 (Z: 盘)</span>
             </Button>
             <Button
               variant="outline"
@@ -126,7 +132,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               className="w-full h-9 text-xs font-medium inline-flex items-center justify-center gap-2 border-border text-muted hover:text-foreground hover:bg-secondary"
             >
               <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>重新挂载修复</span>
+              <span>重新挂载 / 恢复网络盘连接</span>
             </Button>
           </div>
 

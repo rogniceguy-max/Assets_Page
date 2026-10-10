@@ -21,8 +21,8 @@ export const App: React.FC = () => {
   // 当前已登录用户状态
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   
-  // 当前一次性挂载会话（用于下载 60 秒专属脚本）
-  const [mountSession, setMountSession] = useState<{ fullname: string; token: string } | null>(null);
+  // 当前挂载会话（用于下载 Windows 原生挂载工具）
+  const [mountSession, setMountSession] = useState<{ fullname: string; linuxUsername?: string } | null>(null);
 
   // 认证卡片默认 Tab
   const [authDefaultTab, setAuthDefaultTab] = useState<AuthTab>('login');
@@ -32,13 +32,12 @@ export const App: React.FC = () => {
       fullname: data.fullname,
       linux_username: data.linux_username || data.fullname,
       group_type: data.group_type || 'film',
-      token: data.token,
     };
     setCurrentUser(user);
 
     if (data.mode === 'register' || data.mode === 'remount') {
-      // 注册或重新挂载流程：直接调起 60 秒安全脚本下载卡片
-      setMountSession({ fullname: data.fullname, token: data.token });
+      // 注册或重新挂载流程：直接调起挂载工具下载卡片
+      setMountSession({ fullname: data.fullname, linuxUsername: data.linux_username });
     } else {
       // 纯登录流程：进入员工工作台
       setMountSession(null);
@@ -52,10 +51,10 @@ export const App: React.FC = () => {
   };
 
   const handleStartMount = () => {
-    if (currentUser?.token) {
-      setMountSession({ fullname: currentUser.fullname, token: currentUser.token });
+    if (currentUser) {
+      setMountSession({ fullname: currentUser.fullname, linuxUsername: currentUser.linux_username });
     } else {
-      // 若无现成 Token，引导到重新挂载标签重新签发
+      // 若无登录态，引导到重新挂载标签
       setAuthDefaultTab('remount');
       setCurrentUser(null);
       setMountSession(null);
@@ -85,10 +84,10 @@ export const App: React.FC = () => {
         <main className="flex-1 overflow-y-auto p-4 md:p-8 flex items-center justify-center relative">
           {activeNav === 'onboarding' ? (
             mountSession ? (
-              /* 1. 60秒专属挂载脚本下载状态 */
+              /* 1. Windows 原生凭据挂载工具下载状态 */
               <SuccessCard
                 fullname={mountSession.fullname}
-                token={mountSession.token}
+                linuxUsername={mountSession.linuxUsername}
                 onBack={() => setMountSession(null)}
               />
             ) : currentUser ? (

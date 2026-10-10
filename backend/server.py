@@ -2,7 +2,11 @@
 """
 MuYing Hub - 轻量模块化 Web 服务端 (SPA 生产就绪版)
 纯 Python 3.11 原生库构建，托管 React+Vite+Tailwind+shadcn/ui 生产产物，提供高效 RESTful API
-已集成 60 秒一次性短期凭据票据（Ephemeral One-Time Token）安全体系与零明文存储机制
+已集成：
+- Windows 原生凭据挂载体系（废弃临时 Token 与服务端明文下发）
+- 静态资源路径规范化与目录穿越全方位防御
+- scrypt 密码加盐哈希与存量平滑迁移机制
+- TCP 原生客户端 IP 审计
 """
 import os
 import sys
@@ -12,10 +16,18 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 # 引入本工程模块
 from config import HOST, PORT, BASE_DIR, NAS_IP, NAS_HOSTNAME, SHARE_NAME, MOUNT_DRIVE, DRIVE_LABEL
-from database import init_db, add_user, get_user_by_name, check_ip_registered, hash_password, log_download
+from database import (
+    init_db, 
+    add_user, 
+    get_user_by_name, 
+    check_ip_registered, 
+    hash_password, 
+    verify_password, 
+    update_user_password_hash, 
+    log_download
+)
 from core.nas_manager import get_unique_linux_username, create_system_and_samba_user
 from core.script_generator import generate_windows_batch
-from core.token_manager import token_manager
 
 class MuYingHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
@@ -41,9 +53,10 @@ class MuYingHandler(BaseHTTPRequestHandler):
             return {}
 
     def get_client_ip(self) -> str:
-        forwarded = self.headers.get('X-Forwarded-For')
-        if forwarded:
-            return forwarded.split(',')[0].strip()
+        """
+        获取客户端真实 IP。
+        内网直连部署环境下，直接基于底层 TCP 套接字地址提取，严禁无条件信任伪造的 X-Forwarded-For。
+        """
         return self.client_address[0]
 
     def do_HEAD(self):
@@ -56,20 +69,45 @@ class MuYingHandler(BaseHTTPRequestHandler):
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
 
-        # 1. 静态资源路由（Vite 生产产物 assets/）
+        # 1. 静态资源路由（Vite 生产产物 assets/），包含严格路径规范化与目录穿越防御
         if path.startswith("/assets/"):
             rel_path = path[len("/assets/"):]
-            full_path = os.path.join(BASE_DIR, "dist", "assets", rel_path)
+            assets_dir = os.path.realpath(os.path.join(BASE_DIR, "dist", "assets"))
+            
+            # URL 解码并规范化路径，防范 ..、%2e%2e 与空字符穿越
+            decoded_rel = urllib.parse.unquote(rel_path)
+            if '\x00' in decoded_rel:
+                self.send_error(400, "Bad Request: Null Byte Detected")
+                return
+
+            clean_rel = os.path.normpath(decoded_rel).lstrip("/\\")
+            full_path = os.path.realpath(os.path.join(assets_dir, clean_rel))
+
+            # 严格目录穿越安全校验：确保目标文件完全限制在 dist/assets 内
+            if not full_path.startswith(assets_dir + os.sep) and full_path != assets_dir:
+                self.send_error(403, "Forbidden: Directory Traversal Blocked")
+                return
+
+            # 安全扩展名白名单检测（禁止访问 .py, .db, .env 等后端机密数据）
+            allowed_exts = {'.js', '.css', '.svg', '.png', '.jpg', '.jpeg', '.ico', '.woff2', '.woff', '.ttf', '.map'}
+            ext = os.path.splitext(full_path)[1].lower()
+            if ext not in allowed_exts:
+                self.send_error(403, "Forbidden: File Type Not Allowed")
+                return
+
             if os.path.exists(full_path) and os.path.isfile(full_path):
-                ext = os.path.splitext(full_path)[1].lower()
                 mime_map = {
                     '.js': 'application/javascript; charset=utf-8',
                     '.css': 'text/css; charset=utf-8',
                     '.svg': 'image/svg+xml',
                     '.png': 'image/png',
+                    '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg',
                     '.ico': 'image/x-icon',
                     '.woff2': 'font/woff2',
-                    '.woff': 'font/woff'
+                    '.woff': 'font/woff',
+                    '.ttf': 'font/ttf',
+                    '.map': 'application/json'
                 }
                 ctype = mime_map.get(ext, 'application/octet-stream')
                 with open(full_path, "rb") as f:
@@ -87,7 +125,7 @@ class MuYingHandler(BaseHTTPRequestHandler):
 
         # 2. API 路由
         elif path == "/api/user-info":
-            name = query.get('name', query.get('username', ['']))[0]
+            name = query.get('name', query.get('username', ['']))[0].strip()
             if not name:
                 self.send_json(400, {"success": False, "error": "缺少姓名参数"})
                 return
@@ -105,27 +143,26 @@ class MuYingHandler(BaseHTTPRequestHandler):
             return
 
         elif path == "/api/download-script":
-            token = query.get('token', [''])[0]
-            if not token:
-                self.send_json(403, {"success": False, "error": "拒绝访问：缺少有效安全令牌。请先在网页端登录、注册或重新挂载。"})
-                return
+            # Windows 原生挂载工具下载：支持指定员工预填用户名，亦支持通用下载
+            name = query.get('name', query.get('user', query.get('username', [''])))[0].strip()
+            linux_user = ""
+            fullname = ""
+            if name:
+                user = get_user_by_name(name)
+                if user:
+                    linux_user = user["linux_username"]
+                    fullname = user["display_name"]
+                else:
+                    linux_user = name
 
-            ticket_info = token_manager.get_token_info(token)
-            if not ticket_info:
-                self.send_json(403, {"success": False, "error": "安全令牌不存在或已过期（超过 60 秒窗口）。请在网页端点击【重新挂载】重新获取。"})
-                return
-
-            linux_user = ticket_info["linux_username"]
-            fullname = ticket_info["fullname"]
-
-            # 生成该员工本人的专属动态脚本（绝无明文密码，仅包含该 60 秒临时令牌）
-            script_content = generate_windows_batch(linux_user, token, fullname)
+            # 生成 Windows 原生挂载工具（零密码、零 Token、纯原生凭据对话）
+            script_content = generate_windows_batch(linux_user, fullname)
 
             client_ip = self.get_client_ip()
-            log_download(fullname, client_ip)
+            log_download(fullname or linux_user or "universal_user", client_ip)
 
             data = script_content.encode('utf-8')
-            filename = f"Mount_MuYing_{linux_user}.bat"
+            filename = f"Mount_MuYing_{linux_user}.bat" if linux_user else "Mount_MuYing.bat"
             quoted_filename = urllib.parse.quote(filename)
 
             self.send_response(200)
@@ -183,7 +220,7 @@ class MuYingHandler(BaseHTTPRequestHandler):
             if existing_ip_user:
                 self.send_json(400, {
                     "success": False,
-                    "error": f"安全限制：本机 IP（{client_ip}）已注册过员工（{existing_ip_user['display_name']}）。每个 IP 仅限注册一次。如需重新获取脚本，请点击【重新挂载】。"
+                    "error": f"安全限制：本机 IP（{client_ip}）已注册过员工（{existing_ip_user['display_name']}）。每个 IP 仅限注册一次。如需重新挂载，请点击【重新挂载】。"
                 })
                 return
 
@@ -205,24 +242,19 @@ class MuYingHandler(BaseHTTPRequestHandler):
                 self.send_json(500, {"success": False, "error": f"系统开通失败: {msg}"})
                 return
 
-            # 5. 保存入库（安全零明文：绝不向数据库写入原始密码）
+            # 5. 保存入库（scrypt 加盐安全哈希，绝不向数据库写入明文密码）
             try:
                 add_user(fullname, linux_username, password, group_type, client_ip)
             except Exception as e:
                 self.send_json(500, {"success": False, "error": f"保存数据库异常: {str(e)}"})
                 return
 
-            # 6. 在后端内存开启 60 秒一次性安全兑换窗口
-            token = token_manager.create_token(linux_username, password, fullname, client_ip, ttl=60)
-
             self.send_json(200, {
                 "success": True,
                 "message": "注册成功",
-                "token": token,
                 "fullname": fullname,
                 "linux_username": linux_username,
-                "group_type": group_type,
-                "expires_in": 60
+                "group_type": group_type
             })
             return
 
@@ -237,44 +269,40 @@ class MuYingHandler(BaseHTTPRequestHandler):
                 return
 
             user = get_user_by_name(fullname)
-            if not user or user["password_hash"] != hash_password(password):
+            if not user:
                 self.send_json(401, {"success": False, "error": "姓名或密码不正确"})
                 return
 
-            # 验证/登录通过：在后端内存开启 60 秒一次性安全兑换窗口
-            token = token_manager.create_token(user["linux_username"], password, user["display_name"], client_ip, ttl=60)
+            # 使用 scrypt 与兼容性校验
+            is_valid, needs_rehash = verify_password(password, user["password_hash"])
+            if not is_valid:
+                self.send_json(401, {"success": False, "error": "姓名或密码不正确"})
+                return
+
+            # 平滑迁移：旧版 SHA-256 密码哈希自动无感升级为现代 scrypt 加盐哈希
+            if needs_rehash:
+                try:
+                    new_scrypt_hash = hash_password(password)
+                    update_user_password_hash(user["username"], new_scrypt_hash)
+                    print(f"[安全升级] 用户 {user['username']} 密码哈希已成功平滑迁移至 scrypt！")
+                except Exception as ex:
+                    print(f"[迁移告警] 更新哈希异常: {ex}")
 
             msg = "登录成功" if path == "/api/login" else "验证成功"
             self.send_json(200, {
                 "success": True,
                 "message": msg,
-                "token": token,
                 "fullname": user["display_name"],
                 "linux_username": user["linux_username"],
-                "group_type": user["group_type"],
-                "expires_in": 60
+                "group_type": user["group_type"]
             })
             return
 
         elif path == "/api/claim-mount":
-            # 客户端挂载脚本动态兑换凭据（单次消费焚毁）
-            data = self.parse_json_body()
-            token = str(data.get("token", "")).strip()
-            if not token:
-                self.send_json(400, {"success": False, "error": "缺少有效安全令牌 (Missing Token)"})
-                return
-
-            client_ip = self.get_client_ip()
-            success, result = token_manager.claim_token(token, client_ip)
-            if not success:
-                self.send_json(403, {"success": False, "error": result})
-                return
-
-            self.send_json(200, {
-                "success": True,
-                "linux_username": result["linux_username"],
-                "password": result["password"],
-                "fullname": result["fullname"]
+            # 彻底废弃旧接口，杜绝任何明文凭据向客户端网络下发
+            self.send_json(410, {
+                "success": False, 
+                "error": "接口已永久废弃 (410 Gone)。系统已升级为 Windows 原生凭据挂载体系，不再提供网络凭据明文下发。"
             })
             return
 
@@ -286,7 +314,7 @@ def run_server():
     server_address = (HOST, PORT)
     httpd = ThreadingHTTPServer(server_address, MuYingHandler)
     print(f"=====================================================")
-    print(f"  MuYing Hub (React SPA 生产版 + 60s 凭据安全体系) 已成功启动！")
+    print(f"  MuYing Hub (React SPA 生产版 + Windows 原生凭据架构) 已成功启动！")
     print(f"  局域网访问地址: http://192.168.1.153:{PORT}")
     print(f"=====================================================")
     try:

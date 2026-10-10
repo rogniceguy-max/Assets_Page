@@ -20,7 +20,6 @@ export type AuthTab = 'login' | 'register' | 'remount';
 
 export interface AuthSuccessData {
   fullname: string;
-  token: string;
   linux_username?: string;
   group_type?: string;
   mode: AuthTab;
@@ -173,7 +172,6 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({
       if (resp.ok && data.success) {
         onSuccess({
           fullname: data.fullname || loginUser.trim(),
-          token: data.token,
           linux_username: data.linux_username,
           group_type: data.group_type,
           mode: 'login'
@@ -213,7 +211,6 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({
       if (resp.ok && data.success) {
         onSuccess({
           fullname: regFullname.trim(),
-          token: data.token,
           linux_username: data.linux_username,
           group_type: data.group_type,
           mode: 'register'
@@ -252,7 +249,6 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({
       if (resp.ok && data.success) {
         onSuccess({
           fullname: data.fullname || remountName.trim(),
-          token: data.token,
           linux_username: data.linux_username,
           group_type: data.group_type,
           mode: 'remount'
@@ -525,7 +521,7 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({
               >
                 <div className="p-2.5 bg-secondary border border-border rounded-[8px] text-xs text-muted flex items-center gap-2">
                   <RefreshCw className="h-4 w-4 shrink-0 text-accent" aria-hidden="true" />
-                  <span>更换电脑或盘符掉线？输入凭据生成 60 秒新挂载脚本</span>
+                  <span>更换电脑或盘符掉线？输入凭据重新获取 Windows 挂载工具</span>
                 </div>
 
                 <div className="space-y-1.5">

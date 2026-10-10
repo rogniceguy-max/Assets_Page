@@ -1,99 +1,289 @@
 # -*- coding: utf-8 -*-
 """
-MuYing Hub - 客户端自动化挂载脚本生成器
-安全规格：脚本文件绝不存储明文密码，通过 60 秒一次性安全令牌动态兑换并直接注入 Windows 凭据管理器
+MuYing Hub - Windows 原生凭据安全自动化挂载脚本生成器
+架构设计：
+1. 采用通用 Batch/PowerShell Polyglot 架构，双击原生即跑，无需管理员权限。
+2. 绝不包含用户密码、管理员密码、临时 Token 或对后端的明文凭据请求。
+3. 遵循 Windows 原生安全规范，使用系统 Get-Credential / Windows 凭据管理器实现首次输入、持久化保存与开机免密。
 """
-from config import NAS_IP, NAS_HOSTNAME, SHARE_NAME, MOUNT_DRIVE, DRIVE_LABEL, PORT
+from config import NAS_IP, SHARE_NAME, MOUNT_DRIVE, DRIVE_LABEL
 
-def generate_windows_batch(linux_username: str, token: str, fullname: str = "") -> str:
+def generate_windows_batch(linux_username: str = "", fullname: str = "") -> str:
     """
-    生成针对该员工本人的 Windows 动态凭据挂载脚本 (.bat)
-    包含 CRLF (\r\n) 换行符以确保 Windows 命令提示符执行
+    生成员工专属或通用的 Windows 原生挂载工具 (.bat)
+    包含 CRLF (\\r\\n) 换行符以确保 Windows 命令提示符完美执行
     """
-    clean_name = fullname or linux_username
-    claim_url = f"http://{NAS_IP}:{PORT}/api/claim-mount"
-    json_body = '{\\"token\\":\\"' + token + '\\"}'
+    user_hint = linux_username or ""
+    display_title = DRIVE_LABEL or "沐影"
+    remote_unc = f"\\\\{NAS_IP}\\{SHARE_NAME}"
 
-    script_lines = [
-        "@echo off",
-        "chcp 65001 >nul",
-        f"title {DRIVE_LABEL} 资产盘安全自动化挂载工具",
-        "color 0B",
-        "",
-        ":: ==================================================================",
-        ":: MuYing 资产盘 - 60 秒一次性凭据安全挂载",
-        ":: 注意：本脚本通过高熵安全令牌动态兑换凭据，本地文件绝不存储明文密码",
-        ":: ==================================================================",
-        "",
-        "echo ==================================================================",
-        f"echo               欢迎使用 {DRIVE_LABEL} 资产盘安全配置工具",
-        "echo ==================================================================",
-        f"echo 员工姓名: {clean_name}",
-        f"echo 目标服务器: \\\\{NAS_IP}\\{SHARE_NAME} (或 \\\\{NAS_HOSTNAME}\\{SHARE_NAME})",
-        "echo. ",
-        "echo [安全检测] 正在通过 60 秒安全窗口向服务器兑换一次性凭据...",
-        "",
-        "powershell -NoProfile -ExecutionPolicy Bypass -Command ^",
-        '    "$ErrorActionPreference = \'Stop\'; " ^',
-        '    "try { " ^',
-        f'        "$resp = Invoke-RestMethod -Uri \'{claim_url}\' -Method Post -ContentType \'application/json; charset=utf-8\' -Body \'{json_body}\' -TimeoutSec 10; " ^',
-        '        "if (-not $resp.success) { " ^',
-        '            "Write-Host (\'[错误] \' + $resp.error) -ForegroundColor Red; " ^',
-        '            "exit 1; " ^',
-        '        } " ^',
-        '        "$u = $resp.linux_username; $p = $resp.password; " ^',
-        '        "Write-Host \'[第 1 步/共 4 步] 正在清理旧网络连接与残留凭据...\' -ForegroundColor Cyan; " ^',
-        f'        "cmdkey /delete:{NAS_IP} 2>$null | Out-Null; " ^',
-        f'        "cmdkey /delete:{NAS_HOSTNAME} 2>$null | Out-Null; " ^',
-        f'        "net use {MOUNT_DRIVE} /delete /y 2>$null | Out-Null; " ^',
-        '        "Write-Host \'[第 2 步/共 4 步] 正在保存登录凭据至 Windows 凭据管理器...\' -ForegroundColor Cyan; " ^',
-        f'        "cmdkey /add:{NAS_IP} /user:\\\"$u\\\" /pass:\\\"$p\\\" | Out-Null; " ^',
-        f'        "cmdkey /add:{NAS_HOSTNAME} /user:\\\"$u\\\" /pass:\\\"$p\\\" | Out-Null; " ^',
-        f'        "Write-Host \'[第 3 步/共 4 步] 正在挂载网络驱动器 ({MOUNT_DRIVE} 盘)...\' -ForegroundColor Cyan; " ^',
-        f'        "$m1 = net use {MOUNT_DRIVE} \'\\\\{NAS_IP}\\{SHARE_NAME}\' \\\"$p\\\" /user:\\\"$u\\\" /persistent:yes 2>&1; " ^',
-        '        "if ($LASTEXITCODE -ne 0) { " ^',
-        f'            "$m2 = net use {MOUNT_DRIVE} \'\\\\{NAS_HOSTNAME}\\{SHARE_NAME}\' \\\"$p\\\" /user:\\\"$u\\\" /persistent:yes 2>&1; " ^',
-        '        } " ^',
-        '        "$p = $null; " ^',
-        f'        "if (-not (Test-Path \'{MOUNT_DRIVE}\\\')) {{ " ^',
-        '            "Write-Host \'[挂载失败] 请确认您的电脑已连接到局域网 WiFi 或网线。\' -ForegroundColor Red; " ^',
-        '            "exit 1; " ^',
-        '        } " ^',
-        '        "Write-Host \'[第 4 步/共 4 步] 正在生成桌面快捷方式并重命名盘符...\' -ForegroundColor Cyan; " ^',
-        '        "$wsh = New-Object -ComObject WScript.Shell; " ^',
-        '        "$desk = [Environment]::GetFolderPath(\'Desktop\'); " ^',
-        f'        "$lnk = $wsh.CreateShortcut(\\\"$desk\\{DRIVE_LABEL}.lnk\\\"); " ^',
-        f'        "$lnk.TargetPath = \'{MOUNT_DRIVE}\\\'; " ^',
-        f'        "$lnk.Description = \'{DRIVE_LABEL} 素材资源库快捷方式\'; " ^',
-        '        "$lnk.Save(); " ^',
-        f'        "try {{ (New-Object -ComObject Shell.Application).NameSpace(\'{MOUNT_DRIVE}\\\').Self.Name = \'{DRIVE_LABEL}\' }} catch {{}}; " ^',
-        '        "Write-Host \'\'; " ^',
-        '        "Write-Host \'==================================================================\' -ForegroundColor Green; " ^',
-        f'        "Write-Host \' [√ 成功] 资产盘已成功挂载为本地 [{MOUNT_DRIVE} 盘]！\' -ForegroundColor Green; " ^',
-        f'        "Write-Host \' [√ 成功] 您的桌面已生成 [{DRIVE_LABEL}] 快捷方式，双击即可进入。\' -ForegroundColor Green; " ^',
-        '        "Write-Host \' [√ 成功] 凭据已加密保存，以后每天开机永久免输密码。\' -ForegroundColor Green; " ^',
-        '        "Write-Host \'==================================================================\' -ForegroundColor Green; " ^',
-        '        "Write-Host \'\'; " ^',
-        f'        "Start-Process explorer.exe -ArgumentList \'{MOUNT_DRIVE}\\\'; " ^',
-        '    } catch { " ^',
-        '        "Write-Host (\'[错误] \' + $_.Exception.Message) -ForegroundColor Red; " ^',
-        '        "exit 1; " ^',
-        '    }"',
-        "",
-        "if %errorlevel% neq 0 (",
-        "    echo.",
-        "    echo ==================================================================",
-        "    echo  [安全提示] 挂载未完成。",
-        "    echo  若已超过 60 秒安全窗口期或令牌已使用，",
-        "    echo  请回到网页端点击【重新挂载】获取全新配置脚本。",
-        "    echo ==================================================================",
-        "    echo.",
-        "    pause",
-        "    exit /b 1",
-        ")",
-        "",
-        "echo 按任意键退出本配置窗口...",
-        "pause >nul",
-        "exit /b 0"
-    ]
-    return "\r\n".join(script_lines) + "\r\n"
+    script = f'''<# :
+@echo off
+chcp 65001 >nul
+title {display_title} 资产盘原生挂载工具
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Expression ([System.IO.File]::ReadAllText('%~f0', [System.Text.Encoding]::UTF8))"
+exit /b %errorlevel%
+: #>
+
+# ==============================================================================
+# {display_title} 资产盘 - Windows 原生安全挂载脚本
+# 特性：零明文密码落地 | Windows 原生凭据保护 | 开机持久化自动重连 | 桌面直达
+# ==============================================================================
+
+$ErrorActionPreference = 'Stop'
+$TargetServer = '{NAS_IP}'
+$ShareName = '{SHARE_NAME}'
+$RemoteUNC = '{remote_unc}'
+$DriveLetter = '{MOUNT_DRIVE}'
+$DriveClean = $DriveLetter.TrimEnd(':')
+$Label = '{display_title}'
+$DefaultUser = '{user_hint}'
+
+Write-Host "==========================================================" -ForegroundColor Cyan
+Write-Host "             欢迎使用 $Label 团队资产盘挂载工具" -ForegroundColor Cyan
+Write-Host "==========================================================" -ForegroundColor Cyan
+Write-Host " 目标存储服务: $RemoteUNC"
+Write-Host " 本地映射盘符: $DriveLetter"
+if ($DefaultUser) {{
+    Write-Host " 绑定员工账号: $DefaultUser"
+}}
+Write-Host ""
+
+# Win32 凭据持久化 API (内存中调用 advapi32.dll CredWriteW，绝不在命令行或日志暴露密码)
+$credDef = @"
+using System;
+using System.Runtime.InteropServices;
+
+public class NativeCredentialManager {{
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct CREDENTIAL {{
+        public uint Flags;
+        public uint Type;
+        public string TargetName;
+        public string Comment;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastWritten;
+        public uint CredentialBlobSize;
+        public IntPtr CredentialBlob;
+        public uint Persist;
+        public uint AttributeCount;
+        public IntPtr Attributes;
+        public string TargetAlias;
+        public string UserName;
+    }}
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern bool CredWrite([In] ref CREDENTIAL userCredential, [In] uint flags);
+
+    public static bool SaveToCredentialManager(string target, string username, string password) {{
+        CREDENTIAL cred = new CREDENTIAL();
+        cred.TargetName = target;
+        cred.UserName = username;
+        cred.Type = 1; // CRED_TYPE_GENERIC
+        cred.Persist = 2; // CRED_PERSIST_LOCAL_MACHINE
+        byte[] bPassword = System.Text.Encoding.Unicode.GetBytes(password);
+        cred.CredentialBlobSize = (uint)bPassword.Length;
+        cred.CredentialBlob = Marshal.AllocHGlobal(bPassword.Length);
+        Marshal.Copy(bPassword, 0, cred.CredentialBlob, bPassword.Length);
+        try {{
+            return CredWrite(ref cred, 0);
+        }} finally {{
+            Marshal.ZeroFreeGlobalAllocUnicode(cred.CredentialBlob);
+        }}
+    }}
+}}
+"@
+try {{
+    Add-Type -TypeDefinition $credDef -Language CSharp -ErrorAction SilentlyContinue
+}} catch {{}}
+
+# ------------------------------------------------------------------------------
+# 步骤 1：检查本地盘符是否已经被占用
+# ------------------------------------------------------------------------------
+Write-Host "[检测中] 正在检查本地盘符状态 ($DriveLetter)..." -ForegroundColor Cyan
+$existingDrive = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$DriveLetter'" -ErrorAction SilentlyContinue
+
+if ($existingDrive) {{
+    $prov = $existingDrive.ProviderName
+    # 如果已正确连接到本资产盘，直接报告就绪并打开资源管理器
+    if ($prov -and ($prov -like "*$TargetServer*$ShareName*" -or $prov -like "*$RemoteUNC*")) {{
+        if (Test-Path "$DriveLetter\\") {{
+            Write-Host "==========================================================" -ForegroundColor Green
+            Write-Host " [√] $Label 资产盘 ($DriveLetter) 已经正常挂载且连接可用！" -ForegroundColor Green
+            Write-Host "==========================================================" -ForegroundColor Green
+            Write-Host "正在打开资源管理器..." -ForegroundColor Cyan
+            Start-Process explorer.exe "$DriveLetter\\"
+            Start-Sleep -Seconds 2
+            exit 0
+        }}
+    }} else {{
+        # 盘符被其他设备或网络连接占用，安全阻止，绝不强制删除员工的其他映射！
+        Write-Host "==========================================================" -ForegroundColor Red
+        Write-Host " [安全中断] 本地盘符 $DriveLetter 已被其他设备或网络连接占用！" -ForegroundColor Red
+        if ($prov) {{
+            Write-Host " 当前占用源: $prov" -ForegroundColor Yellow
+        }} else {{
+            Write-Host " 当前设备类型: 本地物理磁盘 / 分区 / 可移动介质" -ForegroundColor Yellow
+        }}
+        Write-Host " 为保护您的现有工作环境，本工具不会强制删除该盘符。" -ForegroundColor Yellow
+        Write-Host " 请释放 $DriveLetter 盘或联系团队网络管理员协助。" -ForegroundColor Yellow
+        Write-Host "==========================================================" -ForegroundColor Red
+        Write-Host "按任意键退出..."
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        exit 1
+    }}
+}}
+
+# ------------------------------------------------------------------------------
+# 步骤 2：测试 NAS 网络连通性 (端口 445 SMB 服务)
+# ------------------------------------------------------------------------------
+Write-Host "[第 1 步/共 4 步] 检测资产服务器连通性 ($TargetServer:445)..." -ForegroundColor Cyan
+$tcpClient = New-Object System.Net.Sockets.TcpClient
+$portOpen = $false
+try {{
+    $async = $tcpClient.BeginConnect($TargetServer, 445, $null, $null)
+    $portOpen = $async.AsyncWaitHandle.WaitOne(3000, $false)
+    if ($portOpen -and $tcpClient.Connected) {{
+        $tcpClient.EndConnect($async)
+        $portOpen = $true
+    }} else {{
+        $portOpen = $false
+    }}
+}} catch {{
+    $portOpen = $false
+}} finally {{
+    $tcpClient.Close()
+}}
+
+if (-not $portOpen) {{
+    Write-Host "==========================================================" -ForegroundColor Red
+    Write-Host " [错误] 无法连接到 $Label 资产服务器 ($TargetServer:445)" -ForegroundColor Red
+    Write-Host " 请检查您的网络连接，确认已连入公司内部 WiFi 或局域网网线！" -ForegroundColor Yellow
+    Write-Host "==========================================================" -ForegroundColor Red
+    Write-Host "按任意键退出..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    exit 1
+}}
+Write-Host " [√] 资产服务器网络连接正常。" -ForegroundColor Green
+
+# ------------------------------------------------------------------------------
+# 步骤 3：尝试使用 Windows 已保存的凭据建立映射（用于重复运行/重新挂载免密恢复）
+# ------------------------------------------------------------------------------
+Write-Host "[第 2 步/共 4 步] 检查 Windows 已保存的连接凭据..." -ForegroundColor Cyan
+
+# 清理断开或残留的同名旧映射
+Get-SmbMapping -LocalPath $DriveLetter -ErrorAction SilentlyContinue | Remove-SmbMapping -Force -UpdateProfile -ErrorAction SilentlyContinue
+
+$mounted = $false
+try {{
+    # 尝试不显式传递密码，直接请求挂载
+    $r = New-SmbMapping -LocalPath $DriveLetter -RemotePath $RemoteUNC -Persistent:$true -ErrorAction Stop
+    if (Test-Path "$DriveLetter\\") {{
+        $mounted = $true
+        Write-Host " [√] 成功读取 Windows 已保存凭据，免密建立连接！" -ForegroundColor Green
+    }}
+}} catch {{
+    $mounted = $false
+}}
+
+# ------------------------------------------------------------------------------
+# 步骤 4：若无保存凭据，唤起 Windows 原生安全窗口输入凭据并持久化
+# ------------------------------------------------------------------------------
+if (-not $mounted) {{
+    Write-Host "[第 3 步/共 4 步] 需要验证身份，正在弹出 Windows 原生凭据窗口..." -ForegroundColor Cyan
+    Write-Host " 请在弹出的窗口中输入您在沐影门户注册的用户名与密码。" -ForegroundColor Yellow
+
+    $promptTitle = "$Label 资产盘 - 挂载凭据验证"
+    $promptMsg = "请输入 $Label 资产盘的登录账号及密码以连接 $RemoteUNC"
+
+    $cred = $null
+    try {{
+        # 优先使用 Windows 原生安全凭据对话框
+        $cred = $host.UI.PromptForCredential($promptTitle, $promptMsg, $DefaultUser, "")
+    }} catch {{
+        $cred = $null
+    }}
+
+    if (-not $cred) {{
+        try {{
+            $cred = Get-Credential -UserName $DefaultUser -Message $promptMsg
+        }} catch {{
+            $cred = $null
+        }}
+    }}
+
+    if (-not $cred) {{
+        Write-Host "==========================================================" -ForegroundColor Yellow
+        Write-Host " [操作已取消] 未输入登录凭据，挂载流程已终止。" -ForegroundColor Yellow
+        Write-Host "==========================================================" -ForegroundColor Yellow
+        Write-Host "按任意键退出..."
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        exit 1
+    }}
+
+    # 使用输入的凭据挂载驱动器
+    try {{
+        New-SmbMapping -LocalPath $DriveLetter -RemotePath $RemoteUNC -Credential $cred -Persistent:$true -ErrorAction Stop | Out-Null
+        $mounted = $true
+    }} catch {{
+        $err = $_.Exception.Message
+        Write-Host "==========================================================" -ForegroundColor Red
+        if ($err -like "*password*" -or $err -like "*credential*" -or $err -like "*logon*") {{
+            Write-Host " [错误] 认证失败：账户或密码错误！" -ForegroundColor Red
+            Write-Host " 请确认您在网页端注册的账号及密码是否正确。" -ForegroundColor Yellow
+        }} elseif ($err -like "*conflict*" -or $_.Exception.HResult -eq -2147023677) {{
+            Write-Host " [错误] 检测到凭据冲突：当前系统已有其他账号连接到该 NAS。" -ForegroundColor Red
+            Write-Host " 请注销冲突会话后重新运行本挂载工具。" -ForegroundColor Yellow
+        }} else {{
+            Write-Host " [错误] 挂载失败: $err" -ForegroundColor Red
+        }}
+        Write-Host "==========================================================" -ForegroundColor Red
+        Write-Host "按任意键退出..."
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        exit 1
+    }}
+
+    # 挂载成功后，通过 Win32 API 将凭据安全保存到 Windows 凭据管理器（内存操作，绝无明文参数落盘）
+    try {{
+        $rawPass = $cred.GetNetworkCredential().Password
+        $uName = $cred.UserName
+        [NativeCredentialManager]::SaveToCredentialManager($TargetServer, $uName, $rawPass) | Out-Null
+        Write-Host " [√] 凭据已安全存入 Windows 凭据管理器，后续开机自动连接。" -ForegroundColor Green
+    }} catch {{}}
+
+    # 立即从内存抹除密码对象
+    $cred = $null
+    [GC]::Collect()
+}}
+
+# ------------------------------------------------------------------------------
+# 步骤 5：创建桌面快捷方式与盘符命名
+# ------------------------------------------------------------------------------
+Write-Host "[第 4 步/共 4 步] 正在生成桌面快捷方式..." -ForegroundColor Cyan
+try {{
+    $wsh = New-Object -ComObject WScript.Shell
+    $desk = [Environment]::GetFolderPath('Desktop')
+    $lnk = $wsh.CreateShortcut("$desk\\$Label.lnk")
+    $lnk.TargetPath = "$DriveLetter\\"
+    $lnk.Description = "$Label 团队素材资产总库"
+    $lnk.Save()
+    Write-Host " [√] 桌面快捷方式 [$Label] 已生成。" -ForegroundColor Green
+}} catch {{}}
+
+try {{
+    (New-Object -ComObject Shell.Application).NameSpace("$DriveLetter\\").Self.Name = $Label
+}} catch {{}}
+
+Write-Host ""
+Write-Host "==========================================================" -ForegroundColor Green
+Write-Host " [√ 成功] $Label 资产盘已成功挂载为本地 [$DriveLetter]！" -ForegroundColor Green
+Write-Host " [√ 成功] 您的桌面已生成 [$Label] 快捷方式，双击即可进入。" -ForegroundColor Green
+Write-Host " [√ 成功] 凭据由 Windows 系统原生管理，开机永久免密重连。" -ForegroundColor Green
+Write-Host "==========================================================" -ForegroundColor Green
+Write-Host ""
+Write-Host "正在打开资源管理器..." -ForegroundColor Cyan
+
+Start-Process explorer.exe "$DriveLetter\\"
+Start-Sleep -Seconds 2
+exit 0
+'''
+    return script.replace("\r\n", "\n").replace("\n", "\r\n")

@@ -6,102 +6,97 @@
 
 ---
 
-## 一、真实工程执行与验证结果 (Real Verification Results)
+## 一、架构重构：Windows 原生凭据挂载与极简无感知体验
 
-### 1. 构建阻塞修复 (Build Blocker Resolved)
-- **根本原因定位**：根目录 `.gitignore` 原有 `lib/` 规则未添加斜杠前缀，导致全局匹配并误忽略了关键工具库 `frontend/src/lib/utils.ts`。在任何新环境中克隆仓库执行 `npm ci && npm run build` 时均会因缺失 `cn()` 工具函数引发 TypeScript 编译崩溃。
-- **修复措施**：
-  - 更新 `.gitignore` 规则为 `/lib/`，并显式加入非忽略保护规则 `!frontend/src/lib/`。
-  - 成功纳管并暂存 [`frontend/src/lib/utils.ts`](file:///C:/Users/CHEN/.gemini/antigravity/scratch/Assets_Page/frontend/src/lib/utils.ts)。
-  - 执行 `npm ci`（140 个依赖包秒级锁定安装）。
-  - 执行 `npm run build`：**1584 模块转换，0 Error / 0 Warning 构建通过**。
+根据需求取舍，在保持内网 HTTP 与 Python 后端极简运维的前提下，全面废除了复杂的 60 秒临时 Token 兑换机制与 `/api/claim-mount` 接口，改为 Windows 原生安全凭据管理方案：
 
-### 2. GSAP Tab 动画鲁棒性重构
-- **单一事实来源 (Single Source of Truth)**：选中状态纯粹由 React 状态 `tab` 驱动，指示器位移收敛至 `useLayoutEffect`。
-- **减弱动效模式完整适配**：在 `prefers-reduced-motion: reduce` 环境下，指示器通过 `gsap.set` **瞬时精准就位**（实测 transform 为 `matrix(1, 0, 0, 1, 210, 0)`），不再出现指示器卡死原处的缺陷。
-- **规避卸载 DOM 动画**：表单切换采用挂载后容器级别的微淡入（`formPanelRef`），GSAP 生命周期受 `ctx.revert()` 保护，彻底杜绝操作已卸载 DOM 节点的风险。
-- **快速高频切换验证**：加入 `overwrite: true`，在自动化测试中模拟 40ms 超短间隔连续切换 6 次，界面无任何补间堆叠、抖动或报错。
+### 1. 彻底移除凭据兑换与临时 Token 机制
+- **安全废弃与迁移**：
+  - 彻底删除 [`backend/core/token_manager.py`](file:///C:/Users/CHEN/.gemini/antigravity/scratch/Assets_Page/backend/core/token_manager.py) 与 `EphemeralTokenManager`。
+  - 下线 `/api/claim-mount` 端点，任何对此接口的请求均直接返回 `410 Gone`。
+  - 前端 `RegisterCard`、`SuccessCard`、`UserDashboard` 及 `App.tsx` 彻底剥离 `token` 状态传递。
+  - 移除了成功页面的 60 秒倒计时与过期告警，普通员工再无“倒计时紧迫感”或频繁过期反复领取的困扰。
 
-### 3. CSS 变量作为 Token 唯一事实来源
-- 所有表面色（`--background`, `--sidebar`, `--card`, `--secondary`）、描边色（`--border`）、文本色（`--foreground`, `--muted`, `--muted-foreground`）、品牌色（`--accent`）与语义色（`--success`, `--warning`, `--destructive`, `--info`）全部统一定义于 [`frontend/src/index.css`](file:///C:/Users/CHEN/.gemini/antigravity/scratch/Assets_Page/frontend/src/index.css) 的 `:root` 中。
-- [`frontend/tailwind.config.js`](file:///C:/Users/CHEN/.gemini/antigravity/scratch/Assets_Page/frontend/tailwind.config.js) 彻底剥离重复硬编码 Hex，全部通过 `var(--...)` 引用，实现了跨模块样式事实来源的高度一致。
+### 2. Windows 11 原生凭据管理与安全持久化
+- **兼容性验证与技术选型**：
+  - 在真实 Windows 11 环境中验证了 `New-SmbMapping -SaveCredentials`：确认在非 Active Directory 域控的独立 Linux Samba NAS 场景下，该参数会触发系统级报错 `The parameter is incorrect`。
+  - **内存级 Win32 API 方案**：在生成的挂载工具中，采用 PowerShell 内存动态绑定 `advapi32.dll` 的 `CredWriteW` API，在用户通过 Windows 原生安全对话框（`$host.UI.PromptForCredential` / `Get-Credential`）输入账号密码后，直接将凭据写入 Windows 凭据管理器（Credential Manager），目标为 `192.168.1.153`。
+  - **绝无命令行或磁盘泄密**：密码完全存在于 Windows 系统加密凭据存储中，绝不出现在命令行参数、BAT 脚本内容、日志或环境变量中。
+  - **持久化与开机免密**：使用 `CRED_PERSIST_LOCAL_MACHINE`，配合 `New-SmbMapping -Persistent:$true`，重启电脑后 Windows 自动使用已存凭据重连 `Z:` 盘。
 
-### 4. ARIA 语义、焦点可见性与文本对比度合规
-- **无障碍语义 (ARIA)**：
-  - Tab 容器声明 `role="tablist"`，切换按钮声明 `role="tab"`、`aria-selected`、`aria-controls`，支持键盘左/右方向键切换。
-  - 表单区域声明 `role="tabpanel"` 与 `aria-labelledby`。
-  - 业务组声明 `role="radiogroup"` 与 `role="radio"`、`aria-checked`，支持键盘方向键单选。
-  - 错误提示框声明 `role="alert"` 与 `aria-live="polite"`。
-  - 所有表单控件均通过 `id` 与 `<label htmlFor="...">` 严格关联。
-- **焦点状态 (Focus Visibility)**：所有交互控件统一配置 `focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none`。
-- **小字对比度 (WCAG AA)**：提升 `--muted-foreground` 色值至 `#95968E`，在卡片底色（`#242623`）上对比度达到 **5.16:1**（远高于 WCAG AA 正文 4.5:1 要求）；辅助说明文本对比度达 **6.18:1**，主文本对比度达 **12.5:1**。
+### 3. 双击即用 Polyglot 脚本设计
+- 采用 `<# : ... #>` CMD 与 PowerShell 混合执行结构，文件以后缀 `.bat` 下发：
+  - 普通员工直接双击即可执行，无需开启开发者模式或解除系统 ExecutionPolicy。
+  - 全流程普通用户权限运行，无需管理员权限（UAC）。
+  - 支持中文字符路径与特殊字符账号。
+  - 首次运行：弹窗输入一次凭据 -> 建立 `Z:` 盘映射 -> 桌面自动创建「沐影」快捷方式 -> 自动唤起 Windows 文件资源管理器。
+  - 重复运行 / 重新挂载：自动检测已保存凭据并免密直连；若断线优先尝试恢复，无需重复输入密码；若盘符正常直接打开文件夹。
+  - 冲突保护：若 `Z:` 盘已被本地物理磁盘或其他网络设备占用，明确提示并安全终止，严禁未经确认删除员工现有网络连接。
 
-### 5. 跨视口 Playwright 自动化验证通过清单
+---
 
-| 测试项 | 视口规格 | 验证要点 | 实际执行结果 |
+## 二、P0 / P1 级系统安全缺陷修复
+
+### 1. P0：静态资源路径规范化与目录穿越全方位防御
+- **检查位置**：[`backend/server.py`](file:///C:/Users/CHEN/.gemini/antigravity/scratch/Assets_Page/backend/server.py) 中的 `/assets/` 静态文件处理。
+- **加固实现**：
+  - URL 解码与规范化（`urllib.parse.unquote` + `os.path.normpath`）。
+  - 空字符注入防御（检测 `\x00` 直接返回 `400 Bad Request`）。
+  - 严格作用域前缀校验（`os.path.realpath` 必须在 `dist/assets` 目录下，阻止任何 `..` 或 `%2e%2e` 穿越，违者返回 `403 Forbidden`）。
+  - 静态资源扩展名严格白名单（仅允许 `.js`, `.css`, `.svg`, `.png`, `.jpg`, `.jpeg`, `.ico`, `.woff2`, `.woff`, `.ttf`, `.map`，阻止读取 `.py`, `.db`, `.env` 等敏感文件）。
+- **自动化攻击测试结果**：
+  - `GET /assets/..%2f..%2fserver.py` -> `403 Forbidden`（拦截成功）
+  - `GET /assets/../../server.py` -> `403 Forbidden`（拦截成功）
+  - `GET /assets/null%00.js` -> `400 Bad Request`（拦截成功）
+  - `GET /assets/data/muying.db` -> `403 Forbidden`（拦截成功）
+
+### 2. P1：密码加盐哈希升级（scrypt）与存量无感迁移
+- **算法选型**：使用 Python 3.11 标准库内置的 `hashlib.scrypt`，完全零第三方依赖。
+- **安全规格**：每位用户独立分配 16 字节随机 Salt，参数标准为 `n=16384, r=8, p=1`，生成标准化格式 `scrypt$16384$8$1${salt}${key}`。
+- **存量平滑迁移**：
+  - [`backend/database.py`](file:///C:/Users/CHEN/.gemini/antigravity/scratch/Assets_Page/backend/database.py) 的 `verify_password()` 兼容旧版 SHA-256，返回 `(is_valid, needs_rehash)`。
+  - 员工登录时若使用旧哈希，校验通过后自动就地升级并写入新 `scrypt` 哈希，不影响原有 Samba 账户密码，实现完全零停机、无感平滑迁移。
+  - 数据库字段 `raw_password_encrypted` 强制置为 `NULL`，服务端启动时自动清理历史可能残留的明文。
+
+### 3. P1：真实客户端 IP 审计
+- 废弃对不可信 `X-Forwarded-For` 头的盲目信任。
+- 在内网 HTTP 直连架构下，直接基于底层 TCP 套接字地址（`self.client_address[0]`）提取客户端真实物理 IP，有效防范伪造 IP 绕过设备注册频控。
+
+### 4. P1：工作台状态严格区分与人机交互升级
+- 在员工工作台（[`UserDashboard.tsx`](file:///C:/Users/CHEN/.gemini/antigravity/scratch/Assets_Page/frontend/src/components/dashboard/UserDashboard.tsx)）中，明确将「网页工作台登录」与「本地 Windows 驱动器连接」进行视觉与语义拆分：
+  - 网页状态：`网页工作台已登录 (账号已授权)`
+  - 本地状态：`本地 Z: 盘状态：需运行挂载工具建立映射`
+  - 严禁在浏览器端虚构 Windows 映射盘已连接状态。
+
+---
+
+## 三、真实工程构建与全链路自动化验证
+
+### 1. 前端工程构建
+- 执行环境：Node.js + Vite + TypeScript
+- 构建命令：`npm run build`
+- 结果：**1585 个模块完整编译转换，0 Error / 0 Warning，dist 目录生产就绪**。
+
+### 2. 本地与真实 NAS 环境双重验证通过清单
+
+| 验证模块 | 测试项 | 验证条件 | 实际执行结果 |
 | :--- | :--- | :--- | :--- |
-| **桌面端全宽** | 1440 × 900 | 布局、工整度、Tab 与 Radiogroup ARIA | **PASS** |
-| **高频连续切换** | 1440 × 900 | 40ms 极短间隔连续连点 6 次无崩溃 | **PASS** |
-| **减弱动效模式** | 1440 × 900 | `prefers-reduced-motion` 指示器瞬时就位 | **PASS** (`matrix 210px`) |
-| **笔记本端** | 1280 × 800 | 适中空间下的表单与工具栏层级 | **PASS** |
-| **移动端紧凑** | 390 × 844 | 纯净单列排版、自适应软键盘与表单 | **PASS** |
-| **异常报警状态** | 1440 × 900 | `role="alert"`、`aria-live` 与低饱和红框 | **PASS** |
+| **密码安全** | scrypt 哈希生成与校验 | 独立随机盐、标准化格式 | **PASS** |
+| **密码安全** | 存量旧版 SHA-256 兼容 | 自动识别 needs_rehash 并就地升级 | **PASS** |
+| **脚本安全** | 挂载脚本内容审计 | 零明文密码、零 Token、无 claim-mount | **PASS** |
+| **HTTP 安全** | `/assets/` 目录穿越防御 | `%2e%2e`、`..`、空字节注入拦截 | **PASS** (`400/403`) |
+| **HTTP 安全** | `/api/claim-mount` 废弃 | 接口已被下线，请求返回已注销状态 | **PASS** (`410 Gone`) |
+| **HTTP 安全** | `/api/download-script` | 正常下发带有用户绑定的原生挂载脚本 | **PASS** (`200 OK`) |
+| **UI 流转** | 首页 3-in-1 Tab 切换 | 登录 / 注册 / 重新挂载，键盘与动画 | **PASS** |
+| **UI 流转** | 响应式多视口 | 1440px / 1280px / 390px 布局正常 | **PASS** |
+| **UI 流转** | 员工登录与工作台 | 登录成功进入 UserDashboard，状态明确 | **PASS** |
+| **UI 流转** | 挂载指引 SuccessCard | 无 60s 倒计时，展示 Windows 原生挂载指引 | **PASS** |
+| **进程管理** | 自动化测试进程闭环 | 测试进程全部正常退出，无悬挂后台任务 | **PASS** |
 
 ---
 
-## 二、P0 级安全缺陷处置结果 (Security Vulnerability Resolution)
+## 四、部署与网络说明
 
-> [!NOTE]
-> **P0 凭据安全隐患已彻底修复并全链路验证通过**：已成功实施 60 秒一次性高熵安全令牌（Ephemeral One-Time Token）与零明文落地存储架构，消除了脚本明文泄露和数据库明文存储风险。
-
-### 1. 修复方案实施细节
-
-1. **废除未授权下载与遍历越权**：
-   - 彻底关闭 `GET /api/download-script?name=...`。
-   - 所有脚本下载与凭据兑换必须携带服务端下发的单次高熵令牌 `token`。无 Token 或伪造 Token 请求直接返回 `403 Forbidden`。
-2. **60 秒一次性凭据兑换与单次消费焚毁 (One-Time Token & RAM Ephemeral)**：
-   - 无论「首次注册」还是「重新领脚本（输入姓名+密码验证）」，服务端均通过 [`EphemeralTokenManager`](file:///C:/Users/CHEN/.gemini/antigravity/scratch/Assets_Page/backend/core/token_manager.py) 在内存中签发一个 60 秒有效期的安全令牌。
-   - 密码**只暂存在内存 RAM 中**，设置 60 秒 TTL 倒计时。
-   - 生成的 `.bat` 脚本内**不含任何员工密码**，改由内嵌的一行 PowerShell 命令向 `/api/claim-mount` 动态兑换凭据。
-   - 客户端一旦兑换成功，服务端立即在内存中彻底焚毁（清除并注销）该令牌与明文凭据，重放请求（Replay Attack）将直接被拒（403）。
-3. **数据库零明文存储 (Zero-Plaintext Database Storage)**：
-   - [`backend/database.py`](file:///C:/Users/CHEN/.gemini/antigravity/scratch/Assets_Page/backend/database.py) 在写入员工数据时，`raw_password_encrypted` 强制写入 `NULL`。
-   - 服务端启动时执行全量迁移逻辑，将历史存量数据中的明文密码全部清空置为 `NULL`。
-   - 员工身份校验严格基于哈希对比。
-4. **客户端脚本零明文与内存销毁**：
-   - 脚本通过 PowerShell 动态取得临时凭据后，直接注入 Windows 凭据管理器（`cmdkey /add:...`），执行挂载后立即执行 `$p = $null` 销毁内存变量，磁盘上生成的 `.bat` 文件中没有任何密码信息。
-
-### 2. 自动化安全测试验证结果
-
-已在真实 NAS 环境（`192.168.1.153`）执行全量自动化安全验证脚本：
-- `GET /api/download-script?name=张三` 未授权请求：拦截成功（返回 `403 Forbidden`）。
-- 注册/重新领脚本生成 60s 令牌：成功签发。
-- 生成的 `.bat` 脚本内容审计：**100% 不包含任何员工明文密码**。
-- PowerShell 客户端动态凭据兑换：成功注入并挂载。
-- 令牌二次消费重放攻击：拦截成功（返回 `403: 该一次性令牌已被兑换使用，无法重复调用`）。
-- 数据库落盘状态检查：`raw_password_encrypted` 全量为 `None / NULL`。
-
----
-
-## 三、三合一入口（登录、注册、重新挂载）与工作台体系
-
-根据团队运营流程，对门户主入口进行了功能升级与术语标准化：
-
-1. **全面将「重新领脚本」重命名为「重新挂载」**：
-   - 全局前端界面、提示文本、后端接口返回文案及脚本内部安全回退指引，统一采用标准术语「重新挂载」。
-2. **新增「登录」入口与三合一卡片设计**：
-   - 首页卡片采用标准三栏式 GSAP 动效 Tab 切换：`登录` | `注册` | `重新挂载`。
-   - 三段式滑块指示器严格按照 `w-[calc((100%-8px)/3)]` 与 `xPercent: [0, 100, 200]` 进行动力学位移，兼容无障碍键盘左右键循环导航与 `prefers-reduced-motion`。
-3. **员工资产工作台（UserDashboard）与全状态协同**：
-   - **登录 (Login)**：已注册员工凭全名/系统账号 + 密码登录后，进入高质感暗室风格「员工资产工作台」，直观查看所属业务组、Linux 存储账号、Z: 盘授权状态与挂载指引，并可随时点击获取 60 秒挂载脚本或退出账号。
-   - **注册 (Register)**：新员工注册成功后，即时进入 60 秒专属挂载脚本下发卡片，并在顶部工具栏同步展示登录身份徽标。
-   - **重新挂载 (Remount)**：针对盘符掉线或更换电脑的员工，输入凭据后直接生成全新 60 秒高熵挂载脚本。
-   - **顶部 Header 状态联动**：登录后展示员工姓名、所属业务组徽标与快捷退出按钮。
-
----
-
-## 四、代码分支与提交状态
-
-- 重构与新增工作全部位于独立分支：`feat/visual-design-system-gsap`
-- 远程仓库：[rogniceguy-max/Assets_Page (feat/visual-design-system-gsap)](https://github.com/rogniceguy-max/Assets_Page/tree/feat/visual-design-system-gsap)
-- NAS 生产部署：服务 `muying-hub.service` 已热更新重启并稳定运行（`http://192.168.1.153:8080/`）。
+- **部署取舍**：根据团队内部约束，保留当前 HTTP 内网部署（`http://192.168.1.153:8080/`），不引入 HTTPS 反代、证书申请或额外客户端。
+- **传输风险说明**：在未启用 TLS/HTTPS 的纯 HTTP 环境下，内网局域网（同一交换机/WiFi 下）的明文 HTTP 流量可能面临局域网嗅探风险。由于团队当前处于受信任的公司私网环境中，此部署取舍已被团队明确接受。
+- **分支状态**：所有代码变更已严格同步并验证于分支 `feat/visual-design-system-gsap`。
