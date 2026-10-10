@@ -75,7 +75,7 @@ class EphemeralTokenManager:
             self._cleanup_expired()
             ticket = self._tokens.get(token)
             if not ticket:
-                return False, "安全令牌不存在或已过期，请在网页端重新领脚本"
+                return False, "安全令牌不存在或已过期，请在网页端重新挂载"
 
             if ticket["used"]:
                 return False, "该一次性令牌已被兑换使用，无法重复调用"
@@ -84,7 +84,7 @@ class EphemeralTokenManager:
             if now > ticket["expires_at"]:
                 self._tokens.pop(token, None)
                 expired_seconds = int(now - ticket["expires_at"])
-                return False, f"安全挂载窗口已超时（有效时间 60 秒，当前已过期 {expired_seconds} 秒）。请回到网页端点击【重新领脚本】获取全新安全配置脚本。"
+                return False, f"安全挂载窗口已超时（有效时间 60 秒，当前已过期 {expired_seconds} 秒）。请回到网页端点击【重新挂载】获取全新安全配置脚本。"
 
             # 立即标记为已使用，提取凭据，并在内存中彻底抹除密码
             ticket["used"] = True

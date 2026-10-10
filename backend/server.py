@@ -107,12 +107,12 @@ class MuYingHandler(BaseHTTPRequestHandler):
         elif path == "/api/download-script":
             token = query.get('token', [''])[0]
             if not token:
-                self.send_json(403, {"success": False, "error": "拒绝访问：缺少有效安全令牌。请先在网页端注册或重新领脚本。"})
+                self.send_json(403, {"success": False, "error": "拒绝访问：缺少有效安全令牌。请先在网页端登录、注册或重新挂载。"})
                 return
 
             ticket_info = token_manager.get_token_info(token)
             if not ticket_info:
-                self.send_json(403, {"success": False, "error": "安全令牌不存在或已过期（超过 60 秒窗口）。请在网页端点击【重新领脚本】重新获取。"})
+                self.send_json(403, {"success": False, "error": "安全令牌不存在或已过期（超过 60 秒窗口）。请在网页端点击【重新挂载】重新获取。"})
                 return
 
             linux_user = ticket_info["linux_username"]
@@ -183,7 +183,7 @@ class MuYingHandler(BaseHTTPRequestHandler):
             if existing_ip_user:
                 self.send_json(400, {
                     "success": False,
-                    "error": f"安全限制：本机 IP（{client_ip}）已注册过员工（{existing_ip_user['display_name']}）。每个 IP 仅限注册一次。如需重新获取脚本，请点击【重新领脚本】。"
+                    "error": f"安全限制：本机 IP（{client_ip}）已注册过员工（{existing_ip_user['display_name']}）。每个 IP 仅限注册一次。如需重新获取脚本，请点击【重新挂载】。"
                 })
                 return
 
@@ -192,7 +192,7 @@ class MuYingHandler(BaseHTTPRequestHandler):
             if existing_name:
                 self.send_json(400, {
                     "success": False,
-                    "error": f"该姓名（{fullname}）已注册过。请直接在【重新领脚本】中输入姓名与密码获取专属脚本。"
+                    "error": f"该姓名（{fullname}）已注册过。请直接在【登录】或【重新挂载】中输入姓名与密码。"
                 })
                 return
 
@@ -226,23 +226,28 @@ class MuYingHandler(BaseHTTPRequestHandler):
             })
             return
 
-        elif path == "/api/verify":
+        elif path in ["/api/verify", "/api/login"]:
             data = self.parse_json_body()
-            fullname = str(data.get("fullname", "")).strip()
+            fullname = str(data.get("fullname", data.get("username", ""))).strip()
             password = str(data.get("password", "")).strip()
             client_ip = self.get_client_ip()
+
+            if not fullname or not password:
+                self.send_json(400, {"success": False, "error": "请填写姓名与密码"})
+                return
 
             user = get_user_by_name(fullname)
             if not user or user["password_hash"] != hash_password(password):
                 self.send_json(401, {"success": False, "error": "姓名或密码不正确"})
                 return
 
-            # 验证通过：在后端内存开启 60 秒一次性安全兑换窗口
+            # 验证/登录通过：在后端内存开启 60 秒一次性安全兑换窗口
             token = token_manager.create_token(user["linux_username"], password, user["display_name"], client_ip, ttl=60)
 
+            msg = "登录成功" if path == "/api/login" else "验证成功"
             self.send_json(200, {
                 "success": True,
-                "message": "验证成功",
+                "message": msg,
                 "token": token,
                 "fullname": user["display_name"],
                 "linux_username": user["linux_username"],

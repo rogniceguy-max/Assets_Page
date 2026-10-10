@@ -8,23 +8,48 @@ import {
   Check, 
   KeyRound,
   User,
-  Info
+  Info,
+  RefreshCw,
+  LogIn
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 
-interface RegisterCardProps {
-  onSuccess: (fullname: string, token: string) => void;
+export type AuthTab = 'login' | 'register' | 'remount';
+
+export interface AuthSuccessData {
+  fullname: string;
+  token: string;
+  linux_username?: string;
+  group_type?: string;
+  mode: AuthTab;
 }
 
-export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
-  const [tab, setTab] = useState<'register' | 'login'>('register');
+interface RegisterCardProps {
+  onSuccess: (data: AuthSuccessData) => void;
+  defaultTab?: AuthTab;
+}
+
+export const RegisterCard: React.FC<RegisterCardProps> = ({ 
+  onSuccess,
+  defaultTab = 'login'
+}) => {
+  const [tab, setTab] = useState<AuthTab>(defaultTab);
   const [group, setGroup] = useState<'film' | 'writing'>('film');
-  const [fullname, setFullname] = useState('');
-  const [password, setPassword] = useState('');
-  const [loginName, setLoginName] = useState('');
+  
+  // 注册表单状态
+  const [regFullname, setRegFullname] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+
+  // 登录表单状态
+  const [loginUser, setLoginUser] = useState('');
   const [loginPass, setLoginPass] = useState('');
+
+  // 重新挂载表单状态
+  const [remountName, setRemountName] = useState('');
+  const [remountPass, setRemountPass] = useState('');
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,7 +57,7 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
   const indicatorRef = useRef<HTMLDivElement>(null);
   const formPanelRef = useRef<HTMLDivElement>(null);
 
-  // 1. 卡片首次挂载入场动画（严格遵循 prefers-reduced-motion，无旋转/无果冻回弹）
+  // 1. 卡片首次挂载入场动画（遵循 prefers-reduced-motion，无大幅度旋转/果冻回弹）
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -59,14 +84,12 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
     return () => ctx.revert();
   }, []);
 
-  // 2. 指示器位移：纯粹由 React 状态 tab 决定（Single Source of Truth）
-  // 减少动态效果模式下也必须正确将指示器设置到目标位置；
-  // overwrite: true 彻底解决快速连续切换导致的补间堆积/抖动问题
+  // 2. 精准三段式指示器位移（由 React 状态 tab 驱动，overwrite: true 杜绝高频冲突）
   useLayoutEffect(() => {
     if (!indicatorRef.current) return;
 
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const targetX = tab === 'register' ? 0 : 100;
+    const targetX = tab === 'login' ? 0 : tab === 'register' ? 100 : 200;
 
     if (prefersReducedMotion) {
       gsap.set(indicatorRef.current, { xPercent: targetX });
@@ -80,7 +103,7 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
     }
   }, [tab]);
 
-  // 3. 表单切换淡入：监听已挂载的 DOM 节点，避免动画操作已卸载 DOM，支持快速切换
+  // 3. 表单切换淡入：监听已挂载的 DOM 节点，避免动画操作已卸载 DOM
   useEffect(() => {
     if (!formPanelRef.current) return;
 
@@ -98,16 +121,24 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
     return () => ctx.revert();
   }, [tab]);
 
-  const handleTabChange = (targetTab: 'register' | 'login') => {
+  const tabs: AuthTab[] = ['login', 'register', 'remount'];
+
+  const handleTabChange = (targetTab: AuthTab) => {
     if (tab === targetTab) return;
     setError(null);
     setTab(targetTab);
   };
 
-  const handleKeyDownTab = (e: React.KeyboardEvent, currentTab: 'register' | 'login') => {
-    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+  const handleKeyDownTab = (e: React.KeyboardEvent, currentTab: AuthTab) => {
+    const currentIndex = tabs.indexOf(currentTab);
+    if (e.key === 'ArrowRight') {
       e.preventDefault();
-      handleTabChange(currentTab === 'register' ? 'login' : 'register');
+      const nextIndex = (currentIndex + 1) % tabs.length;
+      handleTabChange(tabs[nextIndex]);
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const prevIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+      handleTabChange(tabs[prevIndex]);
     }
   };
 
@@ -118,11 +149,51 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
     }
   };
 
+  // 登录处理
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    if (!loginUser.trim() || !loginPass) {
+      setError('请填写姓名/账号与访问密码');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const resp = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fullname: loginUser.trim(),
+          password: loginPass,
+        }),
+      });
+      const data = await resp.json();
+      if (resp.ok && data.success) {
+        onSuccess({
+          fullname: data.fullname || loginUser.trim(),
+          token: data.token,
+          linux_username: data.linux_username,
+          group_type: data.group_type,
+          mode: 'login'
+        });
+      } else {
+        setError(data.error || '姓名或密码错误');
+      }
+    } catch (err: any) {
+      setError('连接登录接口失败: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 注册处理
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    if (!fullname.trim() || !password) {
+    if (!regFullname.trim() || !regPassword) {
       setError('请填写姓名与密码');
       return;
     }
@@ -133,14 +204,20 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          fullname: fullname.trim(),
-          password,
+          fullname: regFullname.trim(),
+          password: regPassword,
           group_type: group,
         }),
       });
       const data = await resp.json();
       if (resp.ok && data.success) {
-        onSuccess(fullname.trim(), data.token);
+        onSuccess({
+          fullname: regFullname.trim(),
+          token: data.token,
+          linux_username: data.linux_username,
+          group_type: data.group_type,
+          mode: 'register'
+        });
       } else {
         setError(data.error || '注册失败，请稍后重试');
       }
@@ -151,12 +228,13 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
     }
   };
 
-  const handleVerify = async (e: React.FormEvent) => {
+  // 重新挂载处理
+  const handleRemount = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    if (!loginName.trim() || !loginPass) {
-      setError('请填写姓名与密码');
+    if (!remountName.trim() || !remountPass) {
+      setError('请填写姓名与访问密码');
       return;
     }
 
@@ -166,13 +244,19 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          fullname: loginName.trim(),
-          password: loginPass,
+          fullname: remountName.trim(),
+          password: remountPass,
         }),
       });
       const data = await resp.json();
       if (resp.ok && data.success) {
-        onSuccess(data.fullname || loginName.trim(), data.token);
+        onSuccess({
+          fullname: data.fullname || remountName.trim(),
+          token: data.token,
+          linux_username: data.linux_username,
+          group_type: data.group_type,
+          mode: 'remount'
+        });
       } else {
         setError(data.error || '姓名或密码错误');
       }
@@ -198,32 +282,18 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
         </CardHeader>
 
         <div className="px-6 pb-7 space-y-4">
-          {/* 精准滑块 Tab 栏：ARIA 语义 + 键盘左右键无障碍支持 */}
+          {/* 精准三栏滑块 Tab 栏：登录 | 注册 | 重新挂载 */}
           <div
             role="tablist"
             aria-label="员工身份与操作切换"
             className="relative flex bg-sidebar p-1 rounded-[8px] border border-border overflow-hidden"
           >
+            {/* 三段式滑块指示器：严格计算 w=[calc((100%-8px)/3)] */}
             <div
               ref={indicatorRef}
-              className="absolute top-1 bottom-1 left-1 w-[calc(50%-4px)] bg-secondary rounded-[6px] border border-border pointer-events-none"
+              className="absolute top-1 bottom-1 left-1 w-[calc((100%-8px)/3)] bg-secondary rounded-[6px] border border-border pointer-events-none"
               aria-hidden="true"
             />
-            <button
-              id="tab-register"
-              role="tab"
-              type="button"
-              aria-selected={tab === 'register'}
-              aria-controls="tabpanel-register"
-              tabIndex={tab === 'register' ? 0 : -1}
-              onClick={() => handleTabChange('register')}
-              onKeyDown={(e) => handleKeyDownTab(e, 'register')}
-              className={`relative z-10 flex-1 py-1.5 text-xs font-medium text-center transition-colors duration-150 select-none rounded-[6px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
-                tab === 'register' ? 'text-foreground' : 'text-muted hover:text-foreground'
-              }`}
-            >
-              新员工注册
-            </button>
             <button
               id="tab-login"
               role="tab"
@@ -234,10 +304,40 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
               onClick={() => handleTabChange('login')}
               onKeyDown={(e) => handleKeyDownTab(e, 'login')}
               className={`relative z-10 flex-1 py-1.5 text-xs font-medium text-center transition-colors duration-150 select-none rounded-[6px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
-                tab === 'login' ? 'text-foreground' : 'text-muted hover:text-foreground'
+                tab === 'login' ? 'text-foreground font-semibold' : 'text-muted hover:text-foreground'
               }`}
             >
-              重新领脚本
+              登录
+            </button>
+            <button
+              id="tab-register"
+              role="tab"
+              type="button"
+              aria-selected={tab === 'register'}
+              aria-controls="tabpanel-register"
+              tabIndex={tab === 'register' ? 0 : -1}
+              onClick={() => handleTabChange('register')}
+              onKeyDown={(e) => handleKeyDownTab(e, 'register')}
+              className={`relative z-10 flex-1 py-1.5 text-xs font-medium text-center transition-colors duration-150 select-none rounded-[6px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+                tab === 'register' ? 'text-foreground font-semibold' : 'text-muted hover:text-foreground'
+              }`}
+            >
+              注册
+            </button>
+            <button
+              id="tab-remount"
+              role="tab"
+              type="button"
+              aria-selected={tab === 'remount'}
+              aria-controls="tabpanel-remount"
+              tabIndex={tab === 'remount' ? 0 : -1}
+              onClick={() => handleTabChange('remount')}
+              onKeyDown={(e) => handleKeyDownTab(e, 'remount')}
+              className={`relative z-10 flex-1 py-1.5 text-xs font-medium text-center transition-colors duration-150 select-none rounded-[6px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+                tab === 'remount' ? 'text-foreground font-semibold' : 'text-muted hover:text-foreground'
+              }`}
+            >
+              重新挂载
             </button>
           </div>
 
@@ -252,9 +352,59 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
             </div>
           )}
 
-          {/* 表单容器：安全挂载 ref，彻底规避已卸载 DOM 动画 */}
+          {/* 表单容器：GSAP 上浮淡入 */}
           <div ref={formPanelRef}>
-            {tab === 'register' ? (
+            {/* 1. 登录面板 */}
+            {tab === 'login' && (
+              <form
+                id="tabpanel-login"
+                role="tabpanel"
+                aria-labelledby="tab-login"
+                onSubmit={handleLogin}
+                className="space-y-3.5"
+              >
+                <div className="space-y-1.5">
+                  <label htmlFor="login-username" className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                    <User className="h-3.5 w-3.5 text-muted" aria-hidden="true" />
+                    <span>姓名 / 账号</span>
+                  </label>
+                  <Input
+                    id="login-username"
+                    required
+                    placeholder="请输入您的姓名或系统账号"
+                    value={loginUser}
+                    onChange={(e) => setLoginUser(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label htmlFor="login-password" className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                    <KeyRound className="h-3.5 w-3.5 text-muted" aria-hidden="true" />
+                    <span>访问密码</span>
+                  </label>
+                  <Input
+                    id="login-password"
+                    type="password"
+                    required
+                    placeholder="请输入您的访问密码"
+                    value={loginPass}
+                    onChange={(e) => setLoginPass(e.target.value)}
+                  />
+                </div>
+
+                <Button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full h-10 text-xs font-semibold mt-2 inline-flex items-center justify-center gap-1.5"
+                >
+                  <LogIn className="h-4 w-4" aria-hidden="true" />
+                  <span>{loading ? '正在验证登录...' : '立即登录'}</span>
+                </Button>
+              </form>
+            )}
+
+            {/* 2. 注册面板 */}
+            {tab === 'register' && (
               <form
                 id="tabpanel-register"
                 role="tabpanel"
@@ -271,8 +421,8 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
                     id="reg-fullname"
                     required
                     placeholder="请输入全名以方便对接（如：张三）"
-                    value={fullname}
-                    onChange={(e) => setFullname(e.target.value)}
+                    value={regFullname}
+                    onChange={(e) => setRegFullname(e.target.value)}
                   />
                 </div>
 
@@ -286,12 +436,12 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
                     type="password"
                     required
                     placeholder="设置 6 位以上密码并牢记"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    value={regPassword}
+                    onChange={(e) => setRegPassword(e.target.value)}
                   />
                 </div>
 
-                {/* 业务组单选组：ARIA radiogroup 与焦点环 */}
+                {/* 业务组单选组 */}
                 <div className="gsap-stagger-item space-y-1.5">
                   <span id="group-label" className="text-xs font-medium text-foreground">所属业务组</span>
                   <div
@@ -349,7 +499,6 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
                   </div>
                 </div>
 
-                {/* 提示栏：低饱和琥珀色，重要提醒 */}
                 <div className="gsap-stagger-item p-2.5 bg-warning-bg border border-warning-border rounded-[8px] text-xs text-warning flex items-center gap-2">
                   <Info className="h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
                   <span className="font-medium">重要提醒：只能注册一次</span>
@@ -363,49 +512,58 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
                   {loading ? '正在开通专属权限中...' : '立即注册'}
                 </Button>
               </form>
-            ) : (
+            )}
+
+            {/* 3. 重新挂载面板 */}
+            {tab === 'remount' && (
               <form
-                id="tabpanel-login"
+                id="tabpanel-remount"
                 role="tabpanel"
-                aria-labelledby="tab-login"
-                onSubmit={handleVerify}
+                aria-labelledby="tab-remount"
+                onSubmit={handleRemount}
                 className="space-y-3.5"
               >
+                <div className="p-2.5 bg-secondary border border-border rounded-[8px] text-xs text-muted flex items-center gap-2">
+                  <RefreshCw className="h-4 w-4 shrink-0 text-accent" aria-hidden="true" />
+                  <span>更换电脑或盘符掉线？输入凭据生成 60 秒新挂载脚本</span>
+                </div>
+
                 <div className="space-y-1.5">
-                  <label htmlFor="login-fullname" className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                  <label htmlFor="remount-name" className="text-xs font-medium text-foreground flex items-center gap-1.5">
                     <User className="h-3.5 w-3.5 text-muted" aria-hidden="true" />
-                    <span>姓名</span>
+                    <span>姓名 / 账号</span>
                   </label>
                   <Input
-                    id="login-fullname"
+                    id="remount-name"
                     required
-                    placeholder="请输入注册时的全名"
-                    value={loginName}
-                    onChange={(e) => setLoginName(e.target.value)}
+                    placeholder="请输入注册时的姓名或系统账号"
+                    value={remountName}
+                    onChange={(e) => setRemountName(e.target.value)}
                   />
                 </div>
 
                 <div className="space-y-1.5">
-                  <label htmlFor="login-password" className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                  <label htmlFor="remount-password" className="text-xs font-medium text-foreground flex items-center gap-1.5">
                     <KeyRound className="h-3.5 w-3.5 text-muted" aria-hidden="true" />
                     <span>访问密码</span>
                   </label>
                   <Input
-                    id="login-password"
+                    id="remount-password"
                     type="password"
                     required
-                    placeholder="请输入您的密码"
-                    value={loginPass}
-                    onChange={(e) => setLoginPass(e.target.value)}
+                    placeholder="请输入您的访问密码"
+                    value={remountPass}
+                    onChange={(e) => setRemountPass(e.target.value)}
                   />
                 </div>
 
                 <Button
                   type="submit"
                   disabled={loading}
-                  className="w-full h-10 text-xs font-semibold mt-2"
+                  className="w-full h-10 text-xs font-semibold mt-2 inline-flex items-center justify-center gap-1.5"
                 >
-                  {loading ? '正在验证中...' : '验证并重新获取专属脚本'}
+                  <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                  <span>{loading ? '正在验证并生成凭据...' : '验证并重新挂载'}</span>
                 </Button>
               </form>
             )}

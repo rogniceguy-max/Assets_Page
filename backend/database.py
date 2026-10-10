@@ -58,11 +58,11 @@ def check_ip_registered(client_ip: str):
     return dict(row) if row else None
 
 def get_user_by_name(fullname: str):
-    """通过员工全名查找账户"""
+    """通过员工全名或系统账号查找账户"""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM users WHERE username = ? OR display_name = ?", (fullname, fullname))
+    cursor.execute("SELECT * FROM users WHERE username = ? OR display_name = ? OR linux_username = ?", (fullname, fullname, fullname))
     row = cursor.fetchone()
     conn.close()
     return dict(row) if row else None

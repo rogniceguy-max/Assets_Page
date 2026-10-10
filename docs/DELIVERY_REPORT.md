@@ -83,11 +83,25 @@
 
 ---
 
-## 三、代码分支与提交状态
+## 三、三合一入口（登录、注册、重新挂载）与工作台体系
 
-- 修复与重构工作全部位于独立分支：`feat/visual-design-system-gsap`
-- 最新提交记录：
-  - `2e2ca4d feat(security): implement 60s ephemeral token mount mechanism and zero plaintext password storage`
-  - `a813765 feat(ui): implement DaVinci-grade visual design system and GSAP animation specs`
-- 代码已全量推送到远程仓库：[rogniceguy-max/Assets_Page (feat/visual-design-system-gsap)](https://github.com/rogniceguy-max/Assets_Page/tree/feat/visual-design-system-gsap)
-- NAS 现场服务（`http://192.168.1.153:8080/`）已全量热部署并稳定运行（systemd unit `muying-hub.service`）。
+根据团队运营流程，对门户主入口进行了功能升级与术语标准化：
+
+1. **全面将「重新领脚本」重命名为「重新挂载」**：
+   - 全局前端界面、提示文本、后端接口返回文案及脚本内部安全回退指引，统一采用标准术语「重新挂载」。
+2. **新增「登录」入口与三合一卡片设计**：
+   - 首页卡片采用标准三栏式 GSAP 动效 Tab 切换：`登录` | `注册` | `重新挂载`。
+   - 三段式滑块指示器严格按照 `w-[calc((100%-8px)/3)]` 与 `xPercent: [0, 100, 200]` 进行动力学位移，兼容无障碍键盘左右键循环导航与 `prefers-reduced-motion`。
+3. **员工资产工作台（UserDashboard）与全状态协同**：
+   - **登录 (Login)**：已注册员工凭全名/系统账号 + 密码登录后，进入高质感暗室风格「员工资产工作台」，直观查看所属业务组、Linux 存储账号、Z: 盘授权状态与挂载指引，并可随时点击获取 60 秒挂载脚本或退出账号。
+   - **注册 (Register)**：新员工注册成功后，即时进入 60 秒专属挂载脚本下发卡片，并在顶部工具栏同步展示登录身份徽标。
+   - **重新挂载 (Remount)**：针对盘符掉线或更换电脑的员工，输入凭据后直接生成全新 60 秒高熵挂载脚本。
+   - **顶部 Header 状态联动**：登录后展示员工姓名、所属业务组徽标与快捷退出按钮。
+
+---
+
+## 四、代码分支与提交状态
+
+- 重构与新增工作全部位于独立分支：`feat/visual-design-system-gsap`
+- 远程仓库：[rogniceguy-max/Assets_Page (feat/visual-design-system-gsap)](https://github.com/rogniceguy-max/Assets_Page/tree/feat/visual-design-system-gsap)
+- NAS 生产部署：服务 `muying-hub.service` 已热更新重启并稳定运行（`http://192.168.1.153:8080/`）。

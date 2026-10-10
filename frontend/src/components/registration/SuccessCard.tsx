@@ -190,7 +190,7 @@ export const SuccessCard: React.FC<SuccessCardProps> = ({ fullname, token, onBac
               className="text-muted hover:text-foreground inline-flex items-center gap-1.5 text-xs"
             >
               <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>返回注册首页</span>
+              <span>返回门户首页</span>
             </Button>
           </div>
         </div>

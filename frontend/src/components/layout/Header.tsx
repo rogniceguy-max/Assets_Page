@@ -1,13 +1,26 @@
 import React from 'react';
-import { Film, Menu } from 'lucide-react';
+import { Film, Menu, User, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface HeaderProps {
   sidebarOpen: boolean;
   setSidebarOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  currentUser?: {
+    fullname: string;
+    linux_username: string;
+    group_type: string;
+  } | null;
+  onLogout?: () => void;
+  onGoAuth?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ sidebarOpen, setSidebarOpen }) => {
+export const Header: React.FC<HeaderProps> = ({ 
+  sidebarOpen, 
+  setSidebarOpen,
+  currentUser,
+  onLogout,
+  onGoAuth
+}) => {
   return (
     // 规格要求：顶部工具栏 56–64px，专业桌面软件质感
     <header className="h-[60px] border-b border-border bg-sidebar px-4 flex items-center justify-between sticky top-0 z-30">
@@ -35,6 +48,44 @@ export const Header: React.FC<HeaderProps> = ({ sidebarOpen, setSidebarOpen }) =
             </span>
           </div>
         </div>
+      </div>
+
+      {/* 右侧：登录状态或快捷操作入口 */}
+      <div className="flex items-center gap-2">
+        {currentUser ? (
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-[6px] bg-secondary border border-border text-xs">
+              <User className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
+              <span className="font-medium text-foreground">{currentUser.fullname}</span>
+              <span className="text-[10px] text-muted font-mono ml-1 px-1 py-0.2 bg-sidebar rounded">
+                {currentUser.group_type === 'film' ? '影视组' : '写作组'}
+              </span>
+            </div>
+            {onLogout && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onLogout}
+                className="h-7 text-xs text-muted hover:text-destructive hover:bg-secondary px-2"
+                title="退出当前登录"
+              >
+                <LogOut className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+                <span className="hidden sm:inline">退出</span>
+              </Button>
+            )}
+          </div>
+        ) : (
+          onGoAuth && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onGoAuth}
+              className="h-7 text-xs border-border text-muted hover:text-foreground hover:bg-secondary px-2.5"
+            >
+              登录 / 注册
+            </Button>
+          )
+        )}
       </div>
     </header>
   );
