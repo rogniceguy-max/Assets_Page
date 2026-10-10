@@ -70,12 +70,6 @@ export const App: React.FC = () => {
         setSidebarOpen={setSidebarOpen}
         currentUser={currentUser}
         onLogout={handleLogout}
-        onGoAuth={() => {
-          setActiveNav('onboarding');
-          setMountSession(null);
-          setCurrentUser(null);
-          setAuthDefaultTab('login');
-        }}
       />
 
       <div className="flex flex-1 overflow-hidden relative">
