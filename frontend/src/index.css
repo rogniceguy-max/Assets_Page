@@ -4,27 +4,62 @@
 
 @layer base {
   :root {
+    /* 核心层级表面 (Surfaces) */
     --background: #141513;
-    --foreground: #EDEBE5;
     --sidebar: #1C1E1B;
     --card: #242623;
+    --card-hover: #292C28;
     --secondary: #292C28;
+    --secondary-hover: #323530;
+
+    /* 描边体系 (Borders) */
     --border: #3B3E38;
-    --accent: #BAA17E;
-    --accent-foreground: #171815;
+    --border-hover: #4F524A;
+    --border-focus: #BAA17E;
+
+    /* 文本层级与高对比度微调 (Typography - WCAG AA 合规) */
+    --foreground: #EDEBE5;
     --muted: #A4A59F;
-    --muted-foreground: #6F706B;
+    --muted-foreground: #95968E;
+
+    /* 核心品牌与强调色 - 香槟暖铜金 (Brand & Accent) */
+    --accent: #BAA17E;
+    --accent-hover: #C9B393;
+    --accent-active: #A88E6B;
+    --accent-foreground: #171815;
+    --accent-muted: rgba(186, 161, 126, 0.12);
+
+    /* 低饱和功能语义色 (Semantic States) */
+    --success: #88A982;
+    --success-bg: #1E251E;
+    --success-border: #334333;
+    --success-foreground: #EDEBE5;
+
+    --warning: #CBA167;
+    --warning-bg: #262118;
+    --warning-border: #4B3D28;
+    --warning-foreground: #EFE3D0;
+
+    --destructive: #C96B64;
+    --destructive-bg: #261B1B;
+    --destructive-border: #4E2E2C;
+    --destructive-foreground: #F2DCDA;
+
+    --info: #7B96A8;
+    --info-bg: #192025;
+    --info-border: #2E3C47;
+    --info-foreground: #EDEBE5;
   }
 
   * {
-    border-color: #3B3E38;
+    border-color: var(--border);
   }
 
   body {
     margin: 0;
     min-height: 100vh;
-    background-color: #141513;
-    color: #EDEBE5;
+    background-color: var(--background);
+    color: var(--foreground);
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
     line-height: 1.5;
     font-size: 14px;
@@ -33,21 +68,21 @@
   }
 
   ::selection {
-    background-color: rgba(186, 161, 126, 0.3);
-    color: #EDEBE5;
+    background-color: var(--accent-muted);
+    color: var(--foreground);
   }
 }
 
-/* 沉浸式暗室工作站面板质感（无大光斑/无发光边框） */
+/* 沉浸式暗室工作站面板质感 */
 .pro-panel {
-  background-color: #242623;
-  border: 1px solid #3B3E38;
+  background-color: var(--card);
+  border: 1px solid var(--border);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
 }
 
 .pro-subpanel {
-  background-color: #1C1E1B;
-  border: 1px solid #3B3E38;
+  background-color: var(--sidebar);
+  border: 1px solid var(--border);
 }
 
 /* 系统减弱动效偏好适配 */

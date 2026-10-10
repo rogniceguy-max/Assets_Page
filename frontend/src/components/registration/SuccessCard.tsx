@@ -76,7 +76,7 @@ export const SuccessCard: React.FC<SuccessCardProps> = ({ fullname, onBack }) =>
           <div className="flex justify-center mb-2.5">
             {/* 成功标识：低饱和语义绿底色与精细描边，移除夸张旋转与发光 */}
             <div className="h-11 w-11 rounded-full bg-success-bg border border-success-border flex items-center justify-center text-success">
-              <CheckCircle2 className="h-5 w-5" />
+              <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
             </div>
           </div>
           <CardTitle className="text-xl font-semibold text-foreground tracking-tight">
@@ -100,11 +100,11 @@ export const SuccessCard: React.FC<SuccessCardProps> = ({ fullname, onBack }) =>
               <div className="flex items-center gap-1.5 font-medium text-foreground">
                 {userInfo?.group_type === 'writing' ? (
                   <span className="flex items-center gap-1 text-xs">
-                    <PenLine className="h-3.5 w-3.5 text-accent" /> 写作组
+                    <PenLine className="h-3.5 w-3.5 text-accent" aria-hidden="true" /> 写作组
                   </span>
                 ) : (
                   <span className="flex items-center gap-1 text-xs">
-                    <Video className="h-3.5 w-3.5 text-accent" /> 影视组
+                    <Video className="h-3.5 w-3.5 text-accent" aria-hidden="true" /> 影视组
                   </span>
                 )}
               </div>
@@ -121,19 +121,19 @@ export const SuccessCard: React.FC<SuccessCardProps> = ({ fullname, onBack }) =>
             </div>
           </div>
 
-          {/* 下载主操作按钮：香槟铜金，单一强焦点，无彩色投影 */}
+          {/* 下载主操作按钮：香槟铜金，单一强焦点，无彩色投影，键盘焦点环可见 */}
           <a
             href={downloadUrl}
-            className="gsap-success-item flex items-center justify-center gap-2 w-full h-11 rounded-[8px] bg-accent text-accent-foreground font-semibold text-xs hover:bg-accent-hover active:bg-accent-active transition-colors select-none"
+            className="gsap-success-item flex items-center justify-center gap-2 w-full h-11 rounded-[8px] bg-accent text-accent-foreground font-semibold text-xs hover:bg-accent-hover active:bg-accent-active transition-colors select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           >
-            <Download className="h-4 w-4" />
+            <Download className="h-4 w-4" aria-hidden="true" />
             <span>立即下载挂载脚本 ({filename})</span>
           </a>
 
           {/* 3 步使用指引：专业排版与信息层级 */}
           <div className="gsap-success-item p-3.5 rounded-[8px] bg-sidebar border border-border space-y-3 text-left text-xs">
             <div className="flex items-center gap-2 font-medium text-foreground text-xs">
-              <Info className="h-4 w-4 text-muted" />
+              <Info className="h-4 w-4 text-muted" aria-hidden="true" />
               <span>挂载脚本使用指引</span>
             </div>
 
@@ -181,7 +181,7 @@ export const SuccessCard: React.FC<SuccessCardProps> = ({ fullname, onBack }) =>
               onClick={onBack}
               className="text-muted hover:text-foreground inline-flex items-center gap-1.5 text-xs"
             >
-              <ArrowLeft className="h-3.5 w-3.5" />
+              <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
               <span>返回注册首页</span>
             </Button>
           </div>

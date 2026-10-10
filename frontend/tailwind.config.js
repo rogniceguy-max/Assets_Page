@@ -8,63 +8,71 @@ export default {
   theme: {
     extend: {
       colors: {
-        // 核心层级表面 (Surfaces)
-        background: '#141513',
-        sidebar: '#1C1E1B',
-        card: '#242623',
-        'card-hover': '#292C28',
-        secondary: '#292C28',
-        'secondary-hover': '#323530',
+        // 核心层级表面 (Surfaces) - 严格引用 CSS 变量
+        background: 'var(--background)',
+        sidebar: 'var(--sidebar)',
+        card: {
+          DEFAULT: 'var(--card)',
+          hover: 'var(--card-hover)',
+        },
+        secondary: {
+          DEFAULT: 'var(--secondary)',
+          hover: 'var(--secondary-hover)',
+        },
         
         // 边框描边 (Borders)
-        border: '#3B3E38',
-        'border-hover': '#4F524A',
-        'border-focus': '#BAA17E',
+        border: {
+          DEFAULT: 'var(--border)',
+          hover: 'var(--border-hover)',
+          focus: 'var(--border-focus)',
+        },
 
-        // 文本色彩 (Typography)
-        foreground: '#EDEBE5',
-        muted: '#A4A59F',
-        'muted-foreground': '#6F706B',
+        // 文本色彩 (Typography - WCAG AA 合规)
+        foreground: 'var(--foreground)',
+        muted: {
+          DEFAULT: 'var(--muted)',
+          foreground: 'var(--muted-foreground)',
+        },
 
-        // 核心强调色 - 香槟暖铜金 (Accent / Brand)
+        // 核心强调色 - 香槟暖铜金 (Brand & Accent)
         accent: {
-          DEFAULT: '#BAA17E',
-          hover: '#C9B393',
-          active: '#A88E6B',
-          foreground: '#171815',
-          muted: 'rgba(186, 161, 126, 0.12)',
+          DEFAULT: 'var(--accent)',
+          hover: 'var(--accent-hover)',
+          active: 'var(--accent-active)',
+          foreground: 'var(--accent-foreground)',
+          muted: 'var(--accent-muted)',
         },
         primary: {
-          DEFAULT: '#BAA17E',
-          hover: '#C9B393',
-          active: '#A88E6B',
-          foreground: '#171815',
+          DEFAULT: 'var(--accent)',
+          hover: 'var(--accent-hover)',
+          active: 'var(--accent-active)',
+          foreground: 'var(--accent-foreground)',
         },
 
         // 低饱和语义色 (Semantic States)
         success: {
-          DEFAULT: '#88A982',
-          bg: '#1E251E',
-          border: '#334333',
-          foreground: '#EDEBE5',
+          DEFAULT: 'var(--success)',
+          bg: 'var(--success-bg)',
+          border: 'var(--success-border)',
+          foreground: 'var(--success-foreground)',
         },
         warning: {
-          DEFAULT: '#CBA167',
-          bg: '#262118',
-          border: '#4B3D28',
-          foreground: '#EFE3D0',
+          DEFAULT: 'var(--warning)',
+          bg: 'var(--warning-bg)',
+          border: 'var(--warning-border)',
+          foreground: 'var(--warning-foreground)',
         },
         destructive: {
-          DEFAULT: '#C96B64',
-          bg: '#261B1B',
-          border: '#4E2E2C',
-          foreground: '#F2DCDA',
+          DEFAULT: 'var(--destructive)',
+          bg: 'var(--destructive-bg)',
+          border: 'var(--destructive-border)',
+          foreground: 'var(--destructive-foreground)',
         },
         info: {
-          DEFAULT: '#7B96A8',
-          bg: '#192025',
-          border: '#2E3C47',
-          foreground: '#EDEBE5',
+          DEFAULT: 'var(--info)',
+          bg: 'var(--info-bg)',
+          border: 'var(--info-border)',
+          foreground: 'var(--info-foreground)',
         },
       },
       borderRadius: {
