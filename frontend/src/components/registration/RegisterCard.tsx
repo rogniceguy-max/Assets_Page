@@ -241,7 +241,7 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
                         : 'border-border bg-sidebar hover:border-border-hover text-muted'
                     }`}
                   >
-                    <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <Video className={`h-4 w-4 ${group === 'film' ? 'text-accent' : 'text-muted'}`} />
                         <span className="font-semibold text-xs text-foreground">影视组</span>
@@ -250,9 +250,6 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
                         <Check className="h-3.5 w-3.5 text-accent" />
                       )}
                     </div>
-                    <p className="text-[11px] text-muted leading-tight">
-                      【01_影视资源库】完全读写，文学库只读
-                    </p>
                   </button>
 
                   <button
@@ -264,7 +261,7 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
                         : 'border-border bg-sidebar hover:border-border-hover text-muted'
                     }`}
                   >
-                    <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <PenLine className={`h-4 w-4 ${group === 'writing' ? 'text-accent' : 'text-muted'}`} />
                         <span className="font-semibold text-xs text-foreground">写作组</span>
@@ -273,9 +270,6 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
                         <Check className="h-3.5 w-3.5 text-accent" />
                       )}
                     </div>
-                    <p className="text-[11px] text-muted leading-tight">
-                      【02_文学创作库】完全读写，影视库只读
-                    </p>
                   </button>
                 </div>
               </div>

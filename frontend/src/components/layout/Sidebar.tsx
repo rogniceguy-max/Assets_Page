@@ -5,7 +5,6 @@ import {
   PenTool, 
   FolderTree, 
   Users, 
-  ChevronLeft, 
   ChevronRight,
   HardDrive
 } from 'lucide-react';
@@ -150,10 +149,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           aria-label={open ? '收起导航栏' : '展开导航栏'}
         >
           {open ? (
-            <div className="flex items-center gap-1.5 text-xs text-muted">
-              <ChevronLeft className="h-3.5 w-3.5" />
-              <span>收起侧栏 (64px)</span>
-            </div>
+            <span className="text-xs text-muted">收起侧栏</span>
           ) : (
             <ChevronRight className="h-3.5 w-3.5" />
           )}
