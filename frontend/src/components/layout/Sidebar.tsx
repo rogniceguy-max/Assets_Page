@@ -5,8 +5,7 @@ import {
   PenTool, 
   FolderTree, 
   Users, 
-  ChevronRight,
-  HardDrive
+  ChevronRight
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -131,17 +130,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         })}
       </div>
 
-      <div className="p-2.5 border-t border-border space-y-2">
-        {open ? (
-          <div className="bg-secondary/70 border border-border p-2.5 rounded-[8px] text-xs text-muted flex items-center gap-2.5">
-            <HardDrive className="h-4 w-4 text-accent shrink-0" />
-            <div className="overflow-hidden">
-              <div className="text-foreground text-xs font-medium truncate">MuYing 存储总池</div>
-              <div className="text-[11px] text-muted-foreground">局域网共享卷已就绪</div>
-            </div>
-          </div>
-        ) : null}
-
+      <div className="p-2.5 border-t border-border">
         <button
           onClick={() => setOpen((prev) => !prev)}
           className="w-full flex items-center justify-center p-2 rounded-[8px] text-muted hover:text-foreground hover:bg-secondary/50 transition-colors"

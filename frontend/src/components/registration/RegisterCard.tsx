@@ -274,12 +274,10 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
                 </div>
               </div>
 
-              {/* 提示栏：低饱和琥珀色，替换不必要 Sparkles 为严谨 Info 图标 */}
-              <div className="gsap-stagger-item p-3 bg-warning-bg border border-warning-border rounded-[8px] text-xs text-warning-foreground leading-relaxed flex items-start gap-2">
-                <Info className="h-4 w-4 shrink-0 text-warning mt-0.5" />
-                <div>
-                  <strong className="text-warning">重要提醒：只能注册一次</strong>（系统已绑定本机 IP），提交后将自动为您开通权限并生成专属挂载脚本。
-                </div>
+              {/* 提示栏：低饱和琥珀色，重要提醒 */}
+              <div className="gsap-stagger-item p-2.5 bg-warning-bg border border-warning-border rounded-[8px] text-xs text-warning flex items-center gap-2">
+                <Info className="h-4 w-4 shrink-0 text-warning" />
+                <span className="font-medium">重要提醒：只能注册一次</span>
               </div>
 
               <Button
