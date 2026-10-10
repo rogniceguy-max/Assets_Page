@@ -1,5 +1,5 @@
 import React from 'react';
-import { Film, Menu, HardDrive, Wifi } from 'lucide-react';
+import { Film, Menu, HardDrive, Server } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface HeaderProps {
@@ -9,41 +9,44 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ sidebarOpen, setSidebarOpen }) => {
   return (
-    // 规格要求：顶部工具栏 56–64px
-    <header className="h-[60px] border-b border-white/10 bg-slate-950/80 backdrop-blur-md px-4 flex items-center justify-between sticky top-0 z-30 select-none">
+    // 规格要求：顶部工具栏 56–64px，专业桌面软件质感
+    <header className="h-[60px] border-b border-border bg-sidebar px-4 flex items-center justify-between sticky top-0 z-30">
       <div className="flex items-center gap-3">
         <Button
           variant="ghost"
           size="icon"
           onClick={() => setSidebarOpen((prev) => !prev)}
-          className="text-slate-400 hover:text-white"
-          title={sidebarOpen ? '收起侧边栏 (64px)' : '展开侧边栏 (240px)'}
+          className="text-muted hover:text-foreground"
+          title={sidebarOpen ? '收起侧边栏' : '展开侧边栏'}
+          aria-label={sidebarOpen ? '收起侧边栏' : '展开侧边栏'}
         >
-          <Menu className="h-5 w-5" />
+          <Menu className="h-4 w-4" />
         </Button>
 
         <div className="flex items-center gap-2.5">
-          <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white shadow-sm shadow-blue-500/30">
+          {/* 影视制作专业标识：质感深灰底色 + 暖铜金图标，移除浮夸蓝紫渐变与光晕 */}
+          <div className="h-8 w-8 rounded-[8px] bg-secondary border border-border flex items-center justify-center text-accent">
             <Film className="h-4 w-4" />
           </div>
-          <div>
-            <span className="font-bold text-base tracking-tight text-white">MuYing</span>
-            <span className="text-xs text-slate-400 ml-1.5 font-medium hidden sm:inline">
-              团队资产与服务中心
+          <div className="flex items-baseline">
+            <span className="font-semibold text-sm tracking-tight text-foreground">MuYing</span>
+            <span className="text-xs text-muted ml-2 hidden sm:inline">
+              资产与挂载门户
             </span>
           </div>
         </div>
       </div>
 
-      <div className="flex items-center gap-3 text-xs text-slate-400">
-        <div className="flex items-center gap-1.5 bg-slate-900/90 border border-white/10 px-2.5 py-1 rounded-full">
-          <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-          <HardDrive className="h-3.5 w-3.5 text-slate-400" />
-          <span className="font-mono text-slate-300">192.168.1.153</span>
+      <div className="flex items-center gap-2.5 text-xs text-muted">
+        {/* 客观 NAS 服务标识：移除虚假“万兆在线”字样，客观展示真实 IP 与服务状态 */}
+        <div className="flex items-center gap-2 bg-secondary border border-border px-3 py-1.5 rounded-[6px]">
+          <span className="h-1.5 w-1.5 rounded-full bg-success" />
+          <Server className="h-3.5 w-3.5 text-muted" />
+          <span className="font-mono text-xs text-foreground">192.168.1.153</span>
         </div>
-        <div className="hidden sm:flex items-center gap-1 bg-slate-900/90 border border-white/10 px-2.5 py-1 rounded-full text-slate-300">
-          <Wifi className="h-3.5 w-3.5 text-blue-400" />
-          <span>局域网万兆在线</span>
+        <div className="hidden sm:flex items-center gap-1.5 bg-secondary border border-border px-3 py-1.5 rounded-[6px] text-muted">
+          <HardDrive className="h-3.5 w-3.5 text-muted" />
+          <span>Samba 存储服务</span>
         </div>
       </div>
     </header>

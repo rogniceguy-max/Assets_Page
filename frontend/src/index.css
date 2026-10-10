@@ -4,42 +4,60 @@
 
 @layer base {
   :root {
-    --background: 222 47% 6%;
-    --foreground: 210 40% 98%;
-    --card: 222 47% 11%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222 47% 11%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 221 83% 53%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 217 33% 17%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217 33% 17%;
-    --muted-foreground: 215 20% 65%;
-    --accent: 217 33% 17%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62% 30%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217 33% 20%;
-    --input: 217 33% 20%;
-    --ring: 224 76% 48%;
-    --radius: 0.75rem;
+    --background: #141513;
+    --foreground: #EDEBE5;
+    --sidebar: #1C1E1B;
+    --card: #242623;
+    --secondary: #292C28;
+    --border: #3B3E38;
+    --accent: #BAA17E;
+    --accent-foreground: #171815;
+    --muted: #A4A59F;
+    --muted-foreground: #6F706B;
+  }
+
+  * {
+    border-color: #3B3E38;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background-color: #141513;
+    color: #EDEBE5;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+    line-height: 1.5;
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::selection {
+    background-color: rgba(186, 161, 126, 0.3);
+    color: #EDEBE5;
   }
 }
 
-body {
-  margin: 0;
-  min-height: 100vh;
-  background-color: #090d16;
-  color: #f8fafc;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
-  line-height: 1.5;
-  font-size: 14px;
+/* 沉浸式暗室工作站面板质感（无大光斑/无发光边框） */
+.pro-panel {
+  background-color: #242623;
+  border: 1px solid #3B3E38;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
 }
 
-/* 玻璃拟态卡片背景与低对比度边框 */
-.glass-panel {
-  background: rgba(15, 23, 42, 0.75);
-  backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+.pro-subpanel {
+  background-color: #1C1E1B;
+  border: 1px solid #3B3E38;
+}
+
+/* 系统减弱动效偏好适配 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

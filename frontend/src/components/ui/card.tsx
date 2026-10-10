@@ -6,8 +6,8 @@ const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElemen
     <div
       ref={ref}
       className={cn(
-        // 规格要求：卡片圆角 12px, 1px 低对比度描边
-        'rounded-[12px] border border-white/10 bg-slate-900/70 backdrop-blur-xl text-slate-100 shadow-2xl',
+        // 规格要求：卡片圆角 12px, 1px 低对比度描边, 沉浸式暗室面板底色
+        'rounded-[12px] border border-border bg-card text-foreground shadow-panel',
         className
       )}
       {...props}
@@ -25,10 +25,10 @@ CardHeader.displayName = 'CardHeader';
 
 const CardTitle = React.forwardRef<HTMLParagraphElement, React.HTMLAttributes<HTMLHeadingElement>>(
   ({ className, ...props }, ref) => (
-    // 规格要求：页面标题 24–28px
+    // 规格要求：页面标题 22–24px，字重严谨
     <h3
       ref={ref}
-      className={cn('text-2xl font-bold leading-tight tracking-tight text-white', className)}
+      className={cn('text-2xl font-semibold leading-tight tracking-tight text-foreground', className)}
       {...props}
     />
   )
@@ -39,8 +39,8 @@ const CardDescription = React.forwardRef<
   HTMLParagraphElement,
   React.HTMLAttributes<HTMLParagraphElement>
 >(({ className, ...props }, ref) => (
-  // 规格要求：辅助文本 12–13px, 保证对比度
-  <p ref={ref} className={cn('text-[13px] text-slate-400', className)} {...props} />
+  // 规格要求：辅助说明 12–13px，保证对比度
+  <p ref={ref} className={cn('text-xs text-muted leading-relaxed', className)} {...props} />
 ));
 CardDescription.displayName = 'CardDescription';
 

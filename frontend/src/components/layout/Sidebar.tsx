@@ -29,86 +29,102 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'onboarding',
       label: '挂载与入职',
       icon: Compass,
-      active: true,
+      available: true,
       badge: '当前',
     },
     {
       id: 'film',
       label: '影视资源库',
       icon: Video,
-      active: false,
-      badge: '即将开放',
+      available: false,
+      badge: '规划中',
     },
     {
       id: 'writing',
       label: '文学创作库',
       icon: PenTool,
-      active: false,
-      badge: '即将开放',
+      available: false,
+      badge: '规划中',
     },
     {
       id: 'assets',
       label: '公共素材空间',
       icon: FolderTree,
-      active: false,
-      badge: '即将开放',
+      available: false,
+      badge: '规划中',
     },
     {
       id: 'members',
       label: '成员权限管理',
       icon: Users,
-      active: false,
-      badge: '即将开放',
+      available: false,
+      badge: '规划中',
     },
   ];
 
   return (
-    // 规格要求：左侧导航栏 展开 240px，收起 64px
+    // 规格要求：左侧导航栏 展开 240px，收起 64px；专业桌面暗室层级
     <aside
       className={cn(
-        'border-r border-white/10 bg-slate-950/60 backdrop-blur-md transition-all duration-300 ease-in-out flex flex-col justify-between shrink-0 select-none z-20',
+        'border-r border-border bg-sidebar transition-all duration-200 ease-out flex flex-col justify-between shrink-0 z-20',
         open ? 'w-[240px]' : 'w-[64px]'
       )}
     >
-      <div className="p-3 space-y-1">
+      <div className="p-2.5 space-y-1">
         {menuItems.map((item) => {
           const Icon = item.icon;
           const isSelected = activeNav === item.id;
+
+          if (!item.available) {
+            // 未开放模块：明确呈现不可用/开发中状态，避免可操作却无功能的伪入口
+            return (
+              <div
+                key={item.id}
+                className={cn(
+                  'w-full flex items-center gap-3 px-3 py-2 rounded-[8px] text-xs text-muted-foreground opacity-60 cursor-not-allowed select-none relative',
+                  !open && 'justify-center px-0'
+                )}
+                title={!open ? `${item.label} (规划中)` : undefined}
+              >
+                <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                {open && (
+                  <div className="flex items-center justify-between flex-1 overflow-hidden">
+                    <span className="truncate">{item.label}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-[4px] bg-secondary text-muted-foreground font-mono">
+                      {item.badge}
+                    </span>
+                  </div>
+                )}
+              </div>
+            );
+          }
 
           return (
             <button
               key={item.id}
               onClick={() => setActiveNav(item.id)}
               className={cn(
-                'w-full flex items-center gap-3 px-3 py-2.5 rounded-[8px] text-sm transition-all text-left relative group',
+                'w-full flex items-center gap-3 px-3 py-2.5 rounded-[8px] text-xs transition-colors duration-150 text-left relative group',
+                !open && 'justify-center px-0',
                 isSelected
-                  ? 'bg-blue-600/15 text-white font-medium border border-blue-500/30'
-                  : 'text-slate-400 hover:text-white hover:bg-white/5 border border-transparent'
+                  ? 'bg-secondary text-foreground font-medium border border-border'
+                  : 'text-muted hover:text-foreground hover:bg-secondary/40 border border-transparent'
               )}
               title={!open ? item.label : undefined}
             >
               <Icon
                 className={cn(
-                  'h-5 w-5 shrink-0 transition-colors',
-                  isSelected ? 'text-blue-400' : 'text-slate-400 group-hover:text-white'
+                  'h-4 w-4 shrink-0 transition-colors',
+                  isSelected ? 'text-accent' : 'text-muted group-hover:text-foreground'
                 )}
               />
 
               {open && (
                 <div className="flex items-center justify-between flex-1 overflow-hidden">
                   <span className="truncate">{item.label}</span>
-                  {item.badge && (
-                    <span
-                      className={cn(
-                        'text-[10px] px-1.5 py-0.5 rounded font-mono',
-                        item.active
-                          ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
-                          : 'bg-slate-800 text-slate-500'
-                      )}
-                    >
-                      {item.badge}
-                    </span>
-                  )}
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-[4px] bg-accent/15 text-accent font-medium">
+                    {item.badge}
+                  </span>
                 </div>
               )}
             </button>
@@ -116,29 +132,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
         })}
       </div>
 
-      <div className="p-3 border-t border-white/10 space-y-2">
+      <div className="p-2.5 border-t border-border space-y-2">
         {open ? (
-          <div className="bg-slate-900/60 border border-white/5 p-2.5 rounded-[8px] text-xs text-slate-400 flex items-center gap-2">
-            <HardDrive className="h-4 w-4 text-emerald-400 shrink-0" />
+          <div className="bg-secondary/70 border border-border p-2.5 rounded-[8px] text-xs text-muted flex items-center gap-2.5">
+            <HardDrive className="h-4 w-4 text-accent shrink-0" />
             <div className="overflow-hidden">
-              <div className="text-slate-200 font-medium truncate">MuYing 资产池</div>
-              <div className="text-[11px] text-slate-500">7.3 TB 可用空间</div>
+              <div className="text-foreground text-xs font-medium truncate">MuYing 存储总池</div>
+              <div className="text-[11px] text-muted-foreground">局域网共享卷已就绪</div>
             </div>
           </div>
         ) : null}
 
         <button
           onClick={() => setOpen((prev) => !prev)}
-          className="w-full flex items-center justify-center p-2 rounded-[8px] text-slate-400 hover:text-white hover:bg-white/5 transition-colors"
+          className="w-full flex items-center justify-center p-2 rounded-[8px] text-muted hover:text-foreground hover:bg-secondary/50 transition-colors"
           title={open ? '收起导航栏' : '展开导航栏'}
+          aria-label={open ? '收起导航栏' : '展开导航栏'}
         >
           {open ? (
-            <div className="flex items-center gap-1.5 text-xs text-slate-400">
-              <ChevronLeft className="h-4 w-4" />
+            <div className="flex items-center gap-1.5 text-xs text-muted">
+              <ChevronLeft className="h-3.5 w-3.5" />
               <span>收起侧栏 (64px)</span>
             </div>
           ) : (
-            <ChevronRight className="h-4 w-4" />
+            <ChevronRight className="h-3.5 w-3.5" />
           )}
         </button>
       </div>

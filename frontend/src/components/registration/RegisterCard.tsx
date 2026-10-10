@@ -5,10 +5,10 @@ import {
   Video, 
   PenLine, 
   AlertTriangle, 
-  CheckCircle2, 
+  Check, 
   KeyRound,
   User,
-  Sparkles
+  Info
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -29,50 +29,29 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
   const [error, setError] = useState<string | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const logoRef = useRef<HTMLDivElement>(null);
-  const titleRef = useRef<HTMLHeadingElement>(null);
-  const tabBoxRef = useRef<HTMLDivElement>(null);
   const indicatorRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
-  // 🌟 GSAP 方案 3：多级错峰电影感入场动画
+  // GSAP 规范：微位移、平滑入场（150-300ms，严格支持 prefers-reduced-motion，无果冻旋转回弹）
   useEffect(() => {
     if (!containerRef.current) return;
 
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (prefersReducedMotion) return;
+
     const ctx = gsap.context(() => {
-      const tl = gsap.timeline();
+      const tl = gsap.timeline({ defaults: { ease: 'power2.out' } });
 
       tl.fromTo(
         containerRef.current,
-        { opacity: 0, scale: 0.96, y: 24 },
-        { opacity: 1, scale: 1, y: 0, duration: 0.55, ease: 'power3.out' }
-      );
-
-      tl.fromTo(
-        logoRef.current,
-        { scale: 0, rotation: -20 },
-        { scale: 1, rotation: 0, duration: 0.5, ease: 'back.out(2)' },
-        '-=0.3'
-      );
-
-      tl.fromTo(
-        titleRef.current,
         { opacity: 0, y: 12 },
-        { opacity: 1, y: 0, duration: 0.35, ease: 'power2.out' },
-        '-=0.25'
+        { opacity: 1, y: 0, duration: 0.3 }
       );
 
       tl.fromTo(
-        tabBoxRef.current,
-        { opacity: 0, y: 12 },
-        { opacity: 1, y: 0, duration: 0.35, ease: 'power2.out' },
-        '-=0.2'
-      );
-
-      tl.fromTo(
-        '.stagger-item',
-        { opacity: 0, y: 16 },
-        { opacity: 1, y: 0, duration: 0.4, stagger: 0.07, ease: 'power2.out' },
+        '.gsap-stagger-item',
+        { opacity: 0, y: 8 },
+        { opacity: 1, y: 0, duration: 0.22, stagger: 0.04 },
         '-=0.15'
       );
     }, containerRef);
@@ -80,25 +59,27 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
     return () => ctx.revert();
   }, []);
 
-  // 🌟 GSAP 方案 2：弹性滑块标签切换
+  // GSAP 规范：平滑位移 Tab 滑块（200ms，无弹性 overshoot）
   const handleTabChange = (targetTab: 'register' | 'login') => {
     if (tab === targetTab) return;
     setError(null);
 
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const isReg = targetTab === 'register';
-    if (indicatorRef.current) {
+
+    if (indicatorRef.current && !prefersReducedMotion) {
       gsap.to(indicatorRef.current, {
         xPercent: isReg ? 0 : 100,
-        duration: 0.4,
-        ease: 'back.out(1.25)',
+        duration: 0.22,
+        ease: 'power2.out',
       });
     }
 
-    if (formRef.current) {
+    if (formRef.current && !prefersReducedMotion) {
       gsap.fromTo(
         formRef.current,
-        { opacity: 0.3, y: 8 },
-        { opacity: 1, y: 0, duration: 0.3, ease: 'power2.out' }
+        { opacity: 0.5, y: 4 },
+        { opacity: 1, y: 0, duration: 0.2, ease: 'power2.out' }
       );
     }
 
@@ -171,37 +152,31 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
   };
 
   return (
-    <div ref={containerRef} className="w-full max-w-[500px]">
-      <Card className="border border-white/10 shadow-2xl bg-slate-900/80 backdrop-blur-xl">
-        <CardHeader className="text-center pb-5 pt-8">
-          <div className="flex justify-center mb-3">
-            <div
-              ref={logoRef}
-              className="h-14 w-14 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white shadow-lg shadow-blue-500/25"
-            >
-              <Film className="h-7 w-7" />
+    <div ref={containerRef} className="w-full max-w-[480px]">
+      <Card className="border border-border bg-card shadow-panel">
+        <CardHeader className="text-center pb-4 pt-7">
+          <div className="flex justify-center mb-2.5">
+            <div className="h-10 w-10 rounded-[8px] bg-secondary border border-border flex items-center justify-center text-accent">
+              <Film className="h-5 w-5" />
             </div>
           </div>
-          <CardTitle ref={titleRef} className="text-2xl font-bold text-white tracking-tight">
+          <CardTitle className="text-xl font-semibold text-foreground tracking-tight">
             MuYing 资产盘服务中心
           </CardTitle>
         </CardHeader>
 
-        <div className="px-7 pb-8 space-y-5">
-          {/* 弹性滑块 Tab 栏 */}
-          <div
-            ref={tabBoxRef}
-            className="relative flex bg-slate-950/70 p-1 rounded-xl border border-white/10 overflow-hidden"
-          >
+        <div className="px-6 pb-7 space-y-4">
+          {/* 精准滑块 Tab 栏：中性灰阶基座 + 香槟铜金精细边框/背景 */}
+          <div className="relative flex bg-sidebar p-1 rounded-[8px] border border-border overflow-hidden">
             <div
               ref={indicatorRef}
-              className="absolute top-1 bottom-1 left-1 w-[calc(50%-4px)] bg-gradient-to-r from-blue-600 to-primary rounded-[9px] shadow-md shadow-blue-500/30 pointer-events-none"
+              className="absolute top-1 bottom-1 left-1 w-[calc(50%-4px)] bg-secondary rounded-[6px] border border-border pointer-events-none"
             />
             <button
               type="button"
               onClick={() => handleTabChange('register')}
-              className={`relative z-10 flex-1 py-2 text-sm font-semibold transition-colors duration-200 text-center ${
-                tab === 'register' ? 'text-white' : 'text-slate-400 hover:text-slate-200'
+              className={`relative z-10 flex-1 py-1.5 text-xs font-medium text-center transition-colors duration-150 select-none ${
+                tab === 'register' ? 'text-foreground' : 'text-muted hover:text-foreground'
               }`}
             >
               新员工注册
@@ -209,8 +184,8 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
             <button
               type="button"
               onClick={() => handleTabChange('login')}
-              className={`relative z-10 flex-1 py-2 text-sm font-semibold transition-colors duration-200 text-center ${
-                tab === 'login' ? 'text-white' : 'text-slate-400 hover:text-slate-200'
+              className={`relative z-10 flex-1 py-1.5 text-xs font-medium text-center transition-colors duration-150 select-none ${
+                tab === 'login' ? 'text-foreground' : 'text-muted hover:text-foreground'
               }`}
             >
               重新领脚本
@@ -218,17 +193,17 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
           </div>
 
           {error && (
-            <div className="p-3.5 bg-red-500/10 border border-red-500/30 rounded-[8px] text-xs text-red-300 flex items-start gap-2.5">
-              <AlertTriangle className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
+            <div className="p-3 bg-destructive-bg border border-destructive-border rounded-[8px] text-xs text-destructive-foreground flex items-start gap-2.5">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-destructive mt-0.5" />
               <div className="leading-relaxed">{error}</div>
             </div>
           )}
 
           {tab === 'register' ? (
-            <form ref={formRef} onSubmit={handleRegister} className="space-y-4">
-              <div className="stagger-item space-y-1.5">
-                <label className="text-sm font-medium text-slate-200 flex items-center gap-1.5">
-                  <User className="h-3.5 w-3.5 text-slate-400" />
+            <form ref={formRef} onSubmit={handleRegister} className="space-y-3.5">
+              <div className="gsap-stagger-item space-y-1.5">
+                <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                  <User className="h-3.5 w-3.5 text-muted" />
                   <span>姓名</span>
                 </label>
                 <Input
@@ -239,9 +214,9 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
                 />
               </div>
 
-              <div className="stagger-item space-y-1.5">
-                <label className="text-sm font-medium text-slate-200 flex items-center gap-1.5">
-                  <KeyRound className="h-3.5 w-3.5 text-slate-400" />
+              <div className="gsap-stagger-item space-y-1.5">
+                <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                  <KeyRound className="h-3.5 w-3.5 text-muted" />
                   <span>设置访问密码</span>
                 </label>
                 <Input
@@ -253,71 +228,79 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
                 />
               </div>
 
-              <div className="stagger-item space-y-2">
-                <label className="text-sm font-medium text-slate-200">所属业务组</label>
-                <div className="grid grid-cols-2 gap-3">
+              {/* 业务组选择：统一工业语言，通过选中边框、背景微明度与图标区分，拒绝紫绿发光 */}
+              <div className="gsap-stagger-item space-y-1.5">
+                <label className="text-xs font-medium text-foreground">所属业务组</label>
+                <div className="grid grid-cols-2 gap-2.5">
                   <button
                     type="button"
                     onClick={() => setGroup('film')}
-                    className={`p-3.5 rounded-[12px] border text-left transition-all relative ${
+                    className={`p-3 rounded-[8px] border text-left transition-colors duration-150 relative ${
                       group === 'film'
-                        ? 'border-purple-500/70 bg-purple-500/15 shadow-sm shadow-purple-500/20'
-                        : 'border-white/10 bg-slate-950/40 hover:border-slate-700'
+                        ? 'border-accent bg-secondary text-foreground'
+                        : 'border-border bg-sidebar hover:border-border-hover text-muted'
                     }`}
                   >
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <div className="p-1 rounded-md bg-purple-500/20 text-purple-400">
-                        <Video className="h-4 w-4" />
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2">
+                        <Video className={`h-4 w-4 ${group === 'film' ? 'text-accent' : 'text-muted'}`} />
+                        <span className="font-semibold text-xs text-foreground">影视组</span>
                       </div>
-                      <span className="font-bold text-sm text-white">影视组</span>
+                      {group === 'film' && (
+                        <Check className="h-3.5 w-3.5 text-accent" />
+                      )}
                     </div>
-                    <p className="text-[11px] text-slate-400 leading-normal">
-                      拥有【01_影视资源库】完全读写权限，文学创作库只读
+                    <p className="text-[11px] text-muted leading-tight">
+                      【01_影视资源库】完全读写，文学库只读
                     </p>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => setGroup('writing')}
-                    className={`p-3.5 rounded-[12px] border text-left transition-all relative ${
+                    className={`p-3 rounded-[8px] border text-left transition-colors duration-150 relative ${
                       group === 'writing'
-                        ? 'border-emerald-500/70 bg-emerald-500/15 shadow-sm shadow-emerald-500/20'
-                        : 'border-white/10 bg-slate-950/40 hover:border-slate-700'
+                        ? 'border-accent bg-secondary text-foreground'
+                        : 'border-border bg-sidebar hover:border-border-hover text-muted'
                     }`}
                   >
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <div className="p-1 rounded-md bg-emerald-500/20 text-emerald-400">
-                        <PenLine className="h-4 w-4" />
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2">
+                        <PenLine className={`h-4 w-4 ${group === 'writing' ? 'text-accent' : 'text-muted'}`} />
+                        <span className="font-semibold text-xs text-foreground">写作组</span>
                       </div>
-                      <span className="font-bold text-sm text-white">写作组</span>
+                      {group === 'writing' && (
+                        <Check className="h-3.5 w-3.5 text-accent" />
+                      )}
                     </div>
-                    <p className="text-[11px] text-slate-400 leading-normal">
-                      拥有【02_文学创作库】完全读写权限，影视资源库只读
+                    <p className="text-[11px] text-muted leading-tight">
+                      【02_文学创作库】完全读写，影视库只读
                     </p>
                   </button>
                 </div>
               </div>
 
-              <div className="stagger-item p-3 bg-amber-500/10 border border-amber-500/30 rounded-[8px] text-xs text-amber-300 leading-relaxed flex items-start gap-2">
-                <Sparkles className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
+              {/* 提示栏：低饱和琥珀色，替换不必要 Sparkles 为严谨 Info 图标 */}
+              <div className="gsap-stagger-item p-3 bg-warning-bg border border-warning-border rounded-[8px] text-xs text-warning-foreground leading-relaxed flex items-start gap-2">
+                <Info className="h-4 w-4 shrink-0 text-warning mt-0.5" />
                 <div>
-                  <strong>重要提醒：只能注册一次</strong>（系统已绑定本机 IP），提交后将自动为您开通权限并生成专属挂载脚本。
+                  <strong className="text-warning">重要提醒：只能注册一次</strong>（系统已绑定本机 IP），提交后将自动为您开通权限并生成专属挂载脚本。
                 </div>
               </div>
 
               <Button
                 type="submit"
                 disabled={loading}
-                className="stagger-item w-full h-11 text-sm font-semibold"
+                className="gsap-stagger-item w-full h-10 text-xs font-semibold mt-1"
               >
                 {loading ? '正在开通专属权限中...' : '立即注册'}
               </Button>
             </form>
           ) : (
-            <form ref={formRef} onSubmit={handleVerify} className="space-y-4">
+            <form ref={formRef} onSubmit={handleVerify} className="space-y-3.5">
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-slate-200 flex items-center gap-1.5">
-                  <User className="h-3.5 w-3.5 text-slate-400" />
+                <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                  <User className="h-3.5 w-3.5 text-muted" />
                   <span>姓名</span>
                 </label>
                 <Input
@@ -329,8 +312,8 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-slate-200 flex items-center gap-1.5">
-                  <KeyRound className="h-3.5 w-3.5 text-slate-400" />
+                <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                  <KeyRound className="h-3.5 w-3.5 text-muted" />
                   <span>访问密码</span>
                 </label>
                 <Input
@@ -345,7 +328,7 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
               <Button
                 type="submit"
                 disabled={loading}
-                className="w-full h-11 text-sm font-semibold mt-2"
+                className="w-full h-10 text-xs font-semibold mt-2"
               >
                 {loading ? '正在验证中...' : '验证并重新获取专属脚本'}
               </Button>
