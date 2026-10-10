@@ -40,7 +40,7 @@ export const Header: React.FC<HeaderProps> = ({
             <Film className="h-4 w-4" />
           </div>
           <div className="flex items-baseline">
-            <span className="font-semibold text-sm tracking-tight text-foreground">MuYing</span>
+            <span className="font-semibold text-sm tracking-tight text-foreground">沐影</span>
             <span className="text-xs text-muted ml-2 hidden sm:inline">
               资产门户
             </span>

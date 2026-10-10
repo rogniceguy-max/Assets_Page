@@ -277,7 +277,7 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({
             </div>
           </div>
           <CardTitle className="text-xl font-semibold text-foreground tracking-tight">
-            MuYing 资产盘服务中心
+            沐影
           </CardTitle>
         </CardHeader>
 
