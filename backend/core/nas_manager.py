@@ -68,3 +68,23 @@ def create_system_and_samba_user(linux_username: str, password: str, group_type:
         print(f"Warning: 个人空间目录创建异常: {e}")
 
     return True, "Samba 用户及权限配置成功"
+
+def delete_system_and_samba_user(linux_username: str, fullname: str = "") -> bool:
+    """
+    当数据库落盘失败时执行补偿回滚，清理 NAS 系统与 Samba 账号及个人目录
+    """
+    try:
+        # 1. 移除 Samba 用户
+        subprocess.run(["sudo", "smbpasswd", "-x", linux_username], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # 2. 移除 Linux 系统用户
+        subprocess.run(["sudo", "userdel", linux_username], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # 3. 移除个人目录
+        if fullname:
+            personal_user_dir = os.path.join(NAS_PERSONAL_DIR, fullname)
+            if os.path.exists(personal_user_dir):
+                subprocess.run(["sudo", "rm", "-rf", personal_user_dir], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except Exception as e:
+        print(f"Warning: 回滚删除系统用户异常: {e}")
+        return False
+

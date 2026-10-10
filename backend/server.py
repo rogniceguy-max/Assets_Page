@@ -11,6 +11,7 @@ MuYing Hub - 轻量模块化 Web 服务端 (SPA 生产就绪版)
 import os
 import sys
 import json
+import re
 import urllib.parse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
@@ -26,7 +27,7 @@ from database import (
     update_user_password_hash, 
     log_download
 )
-from core.nas_manager import get_unique_linux_username, create_system_and_samba_user
+from core.nas_manager import get_unique_linux_username, create_system_and_samba_user, delete_system_and_samba_user
 from core.script_generator import generate_windows_batch
 
 class MuYingHandler(BaseHTTPRequestHandler):
@@ -143,17 +144,17 @@ class MuYingHandler(BaseHTTPRequestHandler):
             return
 
         elif path == "/api/download-script":
-            # Windows 原生挂载工具下载：支持指定员工预填用户名，亦支持通用下载
+            # Windows 原生挂载工具下载：优先下发固定通用脚本，若传入参数必须通过严格白名单和数据库存在性校验
             name = query.get('name', query.get('user', query.get('username', [''])))[0].strip()
             linux_user = ""
             fullname = ""
-            if name:
+            if name and len(name) <= 32:
                 user = get_user_by_name(name)
                 if user:
-                    linux_user = user["linux_username"]
-                    fullname = user["display_name"]
-                else:
-                    linux_user = name
+                    c_user = str(user.get("linux_username", "")).strip()
+                    if re.match(r'^[a-zA-Z0-9_-]{1,32}$', c_user):
+                        linux_user = c_user
+                        fullname = str(user.get("display_name", "")).strip()
 
             # 生成 Windows 原生挂载工具（零密码、零 Token、纯原生凭据对话）
             script_content = generate_windows_batch(linux_user, fullname)
@@ -162,12 +163,12 @@ class MuYingHandler(BaseHTTPRequestHandler):
             log_download(fullname or linux_user or "universal_user", client_ip)
 
             data = script_content.encode('utf-8')
+            # 严格 ASCII 文件名，杜绝 HTTP 响应头注入 (CRLF / Header Splitting)
             filename = f"Mount_MuYing_{linux_user}.bat" if linux_user else "Mount_MuYing.bat"
-            quoted_filename = urllib.parse.quote(filename)
 
             self.send_response(200)
             self.send_header('Content-Type', 'application/octet-stream')
-            self.send_header('Content-Disposition', f'attachment; filename="{filename}"; filename*=UTF-8\'\'{quoted_filename}')
+            self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
             self.send_header('Content-Length', str(len(data)))
             self.end_headers()
             self.wfile.write(data)
@@ -246,7 +247,9 @@ class MuYingHandler(BaseHTTPRequestHandler):
             try:
                 add_user(fullname, linux_username, password, group_type, client_ip)
             except Exception as e:
-                self.send_json(500, {"success": False, "error": f"保存数据库异常: {str(e)}"})
+                # 异常补偿：数据库落盘失败时回滚 NAS 系统与 Samba 账号，确保状态严格一致
+                delete_system_and_samba_user(linux_username, fullname)
+                self.send_json(500, {"success": False, "error": f"保存数据库异常，已回滚系统配置: {str(e)}"})
                 return
 
             self.send_json(200, {

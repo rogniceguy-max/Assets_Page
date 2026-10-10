@@ -144,12 +144,20 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             </div>
             <div className="text-[11px] text-muted space-y-1 font-mono">
               <div className="flex items-center justify-between">
-                <span>Z:\00_公共素材资产总库</span>
-                <span className="text-[10px] text-success">只读共享</span>
+                <span>Z:\00_公共素材</span>
+                <span className="text-[10px] text-success">全员读写</span>
               </div>
               <div className="flex items-center justify-between">
                 <span>{isFilm ? 'Z:\\01_影视资源库' : 'Z:\\02_文学创作库'}</span>
-                <span className="text-[10px] text-accent">读写权限</span>
+                <span className="text-[10px] text-accent">所属组读写</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>{isFilm ? 'Z:\\02_文学创作库' : 'Z:\\01_影视资源库'}</span>
+                <span className="text-[10px] text-muted">跨组只读</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>{`Z:\\03_个人空间\\${user.fullname}`}</span>
+                <span className="text-[10px] text-accent">个人独占</span>
               </div>
             </div>
           </div>

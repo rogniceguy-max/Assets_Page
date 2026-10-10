@@ -136,19 +136,16 @@ export const SuccessCard: React.FC<SuccessCardProps> = ({ fullname, linuxUsernam
             </div>
           </div>
 
-          {/* 下载主操作按钮：暖铜金高对比度按键 */}
+          {/* 下载主操作按钮：暖铜金高对比度按键 (避免 <a> 嵌套 <button> 的非法交互结构) */}
           <div className="gsap-success-item pt-1">
             <a
               href={downloadUrl}
               download={filename}
-              className="w-full inline-block"
+              role="button"
+              className="w-full h-11 text-xs font-semibold inline-flex items-center justify-center gap-2 rounded-[8px] bg-accent text-accent-foreground hover:bg-accent-hover active:bg-accent-active shadow-sm transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent select-none"
             >
-              <Button
-                className="w-full h-11 text-xs font-semibold inline-flex items-center justify-center gap-2"
-              >
-                <Download className="h-4 w-4" aria-hidden="true" />
-                <span>立即下载挂载工具 ({filename})</span>
-              </Button>
+              <Download className="h-4 w-4" aria-hidden="true" />
+              <span>立即下载挂载工具 ({filename})</span>
             </a>
           </div>
 
