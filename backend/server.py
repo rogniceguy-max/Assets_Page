@@ -2,6 +2,7 @@
 """
 MuYing Hub - 轻量模块化 Web 服务端 (SPA 生产就绪版)
 纯 Python 3.11 原生库构建，托管 React+Vite+Tailwind+shadcn/ui 生产产物，提供高效 RESTful API
+已集成 60 秒一次性短期凭据票据（Ephemeral One-Time Token）安全体系与零明文存储机制
 """
 import os
 import sys
@@ -10,10 +11,11 @@ import urllib.parse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 # 引入本工程模块
-from config import HOST, PORT, BASE_DIR
+from config import HOST, PORT, BASE_DIR, NAS_IP, NAS_HOSTNAME, SHARE_NAME, MOUNT_DRIVE, DRIVE_LABEL
 from database import init_db, add_user, get_user_by_name, check_ip_registered, hash_password, log_download
 from core.nas_manager import get_unique_linux_username, create_system_and_samba_user
 from core.script_generator import generate_windows_batch
+from core.token_manager import token_manager
 
 class MuYingHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
@@ -103,22 +105,22 @@ class MuYingHandler(BaseHTTPRequestHandler):
             return
 
         elif path == "/api/download-script":
-            name = query.get('name', query.get('username', ['']))[0]
-            if not name:
-                self.send_error(400, "Missing name")
-                return
-            user = get_user_by_name(name)
-            if not user:
-                self.send_error(404, "User not found")
+            token = query.get('token', [''])[0]
+            if not token:
+                self.send_json(403, {"success": False, "error": "拒绝访问：缺少有效安全令牌。请先在网页端注册或重新领脚本。"})
                 return
 
-            raw_pwd = user.get("raw_password_encrypted", "")
-            linux_user = user["linux_username"]
-            fullname = user["display_name"]
-            
-            # 生成该员工本人的专属脚本（绝无管理员密码）
-            script_content = generate_windows_batch(linux_user, raw_pwd, fullname)
-            
+            ticket_info = token_manager.get_token_info(token)
+            if not ticket_info:
+                self.send_json(403, {"success": False, "error": "安全令牌不存在或已过期（超过 60 秒窗口）。请在网页端点击【重新领脚本】重新获取。"})
+                return
+
+            linux_user = ticket_info["linux_username"]
+            fullname = ticket_info["fullname"]
+
+            # 生成该员工本人的专属动态脚本（绝无明文密码，仅包含该 60 秒临时令牌）
+            script_content = generate_windows_batch(linux_user, token, fullname)
+
             client_ip = self.get_client_ip()
             log_download(fullname, client_ip)
 
@@ -203,19 +205,24 @@ class MuYingHandler(BaseHTTPRequestHandler):
                 self.send_json(500, {"success": False, "error": f"系统开通失败: {msg}"})
                 return
 
-            # 5. 保存入库（记录注册 IP）
+            # 5. 保存入库（安全零明文：绝不向数据库写入原始密码）
             try:
                 add_user(fullname, linux_username, password, group_type, client_ip)
             except Exception as e:
                 self.send_json(500, {"success": False, "error": f"保存数据库异常: {str(e)}"})
                 return
 
+            # 6. 在后端内存开启 60 秒一次性安全兑换窗口
+            token = token_manager.create_token(linux_username, password, fullname, client_ip, ttl=60)
+
             self.send_json(200, {
                 "success": True,
                 "message": "注册成功",
+                "token": token,
                 "fullname": fullname,
                 "linux_username": linux_username,
-                "group_type": group_type
+                "group_type": group_type,
+                "expires_in": 60
             })
             return
 
@@ -223,13 +230,47 @@ class MuYingHandler(BaseHTTPRequestHandler):
             data = self.parse_json_body()
             fullname = str(data.get("fullname", "")).strip()
             password = str(data.get("password", "")).strip()
+            client_ip = self.get_client_ip()
 
             user = get_user_by_name(fullname)
             if not user or user["password_hash"] != hash_password(password):
                 self.send_json(401, {"success": False, "error": "姓名或密码不正确"})
                 return
 
-            self.send_json(200, {"success": True, "fullname": fullname})
+            # 验证通过：在后端内存开启 60 秒一次性安全兑换窗口
+            token = token_manager.create_token(user["linux_username"], password, user["display_name"], client_ip, ttl=60)
+
+            self.send_json(200, {
+                "success": True,
+                "message": "验证成功",
+                "token": token,
+                "fullname": user["display_name"],
+                "linux_username": user["linux_username"],
+                "group_type": user["group_type"],
+                "expires_in": 60
+            })
+            return
+
+        elif path == "/api/claim-mount":
+            # 客户端挂载脚本动态兑换凭据（单次消费焚毁）
+            data = self.parse_json_body()
+            token = str(data.get("token", "")).strip()
+            if not token:
+                self.send_json(400, {"success": False, "error": "缺少有效安全令牌 (Missing Token)"})
+                return
+
+            client_ip = self.get_client_ip()
+            success, result = token_manager.claim_token(token, client_ip)
+            if not success:
+                self.send_json(403, {"success": False, "error": result})
+                return
+
+            self.send_json(200, {
+                "success": True,
+                "linux_username": result["linux_username"],
+                "password": result["password"],
+                "fullname": result["fullname"]
+            })
             return
 
         else:
@@ -240,7 +281,7 @@ def run_server():
     server_address = (HOST, PORT)
     httpd = ThreadingHTTPServer(server_address, MuYingHandler)
     print(f"=====================================================")
-    print(f"  MuYing Hub (React SPA 生产版) 已成功启动！")
+    print(f"  MuYing Hub (React SPA 生产版 + 60s 凭据安全体系) 已成功启动！")
     print(f"  局域网访问地址: http://192.168.1.153:{PORT}")
     print(f"=====================================================")
     try:

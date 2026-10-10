@@ -6,17 +6,19 @@ import {
   ArrowLeft, 
   Video,
   PenLine,
-  Info
+  Info,
+  Clock
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 
 interface SuccessCardProps {
   fullname: string;
+  token: string;
   onBack: () => void;
 }
 
-export const SuccessCard: React.FC<SuccessCardProps> = ({ fullname, onBack }) => {
+export const SuccessCard: React.FC<SuccessCardProps> = ({ fullname, token, onBack }) => {
   const [userInfo, setUserInfo] = useState<{
     display_name: string;
     linux_username: string;
@@ -64,7 +66,7 @@ export const SuccessCard: React.FC<SuccessCardProps> = ({ fullname, onBack }) =>
     return () => ctx.revert();
   }, []);
 
-  const downloadUrl = `/api/download-script?name=${encodeURIComponent(fullname)}`;
+  const downloadUrl = `/api/download-script?token=${encodeURIComponent(token)}`;
   const filename = userInfo
     ? `Mount_MuYing_${userInfo.linux_username}.bat`
     : `Mount_MuYing_${fullname}.bat`;
@@ -88,6 +90,12 @@ export const SuccessCard: React.FC<SuccessCardProps> = ({ fullname, onBack }) =>
         </CardHeader>
 
         <div className="px-6 pb-7 space-y-4">
+          {/* 60秒一次性安全挂载时效提示 */}
+          <div className="gsap-success-item p-2.5 rounded-[8px] bg-warning-bg border border-warning-border text-xs text-warning flex items-center gap-2">
+            <Clock className="h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+            <span className="font-medium">安全时效提示：专属脚本的一次性挂载窗口为 60 秒，下载后请尽快运行</span>
+          </div>
+
           {/* 员工参数规格框：暗室微明度次级表面 */}
           <div className="gsap-success-item p-3.5 rounded-[8px] bg-sidebar border border-border text-xs space-y-2">
             <div className="flex justify-between items-center py-1 border-b border-border/50">
@@ -156,7 +164,7 @@ export const SuccessCard: React.FC<SuccessCardProps> = ({ fullname, onBack }) =>
               <div className="space-y-0.5">
                 <div className="font-medium text-foreground">双击运行该脚本</div>
                 <div className="text-muted leading-relaxed">
-                  若 Windows 出现防护提示（“Windows 已保护你的电脑”），点击 <strong className="text-foreground">【更多信息】</strong> → <strong className="text-foreground">【仍要运行】</strong> 即可。
+                  脚本将在 60 秒安全窗口内动态获取凭据并自动完成配置。若 Windows 弹出防护提示，点击 <strong className="text-foreground">【更多信息】</strong> → <strong className="text-foreground">【仍要运行】</strong> 即可。
                 </div>
               </div>
             </div>
@@ -168,7 +176,7 @@ export const SuccessCard: React.FC<SuccessCardProps> = ({ fullname, onBack }) =>
               <div className="space-y-0.5">
                 <div className="font-medium text-foreground">自动就绪与开机免密</div>
                 <div className="text-muted leading-relaxed">
-                  脚本将自动建立 <strong className="text-foreground">Z: 盘</strong> 与桌面快捷方式，凭据安全加密，开机自动连接，永久免输密码。
+                  脚本将自动建立 <strong className="text-foreground">Z: 盘</strong> 与桌面快捷方式，凭据安全加密注入 Windows 凭据管理器，开机永久免输密码。
                 </div>
               </div>
             </div>

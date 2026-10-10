@@ -9,7 +9,7 @@ import { Card, CardHeader, CardTitle, CardDescription } from '@/components/ui/ca
 export const App: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeNav, setActiveNav] = useState('onboarding');
-  const [registeredUser, setRegisteredUser] = useState<string | null>(null);
+  const [registeredUser, setRegisteredUser] = useState<{ fullname: string; token: string } | null>(null);
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-background text-foreground font-sans">
@@ -30,11 +30,14 @@ export const App: React.FC = () => {
           {activeNav === 'onboarding' ? (
             registeredUser ? (
               <SuccessCard
-                fullname={registeredUser}
+                fullname={registeredUser.fullname}
+                token={registeredUser.token}
                 onBack={() => setRegisteredUser(null)}
               />
             ) : (
-              <RegisterCard onSuccess={(name) => setRegisteredUser(name)} />
+              <RegisterCard
+                onSuccess={(fullname, token) => setRegisteredUser({ fullname, token })}
+              />
             )
           ) : (
             /* 预留拓展模块展示位 */

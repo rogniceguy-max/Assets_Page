@@ -15,7 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 
 interface RegisterCardProps {
-  onSuccess: (fullname: string) => void;
+  onSuccess: (fullname: string, token: string) => void;
 }
 
 export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
@@ -140,7 +140,7 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
       });
       const data = await resp.json();
       if (resp.ok && data.success) {
-        onSuccess(fullname.trim());
+        onSuccess(fullname.trim(), data.token);
       } else {
         setError(data.error || '注册失败，请稍后重试');
       }
@@ -172,7 +172,7 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
       });
       const data = await resp.json();
       if (resp.ok && data.success) {
-        onSuccess(loginName.trim());
+        onSuccess(data.fullname || loginName.trim(), data.token);
       } else {
         setError(data.error || '姓名或密码错误');
       }
