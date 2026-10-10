@@ -1,0 +1,16 @@
+[Unit]
+Description=MuYing Hub Web Service & Mount Script Hub
+After=network.target smbd.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/volume1/muying_hub
+ExecStart=/usr/bin/python3 /volume1/muying_hub/server.py
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
