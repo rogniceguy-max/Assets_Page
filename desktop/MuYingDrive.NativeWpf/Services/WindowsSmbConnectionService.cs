@@ -49,17 +49,15 @@ public enum SmbConnectionFailure
 }
 
 /// <summary>
-/// Connects and disconnects the configured UNC share through WNet. Connection
-/// credentials are read from the configured Windows Credential Manager entry.
-/// A 1219 credential conflict is returned as-is; this service never disconnects
-/// or replaces an existing SMB connection automatically.
+/// Connects to the configured UNC share through WNet. Connection credentials
+/// are read from the configured Windows Credential Manager entry. SMB sessions
+/// are shared by processes in the Windows logon session, so this service does
+/// not cancel UNC connections that it cannot exclusively own.
 /// </summary>
 public sealed class WindowsSmbConnectionService
 {
     private const int ResourceTypeDisk = 1;
-    private const uint NoError = 0;
     private const uint ErrorNotFound = 1168;
-    private const uint ErrorNotConnected = 2250;
 
     private readonly WindowsSmbConnectionOptions _options;
     private readonly WindowsCredentialVault _credentialVault;
@@ -106,20 +104,6 @@ public sealed class WindowsSmbConnectionService
         return new SmbConnectionResult(error);
     }
 
-    /// <summary>
-    /// Cancels the connection to the configured UNC share without forcing open
-    /// handles closed. It does not run automatically when <see cref="Connect"/>
-    /// returns a credential conflict.
-    /// </summary>
-    public SmbConnectionResult Disconnect()
-    {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("Windows SMB connections are available only on Windows.");
-
-        var error = WNetCancelConnection2W(_options.ShareRoot, flags: 0, force: false);
-        return new SmbConnectionResult(error == ErrorNotConnected ? NoError : error);
-    }
-
     private static void ValidateShareRoot(string shareRoot)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(shareRoot);
@@ -154,9 +138,4 @@ public sealed class WindowsSmbConnectionService
         string userName,
         uint flags);
 
-    [DllImport("Mpr.dll", EntryPoint = "WNetCancelConnection2W", CharSet = CharSet.Unicode, SetLastError = false, ExactSpelling = true)]
-    private static extern uint WNetCancelConnection2W(
-        string name,
-        uint flags,
-        [MarshalAs(UnmanagedType.Bool)] bool force);
 }

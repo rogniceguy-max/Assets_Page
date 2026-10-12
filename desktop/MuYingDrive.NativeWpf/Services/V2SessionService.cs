@@ -65,18 +65,13 @@ public sealed class V2SessionService
     public async Task SignOutAsync(DriveSession session, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(session);
-        var disconnect = _smb.Disconnect();
-        if (!disconnect.Succeeded)
-        {
-            var detail = disconnect.HasCredentialConflict
-                ? "Windows 中已有不同账号连接此 NAS。请先在资源管理器关闭该连接，再退出沐影盘。"
-                : $"无法安全断开 NAS 文件连接：{disconnect.ErrorMessage}";
-            throw new V2ApiException(detail);
-        }
-
         // Keep the local token and credentials if the server cannot revoke the
         // session; the user can retry logout when the NAS is reachable again.
         await _api.LogoutAsync(session.SessionToken, cancellationToken).ConfigureAwait(true);
+
+        // WNet connections can be shared with Explorer and other applications
+        // in this Windows logon session. Removing the app credential must not
+        // cancel the process-wide UNC connection; Windows owns its lifetime.
         ClearLocalCredentials();
     }
 
