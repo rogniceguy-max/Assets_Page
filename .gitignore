@@ -56,3 +56,16 @@ data/*.db
 
 # OS
 Thumbs.db
+
+# Build outputs from the isolated desktop spikes.
+spikes/**/bin/
+spikes/**/obj/
+spikes/**/target/
+
+# Desktop project build outputs.
+desktop/**/bin/
+desktop/**/obj/
+
+# Keep the frontend utility file trackable despite the generic Python lib/ rule.
+!frontend/src/lib/
+!frontend/src/lib/utils.ts

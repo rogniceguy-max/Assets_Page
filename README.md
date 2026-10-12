@@ -1,124 +1,46 @@
-# 🎬 MuYing Assets Hub (Assets_Page)
+# 沐影盘 MuYing Drive
 
-> **影视传媒团队资产盘注册中心与自动化挂载系统**  
-> 一站式解决影视团队局域网 NAS 素材盘的高性能挂载、团队权限隔离与入职自动化配置。
+这是基于 GitHub `main` 旧版整理的本地第一版原型，不是可部署到 NAS 的版本。后端只监听 `127.0.0.1`，账号、文件和权限都在本地模拟目录中处理；不会创建 NAS/Samba 用户，也不会通过应用 API 访问 NAS。
 
----
+## 已确认的产品范围
 
-## 🌟 核心特性与业务价值
+- 员工用中文姓名作为账号名，部门由员工自行选择影视组或写作组。
+- 首尾空白会去除；中间字符保留；控制字符和路径分隔符不接受。
+- 员工密码至少 8 位，并作为未来的 Samba 密码。当前原型只保存 scrypt 校验值，不向 NAS 设置该密码。
+- 本部门目录可读写，另一部门目录只读，公共素材区全员可读写，个人空间仅本人可访问。
+- 文件区支持单文件上传/下载、进度、当前文件暂停/续传、失败后手动重试；同名上传拒绝覆盖。上传按本地剩余空间检查，不设置固定大小上限。
+- 断点传输状态只在当前页面运行期间保留；关闭/重启后不恢复。文件夹传输、历史版本、软删除和分支编辑不在第一版范围内。
+- 登录会话持久保存在本地数据库，关闭并重开后仍有效，只有手动退出才撤销。
 
-* **一人一号，全名无感对接**：员工只需输入全名（如：张三）与密码，系统自动转换为规范的 Linux/Samba 账户，并在 NAS 上建立专属个人空间。
-* **团队权限严格隔离 (POSIX ACL)**：
-  * **🎥 影视组**：拥有 `01_影视资源库` 完全读写权限，文学创作库只读浏览。
-  * **✍️ 写作组**：拥有 `02_文学创作库` 完全读写权限，影视资源库只读浏览。
-  * **📢 公共素材库**：全员读写共享。
-  * **👤 个人空间**：按员工姓名自动建立独立私有目录，他人无权访问。
-* **单 IP 注册安全策略**：每台设备/每个 IP 仅限注册一次，防止重复误操作与凭据冲突。
-* **100% 零管理员凭据泄露**：下发的客户端挂载脚本仅包含员工本人注册生成的身份凭据，绝对不包含任何管理员账密。
-* **Windows 客户端一键开箱**：动态下发 `.bat` 脚本，自动写入 Windows 凭据管理器（开机免密直连）、自动挂载为 **Z: 盘（命名为 MuYing）**、自动在桌面生成直达快捷方式并呼出资源管理器。
+## 本地原型实现
 
----
+- 密码使用带随机盐的 scrypt 校验值（`N=16384, r=8, p=1, dklen=64`）；不保存新账号明文密码，密码首尾不裁剪。
+- 本地模拟目录为 `backend/data/mock_nas/00_公共素材`、`01_影视资源库`、`02_文学创作库` 和按数据库 ID 隔离的 `03_个人空间`。
+- 文件访问权限在后端按已认证账号的部门和内部用户 ID 检查；客户端传来的角色不作为授权依据。
+- 上传使用 4 MiB 分块和服务端偏移确认；下载使用 HTTP Range，并逐块写入用户选择的文件。浏览器不支持流式落盘时会停止下载，不把整文件读入内存。
+- 本地登录会话只在 SQLite 保存会话令牌哈希；会话不自动超时，退出时清除会话和未完成上传暂存。
+- JSON 请求体上限为 1 MiB，单个上传分块上限为 4 MiB。
+- 旧凭据 BAT 脚本接口已返回 410，脚本生成实现已移除。
+- 当前 Windows 演示是 WPF 窗口承载 WebView2，WebView2 中显示 React/HTML；它是本机功能原型，不代表最终桌面 UI 或技术栈已定。
+- 按 Notion 的技术验证要求，最终还需比较 WPF + Win32 OLE/COM 与 Tauri + Rust 原生桥接，并在允许进行 NAS/UNC 拖放验证后依据真实目标软件结果选型。此前选定的 WPF 是当前候选基线；WebView2 与原生 WPF 控件仍可调整。
+- WPF 宿主启动随包提供的本地 Python 服务，前端与 API 使用同一个随机回环端口；WebView2 用户数据目录和账号数据库保存在 `%LOCALAPPDATA%\MuYingDrive`。
 
-## 🛠️ 技术架构体系
+## Windows 本地构建
 
-本项目采用**高性能动静分离架构**，前端具备顶级 SaaS 工具级交互质感，后端保持极限轻量（在 NAS 端仅占用 10MB 内存）：
+- 先在 `frontend/` 执行 `npm run build`，再从仓库根目录执行 `dotnet build desktop/MuYingDrive.Wpf/MuYingDrive.Wpf.csproj -c Release`。
+- 构建输出位于 `desktop/MuYingDrive.Wpf/bin/Release/net8.0-windows/`。当前为本机开发原型：启动时需要系统可调用的 Python 3.11+（或设置 `MUYING_PYTHON`），目标 Windows 电脑还需要 .NET 8 Desktop Runtime 和 Microsoft Edge WebView2 Runtime。
+- 尚未制作自包含安装包，也未在干净 Windows 电脑验证安装与升级流程。文件拖出到其他应用保留到真实 NAS/UNC 阶段。
 
-### 🖥️ 前端技术栈 (Frontend)
-* **页面开发**：`React 18` + `TypeScript` + `Vite`
-* **样式系统**：`Tailwind CSS` (深色电影工业风 / 玻璃拟态)
-* **基础组件**：`shadcn/ui` 风格原子组件（Card、Button、Input）
-* **动效引擎**：`GSAP 3` (弹性标签滑块与多级错峰电影感入场动画)
-* **图标体系**：`Lucide Icons` (高清矢量线条图标，替代传统 Emoji)
+## NAS 只读核查与兼容验证
 
-#### 📐 严格遵循的设计规范 (Design Tokens)
-* **字体系统**：中文系统 UI 字体 + Inter 数字/英文
-* **字号层级**：正文 14px (行高约 1.5) / 页面标题 24~28px / 辅助文本 12~13px
-* **间距体系**：4 / 8 / 12 / 16 / 24 / 32px (标准 4px 网格)
-* **圆角规格**：卡片 12px (`rounded-[12px]`) / 按钮与输入框 8px (`rounded-[8px]`)
-* **导航布局**：左侧导航栏展开 240px、收起 64px；顶部工具栏 60px
-* **边框样式**：1px 低对比度描边 (`border-white/10`)
+- NAS 上的 `01_影视资源库` 和 `02_文学创作库` 已经存在，因此没有重复创建或改动 ACL。读取到的目录 ACL 条目显示影视组在影视目录可写、在写作目录只读，写作组规则相反，并设置了默认继承规则。低权限 `nobody` 账户的读、进入和写检查均被拒绝。
+- 目录 `stat` 模式显示 `777`，与 `getfacl` 的命名组 ACL 视图不一致；真实账号开通前仍需在隔离测试账号下验证 Samba/Unix 的实际访问结果。当前 `group_film` 有 3 个成员，`group_writing` 没有成员。
+- 已用一次隔离临时账号验证 NAS 的中文 Samba 用户名：临时 Linux 用户、独立 `smbpasswd` 文件后端、回环 Samba 服务和只读测试共享均已清理。没有改动正式 Samba 配置、账号库或共享文件。
+- 该验证只覆盖了测试名称及当前 NAS 软件栈，不代表应用已经能创建真实账号、配置生产 ACL 或传输 NAS 文件。生产 scrypt 格式兼容性也尚未确认。
 
-### ⚙️ 后端与系统底层 (Backend)
-* **Web 服务**：`Python 3.11` 原生标准库多线程 HTTP 服务（零三方 pip 依赖）
-* **数据存储**：`SQLite 3`（轻量单文件数据库，记录用户组别、审计日志与 IP 绑定）
-* **底层系统**：Debian 12 / Linux 原生用户系统 + Samba (`smbpasswd`)
-* **文件系统权限**：Linux POSIX ACL (`setfacl` / `getfacl`)
+## 未完成的部署工作
 
----
-
-## 📂 仓库目录结构
-
-```text
-Assets_Page/
-├── frontend/                   # 现代 React + TypeScript + Vite 前端工程
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── layout/         # 顶部工具栏 (Header) 与侧边栏 (Sidebar)
-│   │   │   ├── registration/   # 注册卡片 (RegisterCard) 与成功卡片 (SuccessCard)
-│   │   │   └── ui/             # 原子 UI 组件 (Button 8px, Card 12px, Input)
-│   │   ├── lib/
-│   │   │   └── utils.ts        # cn() 样式工具函数
-│   │   ├── App.tsx             # 布局与模块集成总入口
-│   │   ├── index.css           # Tailwind 样式与暗色变量
-│   │   └── main.tsx            # React 挂载入口
-│   ├── index.html              # 模板入口
-│   ├── package.json
-│   ├── tsconfig.json
-│   ├── vite.config.ts
-│   └── tailwind.config.js
-│
-├── backend/                    # Python 3.11 轻量原生后端 & NAS 运维核心
-│   ├── core/
-│   │   ├── nas_manager.py      # Linux & Samba 用户自动开户、组分配、个人空间管理
-│   │   ├── pinyin_dict.py      # 中文全名转系统安全 ASCII 账号
-│   │   └── script_generator.py # 客户端个性化 .bat 自动化挂载脚本生成
-│   ├── config.py               # 服务与存储池配置 (NAS IP, 盘符, 路径)
-│   ├── database.py             # SQLite 数据库管理与单 IP 限额校验
-│   ├── server.py               # 生产 HTTP 服务端 (托管前端 dist 产物与 API)
-│   └── muying-hub.service      # systemd 自启守护进程配置模板
-│
-├── .gitignore
-└── README.md
-```
-
----
-
-## 🚀 开发与部署指南
-
-### 1. 前端本地开发与构建
-
-```bash
-cd frontend
-
-# 安装依赖
-npm install
-
-# 启动本地热重载调试 (默认端口 5173，自动代理 API 到 NAS)
-npm run dev
-
-# 编译为生产静态包 (输出至 dist/)
-npm run build
-```
-
-### 2. 部署到 NAS (绿联 UGOS Pro / Debian)
-
-1. 将前端编译生成的 `dist/` 目录以及 `backend/` 下的所有文件上传至 NAS 的存储目录（例如 `/volume1/muying_hub`）。
-2. 配置服务自启动守护：
-   ```bash
-   sudo cp /volume1/muying_hub/muying-hub.service /etc/systemd/system/
-   sudo systemctl daemon-reload
-   sudo systemctl enable muying-hub.service
-   sudo systemctl restart muying-hub.service
-   ```
-3. 检查服务运行状态：
-   ```bash
-   sudo systemctl status muying-hub.service
-   ```
-
----
-
-## 🔒 安全说明
-
-1. 本系统通过限制一个 IP 仅允许注册一次，有效避免局域网滥用与凭据覆盖；
-2. 员工下载的挂载脚本内部仅加密写入自己的 Windows 凭据，不会暴露任何团队超级管理员密码；
-3. Samba 共享严格遵循 Linux 底层 POSIX ACL，即使网络可达，非本组成员也无法越权修改文件。
+- 现有 SQLite 老库迁移未实现。本工作区当前没有 `backend/data/` 数据库；旧库中的 SHA-256 账号或明文兼容列不会自动迁移或清除。
+- 本地文件 API 使用的是模拟目录。生产 NAS 适配仍需单独实现并审查账号创建、密码设置、组成员、ACL、路径竞态和失败回滚。
+- 尚未确认生产 scrypt 哈希与本地标准编码的兼容性；真实账号开通前需要用脱敏样例核对。
+- 本轮已完成前端生产构建和 WPF Release 编译，并实际启动桌面程序进入文件工作区；未执行端到端上传/下载或自动测试。请勿将 `backend/muying-hub.service` 安装到 NAS。

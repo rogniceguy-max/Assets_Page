@@ -8,11 +8,12 @@ import {
   CheckCircle2, 
   KeyRound,
   User,
-  Sparkles
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+
+const INVALID_USERNAME_CHARACTERS = /[\\/\u0000-\u001f\u007f-\u009f]/;
 
 interface RegisterCardProps {
   onSuccess: (fullname: string) => void;
@@ -108,9 +109,19 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (INVALID_USERNAME_CHARACTERS.test(fullname)) {
+      setError('用户名不能包含控制字符或路径分隔符');
+      return;
+    }
+    const username = fullname.trim();
 
-    if (!fullname.trim() || !password) {
-      setError('请填写姓名与密码');
+    if (!username || !password) {
+      setError('请填写员工用户名与密码');
+      return;
+    }
+
+    if (password.length < 8) {
+      setError('密码至少需要 8 位');
       return;
     }
 
@@ -120,16 +131,17 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          fullname: fullname.trim(),
+          username,
           password,
           group_type: group,
         }),
       });
       const data = await resp.json();
       if (resp.ok && data.success) {
-        onSuccess(fullname.trim());
+        onSuccess(username);
       } else {
-        setError(data.error || '注册失败，请稍后重试');
+        const responseError = typeof data.error === 'string' ? data.error : '';
+        setError(responseError || '注册失败，请稍后重试');
       }
     } catch (err: any) {
       setError('连接服务器失败: ' + err.message);
@@ -141,9 +153,19 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
   const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (INVALID_USERNAME_CHARACTERS.test(loginName)) {
+      setError('用户名不能包含控制字符或路径分隔符');
+      return;
+    }
+    const username = loginName.trim();
 
-    if (!loginName.trim() || !loginPass) {
-      setError('请填写姓名与密码');
+    if (!username || !loginPass) {
+      setError('请填写员工用户名与密码');
+      return;
+    }
+
+    if (loginPass.length < 8) {
+      setError('密码至少需要 8 位');
       return;
     }
 
@@ -153,13 +175,13 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          fullname: loginName.trim(),
+          username,
           password: loginPass,
         }),
       });
       const data = await resp.json();
       if (resp.ok && data.success) {
-        onSuccess(loginName.trim());
+        onSuccess(username);
       } else {
         setError(data.error || '姓名或密码错误');
       }
@@ -213,7 +235,7 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
                 tab === 'login' ? 'text-white' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              重新领脚本
+              员工登录
             </button>
           </div>
 
@@ -229,11 +251,11 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
               <div className="stagger-item space-y-1.5">
                 <label className="text-sm font-medium text-slate-200 flex items-center gap-1.5">
                   <User className="h-3.5 w-3.5 text-slate-400" />
-                  <span>姓名</span>
+                  <span>用户名（Samba 登录名）</span>
                 </label>
                 <Input
                   required
-                  placeholder="请输入全名以方便对接（如：张三）"
+                  placeholder="请输入员工填写的用户名（支持中文姓名）"
                   value={fullname}
                   onChange={(e) => setFullname(e.target.value)}
                 />
@@ -242,15 +264,19 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
               <div className="stagger-item space-y-1.5">
                 <label className="text-sm font-medium text-slate-200 flex items-center gap-1.5">
                   <KeyRound className="h-3.5 w-3.5 text-slate-400" />
-                  <span>设置访问密码</span>
+                  <span>设置 Samba 密码</span>
                 </label>
                 <Input
                   type="password"
                   required
-                  placeholder="设置 6 位以上密码并牢记"
+                  minLength={8}
+                  placeholder="设置至少 8 位密码"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
+                <p className="text-[11px] leading-relaxed text-slate-500">
+                  当前仅为本地模拟，服务端只保存 scrypt 校验值，不会写入 NAS Samba 账号。
+                </p>
               </div>
 
               <div className="stagger-item space-y-2">
@@ -272,7 +298,7 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
                       <span className="font-bold text-sm text-white">影视组</span>
                     </div>
                     <p className="text-[11px] text-slate-400 leading-normal">
-                      拥有【01_影视资源库】完全读写权限，文学创作库只读
+                      本地模拟会保存此选择；真实共享权限尚未配置
                     </p>
                   </button>
 
@@ -292,16 +318,9 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
                       <span className="font-bold text-sm text-white">写作组</span>
                     </div>
                     <p className="text-[11px] text-slate-400 leading-normal">
-                      拥有【02_文学创作库】完全读写权限，影视资源库只读
+                      本地模拟会保存此选择；真实共享权限尚未配置
                     </p>
                   </button>
-                </div>
-              </div>
-
-              <div className="stagger-item p-3 bg-amber-500/10 border border-amber-500/30 rounded-[8px] text-xs text-amber-300 leading-relaxed flex items-start gap-2">
-                <Sparkles className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
-                <div>
-                  <strong>重要提醒：只能注册一次</strong>（系统已绑定本机 IP），提交后将自动为您开通权限并生成专属挂载脚本。
                 </div>
               </div>
 
@@ -310,7 +329,7 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
                 disabled={loading}
                 className="stagger-item w-full h-11 text-sm font-semibold"
               >
-                {loading ? '正在开通专属权限中...' : '立即注册'}
+                {loading ? '正在创建本地模拟账号...' : '创建本地模拟账号'}
               </Button>
             </form>
           ) : (
@@ -318,11 +337,11 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-slate-200 flex items-center gap-1.5">
                   <User className="h-3.5 w-3.5 text-slate-400" />
-                  <span>姓名</span>
+                  <span>用户名（Samba 登录名）</span>
                 </label>
                 <Input
                   required
-                  placeholder="请输入注册时的全名"
+                  placeholder="请输入注册时填写的用户名（支持中文姓名）"
                   value={loginName}
                   onChange={(e) => setLoginName(e.target.value)}
                 />
@@ -331,11 +350,12 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-slate-200 flex items-center gap-1.5">
                   <KeyRound className="h-3.5 w-3.5 text-slate-400" />
-                  <span>访问密码</span>
+                  <span>Samba 密码</span>
                 </label>
                 <Input
                   type="password"
                   required
+                  minLength={8}
                   placeholder="请输入您的密码"
                   value={loginPass}
                   onChange={(e) => setLoginPass(e.target.value)}
@@ -347,7 +367,7 @@ export const RegisterCard: React.FC<RegisterCardProps> = ({ onSuccess }) => {
                 disabled={loading}
                 className="w-full h-11 text-sm font-semibold mt-2"
               >
-                {loading ? '正在验证中...' : '验证并重新获取专属脚本'}
+                {loading ? '正在验证中...' : '登录'}
               </Button>
             </form>
           )}

@@ -1,0 +1,34 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tauri CF_HDROP Spike</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div class="eyebrow">WINDOWS NATIVE DRAG SPIKE</div>
+      <h1>Tauri file drag source</h1>
+      <p>Rust invokes the native Windows file-drag path for one local synthetic file. The WPF spike receiver runs as a separate process.</p>
+    </header>
+    <section class="file-card" id="file-card" aria-label="Synthetic test file drag item">
+      <div class="file-icon">TXT</div>
+      <div class="file-info">
+        <div class="eyebrow">SYNTHETIC TEST FILE</div>
+        <h2>synthetic-test-file.txt</h2>
+        <p id="path">Resolving local path…</p>
+        <div class="hint">Hold the left button, move this card, then drop it on the receiver window.</div>
+      </div>
+      <div class="drag-mark">↗</div>
+    </section>
+    <div class="actions">
+      <button id="open-receiver" class="secondary">Open separate WPF receiver</button>
+      <div class="status" id="status" role="status">Ready. No file is read or copied by this page.</div>
+    </div>
+    <footer>Copy-only drag • CF_HDROP paths • local synthetic data only</footer>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

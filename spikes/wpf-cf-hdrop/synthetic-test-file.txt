@@ -1,0 +1,2 @@
+﻿ASSETS_PAGE_WPF_CF_HDROP_SPIKE
+Synthetic test content only. No user files or NAS data are used.

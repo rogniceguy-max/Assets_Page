@@ -1,70 +1,75 @@
 # -*- coding: utf-8 -*-
+"""Local-only filesystem mock for the MuYing Drive backend.
+
+This module never creates operating-system or Samba accounts and never calls
+ACL tools. All directories are confined to DATA_DIR/mock_nas.
 """
-MuYing Hub - NAS Linux 与 Samba 用户系统管理核心
-支持全名转系统安全账号与个人空间自动创建
-"""
-import subprocess
-import os
-from config import GROUP_ASSETS, GROUP_FILM, GROUP_WRITING, NAS_PERSONAL_DIR
-from core.pinyin_dict import name_to_ascii
 
-def get_unique_linux_username(fullname: str) -> str:
-    """根据全名生成唯一的 Linux 系统用户名"""
-    base_slug = name_to_ascii(fullname)
-    candidate = base_slug
-    idx = 2
-    
-    while True:
-        # 检查系统中是否已有同名系统用户
-        res = subprocess.run(["id", candidate], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if res.returncode != 0:
-            # 用户名可用
-            return candidate
-        # 已存在则追加递增序号
-        candidate = f"{base_slug}{idx}"
-        idx += 1
+from pathlib import Path
+from typing import Dict
 
-def create_system_and_samba_user(linux_username: str, password: str, group_type: str, fullname: str) -> tuple[bool, str]:
-    """
-    在 NAS 系统中创建 Linux 账号与 Samba 共享账号
-    """
-    target_group = GROUP_FILM if group_type == "film" else GROUP_WRITING
-    
-    # 1. 检查或创建 Linux 用户
-    check_user = subprocess.run(["id", linux_username], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if check_user.returncode != 0:
-        res = subprocess.run([
-            "sudo", "useradd", "-M", "-s", "/usr/sbin/nologin",
-            "-G", f"{GROUP_ASSETS},{target_group},ughomeusers",
-            linux_username
-        ], capture_output=True, text=True)
-        if res.returncode != 0:
-            return False, f"创建 Linux 系统用户失败: {res.stderr}"
-    else:
-        subprocess.run(["sudo", "usermod", "-aG", f"{GROUP_ASSETS},{target_group},ughomeusers", linux_username])
+from config import DATA_DIR
 
-    # 2. 设置并启用 Samba 密码
-    p_input = f"{password}\n{password}\n"
-    smb_proc = subprocess.Popen(
-        ["sudo", "smbpasswd", "-s", "-a", linux_username],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    )
-    smb_out, smb_err = smb_proc.communicate(input=p_input)
-    if smb_proc.returncode != 0:
-        return False, f"配置 Samba 用户密码失败: {smb_err}"
 
-    subprocess.run(["sudo", "smbpasswd", "-e", linux_username], capture_output=True)
+PUBLIC_DIR_NAME = "00_公共素材"
+FILM_DIR_NAME = "01_影视资源库"
+WRITING_DIR_NAME = "02_文学创作库"
+PERSONAL_DIR_NAME = "03_个人空间"
 
-    # 3. 创建个人专属空间目录（以员工全名命名，方便在 Windows 中直观查看）
-    personal_user_dir = os.path.join(NAS_PERSONAL_DIR, fullname)
+
+def _create_confined_directory(path: Path, data_root: Path) -> Path:
+    """Create a directory while rejecting symlinks and escapes from DATA_DIR."""
+    relative_parts = path.relative_to(data_root).parts
+    current = data_root
+    for part in relative_parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError("mock storage path contains a symlink")
+        current.mkdir(exist_ok=True)
+        resolved = current.resolve()
+        if not resolved.is_relative_to(data_root):
+            raise ValueError("mock storage path escaped DATA_DIR")
+    return current.resolve()
+
+
+def ensure_local_mock_roots() -> Dict[str, Path]:
+    """Create and return the four local mock roots keyed by virtual root name."""
+    data_root = Path(DATA_DIR).resolve()
+    data_root.mkdir(parents=True, exist_ok=True)
+    mock_root = _create_confined_directory(data_root / "mock_nas", data_root)
+    roots = {
+        PUBLIC_DIR_NAME: mock_root / PUBLIC_DIR_NAME,
+        FILM_DIR_NAME: mock_root / FILM_DIR_NAME,
+        WRITING_DIR_NAME: mock_root / WRITING_DIR_NAME,
+        PERSONAL_DIR_NAME: mock_root / PERSONAL_DIR_NAME,
+    }
+    for path in roots.values():
+        _create_confined_directory(path, data_root)
+    return roots
+
+
+def local_mock_upload_staging_directory() -> Path:
+    """Return a hidden, confined directory used only for incomplete uploads."""
+    data_root = Path(DATA_DIR).resolve()
+    data_root.mkdir(parents=True, exist_ok=True)
+    mock_root = _create_confined_directory(data_root / "mock_nas", data_root)
+    return _create_confined_directory(mock_root / ".uploads", data_root)
+
+
+def create_local_mock_personal_directory(user_id: int) -> bool:
+    """Create a personal mock directory keyed by the internal database ID."""
+    if not isinstance(user_id, int) or user_id <= 0:
+        return False
+
     try:
-        subprocess.run(["sudo", "mkdir", "-p", personal_user_dir], check=True)
-        subprocess.run(["sudo", "chown", "-R", f"{linux_username}:{GROUP_ASSETS}", personal_user_dir], check=True)
-        subprocess.run(["sudo", "chmod", "-R", "770", personal_user_dir], check=True)
-    except Exception as e:
-        print(f"Warning: 个人空间目录创建异常: {e}")
-
-    return True, "Samba 用户及权限配置成功"
+        personal_root = ensure_local_mock_roots()[PERSONAL_DIR_NAME]
+        target = personal_root / str(user_id)
+        if target.is_symlink():
+            return False
+        target.mkdir(exist_ok=False)
+        resolved = target.resolve()
+        if resolved.parent != personal_root.resolve():
+            return False
+        return True
+    except (OSError, ValueError):
+        return False

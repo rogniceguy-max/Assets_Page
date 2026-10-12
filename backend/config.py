@@ -4,8 +4,10 @@ MuYing Hub - 系统全局配置
 """
 import os
 
-HOST = "0.0.0.0"
-PORT = 8080
+# Keep the local mock bound to loopback. A future NAS service needs a separate
+# reviewed deployment configuration; this checkout must not expose itself.
+HOST = "127.0.0.1"
+PORT = int(os.environ.get("MUYING_PORT", "8080"))
 NAS_IP = "192.168.1.153"
 NAS_HOSTNAME = "MuYingTV"
 SHARE_NAME = "Assets"
@@ -13,8 +15,12 @@ MOUNT_DRIVE = "Z:"
 DRIVE_LABEL = "MuYing"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data")
+REPO_ROOT = os.path.dirname(BASE_DIR)
+DATA_DIR = os.environ.get("MUYING_DATA_DIR", os.path.join(BASE_DIR, "data"))
 DB_PATH = os.path.join(DATA_DIR, "muying.db")
+FRONTEND_DIST_DIR = os.environ.get(
+    "MUYING_FRONTEND_DIR", os.path.join(REPO_ROOT, "frontend", "dist")
+)
 
 # NAS 目录配置
 NAS_ASSETS_PATH = "/volume1/Assets"
