@@ -42,6 +42,8 @@ MANIFEST
 *.db
 *.sqlite3
 data/*.db
+backend/v2/data/
+desktop/MuYingDrive.NativeWpf/nas-client.json
 
 # Editor directories and files
 .vscode/*

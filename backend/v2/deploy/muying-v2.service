@@ -1,0 +1,38 @@
+[Unit]
+Description=MuYing Drive V2 identity API
+After=network-online.target smbd.service muying-v2-account.socket
+Wants=network-online.target
+Requires=muying-v2-account.socket
+
+[Service]
+Type=simple
+User=muying-v2
+Group=muying-v2
+WorkingDirectory=/opt/muying-v2/current
+EnvironmentFile=/etc/muying-v2/server.env
+Environment=MUYING_V2_TLS_CERT=%d/server.crt
+Environment=MUYING_V2_TLS_KEY=%d/server.key
+LoadCredential=server.crt:/etc/muying-v2/server.crt
+LoadCredential=server.key:/etc/muying-v2/server.key
+ExecStart=/usr/bin/python3 -m backend.v2.server
+Restart=on-failure
+RestartSec=3
+UMask=0077
+StateDirectory=muying-v2
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/muying-v2
+
+[Install]
+WantedBy=multi-user.target

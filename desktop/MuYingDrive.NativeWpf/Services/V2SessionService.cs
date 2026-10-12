@@ -1,0 +1,116 @@
+using System.Net;
+using MuYingDrive.NativeWpf.Models;
+
+namespace MuYingDrive.NativeWpf.Services;
+
+/// <summary>Coordinates V2 authentication, protected local persistence, and native SMB setup.</summary>
+public sealed class V2SessionService
+{
+    private readonly V2ApiClient _api;
+    private readonly WindowsCredentialVault _vault;
+    private readonly WindowsSmbConnectionService _smb;
+
+    public V2SessionService(V2ApiClient api, WindowsCredentialVault vault, WindowsSmbConnectionService smb)
+    {
+        _api = api ?? throw new ArgumentNullException(nameof(api));
+        _vault = vault ?? throw new ArgumentNullException(nameof(vault));
+        _smb = smb ?? throw new ArgumentNullException(nameof(smb));
+    }
+
+    public async Task<DriveSession?> RestoreAsync(CancellationToken cancellationToken = default)
+    {
+        if (!_vault.TryReadV2SessionToken(out var savedSession) || savedSession is null)
+            return null;
+
+        if (!_vault.TryReadNasPassword(out var savedNas) || savedNas is null ||
+            !string.Equals(savedNas.UserName, ExtractUserName(savedSession.UserName), StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        V2SessionResponse restored;
+        try
+        {
+            restored = await _api.GetSessionAsync(savedSession.Token, cancellationToken).ConfigureAwait(true);
+        }
+        catch (V2ApiException error) when (error.StatusCode == HttpStatusCode.Unauthorized)
+        {
+            ClearLocalCredentials();
+            return null;
+        }
+
+        var expectedIdentity = FormatIdentity(restored.User);
+        if (!string.Equals(expectedIdentity, savedSession.UserName, StringComparison.Ordinal))
+        {
+            ClearLocalCredentials();
+            throw new V2ApiException("本机保存的登录身份与服务器记录不一致，请重新登录。");
+        }
+
+        return new DriveSession(restored.User, savedSession.Token, _smb.Connect());
+    }
+
+    public async Task<DriveSession> LoginAsync(string userName, string password, CancellationToken cancellationToken = default)
+    {
+        var response = await _api.LoginAsync(userName, password, cancellationToken).ConfigureAwait(true);
+        return await SaveAndConnectAsync(response.User, response.SessionToken, password).ConfigureAwait(true);
+    }
+
+    public async Task<DriveSession> RegisterAsync(
+        string userName, string password, string groupType, CancellationToken cancellationToken = default)
+    {
+        var response = await _api.RegisterAsync(userName, password, groupType, cancellationToken).ConfigureAwait(true);
+        return await SaveAndConnectAsync(response.User, response.SessionToken, password).ConfigureAwait(true);
+    }
+
+    public async Task SignOutAsync(DriveSession session, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        var disconnect = _smb.Disconnect();
+        if (!disconnect.Succeeded)
+        {
+            var detail = disconnect.HasCredentialConflict
+                ? "Windows 中已有不同账号连接此 NAS。请先在资源管理器关闭该连接，再退出沐影盘。"
+                : $"无法安全断开 NAS 文件连接：{disconnect.ErrorMessage}";
+            throw new V2ApiException(detail);
+        }
+
+        // Keep the local token and credentials if the server cannot revoke the
+        // session; the user can retry logout when the NAS is reachable again.
+        await _api.LogoutAsync(session.SessionToken, cancellationToken).ConfigureAwait(true);
+        ClearLocalCredentials();
+    }
+
+    public void Dispose() => _api.Dispose();
+
+    private async Task<DriveSession> SaveAndConnectAsync(V2UserSession user, string token, string password)
+    {
+        try
+        {
+            _vault.SaveV2SessionToken(FormatIdentity(user), token);
+            _vault.SaveNasPassword(user.UserName, password);
+        }
+        catch
+        {
+            try { await _api.LogoutAsync(token).ConfigureAwait(true); }
+            catch { /* The next explicit login can replace this server session. */ }
+            ClearLocalCredentials();
+            throw new V2ApiException("无法安全保存登录凭据，请检查 Windows 凭据管理器设置。");
+        }
+
+        return new DriveSession(user, token, _smb.Connect());
+    }
+
+    private void ClearLocalCredentials()
+    {
+        _vault.DeleteV2SessionToken();
+        _vault.DeleteNasPassword();
+    }
+
+    private static string FormatIdentity(V2UserSession user) => $"{user.Id}|{user.UserName}";
+
+    private static string? ExtractUserName(string identity)
+    {
+        var separator = identity.IndexOf('|');
+        return separator < 0 ? null : identity[(separator + 1)..];
+    }
+}

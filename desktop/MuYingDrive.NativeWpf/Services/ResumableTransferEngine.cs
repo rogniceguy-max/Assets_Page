@@ -1,0 +1,653 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Collections.Concurrent;
+using MuYingDrive.NativeWpf.Models;
+
+namespace MuYingDrive.NativeWpf.Services;
+
+/// <summary>
+/// Account-scoped, durable single-file transfers over normal filesystem paths (UNC paths are
+/// supported). Each task writes to an exclusive sibling partial file, checkpoints at chunk
+/// boundaries, and publishes with a same-directory no-overwrite rename.
+/// </summary>
+public sealed class ResumableTransferEngine : IAsyncDisposable
+{
+    private static readonly TimeSpan CheckpointLifetime = TimeSpan.FromDays(30);
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = false };
+
+    private readonly string _accountDirectory;
+    private readonly int _chunkSize;
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly ConcurrentDictionary<string, RuntimeTask> _tasks = new(StringComparer.Ordinal);
+    private readonly SynchronizationContext? _eventContext;
+    private bool _initialized;
+    private bool _disposed;
+
+    public ResumableTransferEngine(string accountId, string? stateRoot = null, int chunkSize = 4 * 1024 * 1024,
+        SynchronizationContext? eventContext = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(accountId);
+        if (chunkSize is < 64 * 1024 or > 64 * 1024 * 1024)
+            throw new ArgumentOutOfRangeException(nameof(chunkSize), "Chunk size must be between 64 KiB and 64 MiB.");
+
+        _chunkSize = chunkSize;
+        _eventContext = eventContext ?? SynchronizationContext.Current;
+        var root = Path.GetFullPath(stateRoot ?? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MuYingDrive", "Transfers"));
+        var accountKey = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(accountId.Normalize(NormalizationForm.FormC))));
+        _accountDirectory = Path.Combine(root, accountKey);
+    }
+
+    public event EventHandler<ResumableTransferChangedEventArgs>? TransferChanged;
+
+    /// <summary>Loads this account's checkpoints and removes only its expired, owned partials.</summary>
+    public async Task<IReadOnlyList<ResumableTransferSnapshot>> InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            if (!_initialized)
+            {
+                Directory.CreateDirectory(_accountDirectory);
+                await LoadAndExpireAsync(cancellationToken).ConfigureAwait(false);
+                _initialized = true;
+            }
+            return _tasks.Values.Select(x => x.ToSnapshot()).OrderByDescending(x => x.LastActivityUtc).ToArray();
+        }
+        finally { _gate.Release(); }
+    }
+
+    public Task<ResumableTransferSnapshot> StartUploadAsync(
+        string localSourcePath, string destinationPath, CancellationToken cancellationToken = default) =>
+        StartAsync(ResumableTransferDirection.Upload, localSourcePath, destinationPath, cancellationToken);
+
+    public Task<ResumableTransferSnapshot> StartDownloadAsync(
+        string sourcePath, string localDestinationPath, CancellationToken cancellationToken = default) =>
+        StartAsync(ResumableTransferDirection.Download, sourcePath, localDestinationPath, cancellationToken);
+
+    public async Task PauseAsync(string taskId, CancellationToken cancellationToken = default)
+    {
+        RuntimeTask task;
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            task = GetTask(taskId);
+            lock (task.Sync)
+            {
+                if (task.Status != ResumableTransferStatus.Running) return;
+                task.PauseRequested = true;
+                if (task.Runner is null)
+                {
+                    task.Status = ResumableTransferStatus.Paused;
+                    task.LastActivityUtc = DateTimeOffset.UtcNow;
+                }
+            }
+            if (task.Runner is null)
+            {
+                await SaveAsync(task, cancellationToken).ConfigureAwait(false);
+                Publish(task);
+                return;
+            }
+        }
+        finally { _gate.Release(); }
+
+        if (task.Runner is not null)
+            await task.Runner.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<ResumableTransferSnapshot> ResumeAsync(string taskId, CancellationToken cancellationToken = default)
+    {
+        while (true)
+        {
+            RuntimeTask task;
+            Task? finishingRunner = null;
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                ThrowIfNotInitialized();
+                task = GetTask(taskId);
+                lock (task.Sync)
+                {
+                    if (task.Status is ResumableTransferStatus.Completed or ResumableTransferStatus.Canceled)
+                        throw new InvalidOperationException("Completed or canceled transfers cannot be resumed.");
+                    if (task.Status == ResumableTransferStatus.Running && !task.PauseRequested)
+                        return task.ToSnapshot();
+                    if (task.Runner is { IsCompleted: false }) finishingRunner = task.Runner;
+                    else
+                    {
+                        task.Error = null;
+                        task.PauseRequested = false;
+                        task.Status = ResumableTransferStatus.Running;
+                        task.LastActivityUtc = DateTimeOffset.UtcNow;
+                    }
+                }
+                if (finishingRunner is null)
+                {
+                    await SaveAsync(task, cancellationToken).ConfigureAwait(false);
+                    Publish(task);
+                    StartWorker(task);
+                    return task.ToSnapshot();
+                }
+            }
+            finally { _gate.Release(); }
+            await finishingRunner.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public Task<ResumableTransferSnapshot> RetryAsync(string taskId, CancellationToken cancellationToken = default) =>
+        ResumeAsync(taskId, cancellationToken);
+
+    /// <summary>Stops a task and removes its checkpoint and its own partial file.</summary>
+    public async Task CancelAsync(string taskId, CancellationToken cancellationToken = default)
+    {
+        RuntimeTask task;
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            task = GetTask(taskId);
+            bool cancelImmediately;
+            lock (task.Sync)
+            {
+                if (task.Status is ResumableTransferStatus.Completed or ResumableTransferStatus.Canceled) return;
+                task.PauseRequested = true;
+                task.CancelRequested = true;
+                cancelImmediately = task.Runner is null || task.Runner.IsCompleted;
+            }
+            if (cancelImmediately)
+            {
+                await CancelAndDeleteAsync(task, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+        }
+        finally { _gate.Release(); }
+
+        if (task.Runner is not null)
+        {
+            await task.Runner.WaitAsync(cancellationToken).ConfigureAwait(false);
+            // The runner may have crossed its pause checkpoint just before cancellation was
+            // requested. Once it has released its file handles, finish cancellation here.
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (_tasks.ContainsKey(taskId) && task.ToSnapshot().Status is not
+                    (ResumableTransferStatus.Completed or ResumableTransferStatus.Canceled))
+                    await CancelAndDeleteAsync(task, CancellationToken.None).ConfigureAwait(false);
+            }
+            finally { _gate.Release(); }
+        }
+    }
+
+    public IReadOnlyList<ResumableTransferSnapshot> GetTasks() =>
+        _tasks.Values.Select(x => x.ToSnapshot()).OrderByDescending(x => x.LastActivityUtc).ToArray();
+
+    private async Task<ResumableTransferSnapshot> StartAsync(
+        ResumableTransferDirection direction, string sourcePath, string destinationPath, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(destinationPath);
+        await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+        var source = Path.GetFullPath(sourcePath);
+        var destination = Path.GetFullPath(destinationPath);
+        var info = new FileInfo(source);
+        if (!info.Exists) throw new FileNotFoundException("Transfer source does not exist.", source);
+        if (Directory.Exists(destination)) throw new IOException("The destination is a directory.");
+        if (File.Exists(destination)) throw new IOException("The destination already exists; overwriting is refused.");
+
+        var taskId = Guid.NewGuid().ToString("N");
+        var partial = MakeOwnedPartialPath(destination, taskId);
+        var now = DateTimeOffset.UtcNow;
+        var task = new RuntimeTask
+        {
+            Id = taskId,
+            Direction = direction,
+            SourcePath = source,
+            DestinationPath = destination,
+            PartialPath = partial,
+            FileName = Path.GetFileName(destination),
+            TotalBytes = info.Length,
+            SourceLastWriteUtcTicks = info.LastWriteTimeUtc.Ticks,
+            BytesTransferred = 0,
+            Status = ResumableTransferStatus.Running,
+            LastActivityUtc = now
+        };
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            if (File.Exists(destination) || Directory.Exists(destination))
+                throw new IOException("The destination already exists; overwriting is refused.");
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            await using (var stream = new FileStream(partial, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.Asynchronous))
+            {
+                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
+            task.BytesTransferred = 0;
+        _tasks.TryAdd(taskId, task);
+            await SaveAsync(task, cancellationToken).ConfigureAwait(false);
+            Publish(task);
+            StartWorker(task);
+            return task.ToSnapshot();
+        }
+        catch
+        {
+            _tasks.TryRemove(taskId, out _);
+            TryDeleteOwnedPartial(partial, destination, taskId);
+            throw;
+        }
+        finally { _gate.Release(); }
+    }
+
+    private async Task EnsureInitializedAsync(CancellationToken cancellationToken)
+    {
+        if (_initialized) return;
+        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private void StartWorker(RuntimeTask task)
+    {
+        lock (task.Sync)
+        {
+            if (task.Runner is { IsCompleted: false }) return;
+            task.Runner = Task.Run(() => RunTransferAsync(task));
+        }
+    }
+
+    private async Task RunTransferAsync(RuntimeTask task)
+    {
+        try
+        {
+            ValidateSource(task);
+            var destinationExists = File.Exists(task.DestinationPath) || Directory.Exists(task.DestinationPath);
+            var partialExists = File.Exists(task.PartialPath);
+            if (destinationExists && !partialExists)
+            {
+                await RecoverPublishedDestinationAsync(task).ConfigureAwait(false);
+                return;
+            }
+            if (destinationExists) throw new IOException("The destination already exists; overwriting is refused.");
+            var partialInfo = new FileInfo(task.PartialPath);
+            if (!partialInfo.Exists) throw new IOException("The saved partial file is missing; this transfer cannot resume.");
+            if (partialInfo.Length > task.TotalBytes) throw new IOException("The partial file is larger than its recorded source.");
+            bool repairCheckpoint;
+            long checkpointedBytes;
+            lock (task.Sync)
+            {
+                checkpointedBytes = task.BytesTransferred;
+            }
+            var recoveredLength = partialInfo.Length;
+            if (recoveredLength > checkpointedBytes)
+            {
+                // Bytes written after the last atomically committed journal record are
+                // deliberately discarded. The journal is the resume boundary; this avoids
+                // trusting a torn or externally modified tail after an unclean shutdown.
+                await using var repairStream = new FileStream(task.PartialPath, FileMode.Open, FileAccess.Write,
+                    FileShare.None, 1, FileOptions.Asynchronous);
+                repairStream.SetLength(checkpointedBytes);
+                await repairStream.FlushAsync().ConfigureAwait(false);
+                repairStream.Flush(flushToDisk: true);
+                recoveredLength = checkpointedBytes;
+            }
+            lock (task.Sync)
+            {
+                repairCheckpoint = task.BytesTransferred != recoveredLength;
+                task.BytesTransferred = recoveredLength;
+                if (repairCheckpoint) task.LastActivityUtc = DateTimeOffset.UtcNow;
+            }
+            // The data flush can reach disk before the checkpoint rename. Reconcile that crash
+            // window to the actual partial length before another chunk is attempted.
+            if (repairCheckpoint) await SaveAsync(task, CancellationToken.None).ConfigureAwait(false);
+            Publish(task);
+
+            await using var source = new FileStream(task.SourcePath, FileMode.Open, FileAccess.Read, FileShare.Read, _chunkSize,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            await using var partial = new FileStream(task.PartialPath, FileMode.Open, FileAccess.Write, FileShare.None, _chunkSize,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            source.Seek(task.BytesTransferred, SeekOrigin.Begin);
+            partial.Seek(0, SeekOrigin.End);
+            var buffer = new byte[_chunkSize];
+
+            while (GetBytesTransferred(task) < task.TotalBytes)
+            {
+                if (task.CancelRequested) throw new OperationCanceledException("Transfer canceled.");
+                if (task.PauseRequested) { await MarkPausedAsync(task).ConfigureAwait(false); return; }
+                var wanted = (int)Math.Min(buffer.Length, task.TotalBytes - GetBytesTransferred(task));
+                var read = await source.ReadAsync(buffer.AsMemory(0, wanted)).ConfigureAwait(false);
+                if (read == 0) throw new EndOfStreamException("The source ended before the recorded file size.");
+                await partial.WriteAsync(buffer.AsMemory(0, read)).ConfigureAwait(false);
+                await partial.FlushAsync().ConfigureAwait(false);
+                partial.Flush(flushToDisk: true);
+                lock (task.Sync)
+                {
+                    task.BytesTransferred += read;
+                    task.LastActivityUtc = DateTimeOffset.UtcNow;
+                }
+                ValidateSource(task);
+                await SaveAsync(task, CancellationToken.None).ConfigureAwait(false);
+                Publish(task);
+            }
+
+            if (task.CancelRequested) throw new OperationCanceledException("Transfer canceled.");
+            if (task.PauseRequested) { await MarkPausedAsync(task).ConfigureAwait(false); return; }
+            ValidateSource(task);
+            await partial.DisposeAsync().ConfigureAwait(false);
+            await source.DisposeAsync().ConfigureAwait(false);
+
+            var partialHash = await HashFileAsync(task.PartialPath).ConfigureAwait(false);
+            var sourceHash = await HashFileAsync(task.SourcePath).ConfigureAwait(false);
+            ValidateSource(task);
+            if (!CryptographicOperations.FixedTimeEquals(partialHash, sourceHash))
+                throw new IOException("Integrity verification failed; the destination was not published.");
+
+            lock (task.Sync)
+            {
+                // This lock is the cancellation/publication boundary. If cancellation wins,
+                // cleanup removes the partial; if publication wins, the final file is kept.
+                if (task.CancelRequested) throw new OperationCanceledException("Transfer canceled before publication.");
+                if (File.Exists(task.DestinationPath) || Directory.Exists(task.DestinationPath))
+                    throw new IOException("The destination already exists; overwriting is refused.");
+                File.Move(task.PartialPath, task.DestinationPath, overwrite: false);
+                task.Status = ResumableTransferStatus.Completed;
+                task.Error = null;
+                task.BytesTransferred = task.TotalBytes;
+                task.LastActivityUtc = DateTimeOffset.UtcNow;
+            }
+            await SaveAsync(task, CancellationToken.None).ConfigureAwait(false);
+            Publish(task);
+        }
+        catch (Exception ex)
+        {
+            if (task.CancelRequested)
+            {
+                await CancelAndDeleteAsync(task, CancellationToken.None).ConfigureAwait(false);
+                return;
+            }
+            lock (task.Sync)
+            {
+                task.Status = ResumableTransferStatus.Failed;
+                task.Error = ex.Message;
+                task.LastActivityUtc = DateTimeOffset.UtcNow;
+            }
+            try { await SaveAsync(task, CancellationToken.None).ConfigureAwait(false); } catch { }
+            Publish(task);
+        }
+    }
+
+    private async Task RecoverPublishedDestinationAsync(RuntimeTask task)
+    {
+        var destinationInfo = new FileInfo(task.DestinationPath);
+        destinationInfo.Refresh();
+        if (!destinationInfo.Exists || destinationInfo.Length != task.TotalBytes)
+            throw new IOException("A destination exists but does not match the recorded transfer; it was left untouched.");
+
+        var destinationHash = await HashFileAsync(task.DestinationPath).ConfigureAwait(false);
+        var sourceHash = await HashFileAsync(task.SourcePath).ConfigureAwait(false);
+        ValidateSource(task);
+        if (!CryptographicOperations.FixedTimeEquals(destinationHash, sourceHash))
+            throw new IOException("A destination exists but failed integrity verification; it was left untouched.");
+
+        lock (task.Sync)
+        {
+            task.Status = ResumableTransferStatus.Completed;
+            task.Error = null;
+            task.BytesTransferred = task.TotalBytes;
+            task.LastActivityUtc = DateTimeOffset.UtcNow;
+        }
+        await SaveAsync(task, CancellationToken.None).ConfigureAwait(false);
+        Publish(task);
+    }
+
+    private async Task MarkPausedAsync(RuntimeTask task)
+    {
+        lock (task.Sync)
+        {
+            task.Status = ResumableTransferStatus.Paused;
+            task.LastActivityUtc = DateTimeOffset.UtcNow;
+        }
+        await SaveAsync(task, CancellationToken.None).ConfigureAwait(false);
+        Publish(task);
+    }
+
+    private void ValidateSource(RuntimeTask task)
+    {
+        var info = new FileInfo(task.SourcePath);
+        info.Refresh();
+        if (!info.Exists || info.Length != task.TotalBytes || info.LastWriteTimeUtc.Ticks != task.SourceLastWriteUtcTicks)
+            throw new IOException("The source changed since this transfer was created; retry is blocked to protect data integrity.");
+    }
+
+    private async Task<byte[]> HashFileAsync(string path)
+    {
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, _chunkSize,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        return await SHA256.HashDataAsync(stream).ConfigureAwait(false);
+    }
+
+    private async Task LoadAndExpireAsync(CancellationToken cancellationToken)
+    {
+        var now = DateTimeOffset.UtcNow;
+        foreach (var checkpointPath in Directory.EnumerateFiles(_accountDirectory, "*.json", SearchOption.TopDirectoryOnly))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            RuntimeTask? task;
+            try
+            {
+                await using var stream = File.OpenRead(checkpointPath);
+                task = await JsonSerializer.DeserializeAsync<RuntimeTask>(stream, JsonOptions, cancellationToken).ConfigureAwait(false);
+            }
+            catch { continue; }
+            if (task is null || !Guid.TryParseExact(task.Id, "N", out _) ||
+                !Enum.IsDefined(task.Direction) || !Enum.IsDefined(task.Status) || task.TotalBytes < 0 ||
+                task.BytesTransferred < 0 || task.BytesTransferred > task.TotalBytes) continue;
+            if (!IsCheckpointPath(task, checkpointPath) || !IsOwnedPartialPath(task.PartialPath, task.DestinationPath, task.Id)) continue;
+            if (now - task.LastActivityUtc > CheckpointLifetime)
+            {
+                if (task.Status != ResumableTransferStatus.Completed && !TryDeleteOwnedPartial(task.PartialPath, task.DestinationPath, task.Id))
+                    continue;
+                TryDeleteCheckpoint(checkpointPath);
+                continue;
+            }
+            if (task.Status is ResumableTransferStatus.Running or ResumableTransferStatus.Queued)
+            {
+                task.Status = ResumableTransferStatus.Paused;
+                task.Error = null;
+                task.LastActivityUtc = now;
+                await SaveAsync(task, cancellationToken).ConfigureAwait(false);
+            }
+            _tasks[task.Id] = task;
+        }
+    }
+
+    private async Task SaveAsync(RuntimeTask task, CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(_accountDirectory);
+        var path = CheckpointPath(task.Id);
+        var temp = path + ".tmp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            await using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096,
+                FileOptions.Asynchronous | FileOptions.WriteThrough))
+            {
+                RuntimeTask checkpoint;
+                lock (task.Sync) checkpoint = task.CloneForPersistence();
+                await JsonSerializer.SerializeAsync(stream, checkpoint, JsonOptions, cancellationToken).ConfigureAwait(false);
+                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(temp, path, overwrite: true);
+        }
+        finally { TryDeleteFile(temp); }
+    }
+
+    private async Task CancelAndDeleteAsync(RuntimeTask task, CancellationToken cancellationToken)
+    {
+        if (File.Exists(task.DestinationPath) || Directory.Exists(task.DestinationPath))
+        {
+            lock (task.Sync)
+            {
+                task.Status = ResumableTransferStatus.Failed;
+                task.Error = "A destination now exists; cancellation cleanup was skipped to protect it.";
+                task.LastActivityUtc = DateTimeOffset.UtcNow;
+            }
+            await SaveAsync(task, cancellationToken).ConfigureAwait(false);
+            Publish(task);
+            return;
+        }
+
+        if (TryDeleteOwnedPartial(task.PartialPath, task.DestinationPath, task.Id))
+        {
+            lock (task.Sync)
+            {
+                task.Status = ResumableTransferStatus.Canceled;
+                task.Error = null;
+                task.LastActivityUtc = DateTimeOffset.UtcNow;
+            }
+            _tasks.TryRemove(task.Id, out _);
+            TryDeleteCheckpoint(CheckpointPath(task.Id));
+            Publish(task);
+        }
+        else
+        {
+            lock (task.Sync)
+            {
+                task.Status = ResumableTransferStatus.Failed;
+                task.Error = "Could not remove this task's partial file; it was left in place.";
+                task.LastActivityUtc = DateTimeOffset.UtcNow;
+            }
+            await SaveAsync(task, cancellationToken).ConfigureAwait(false);
+            Publish(task);
+        }
+    }
+
+    private RuntimeTask GetTask(string id) => _tasks.TryGetValue(id, out var task)
+        ? task
+        : throw new KeyNotFoundException("Transfer task was not found for the active account.");
+
+    private static long GetBytesTransferred(RuntimeTask task)
+    {
+        lock (task.Sync) return task.BytesTransferred;
+    }
+
+    private string CheckpointPath(string id) => Path.Combine(_accountDirectory, id + ".json");
+
+    private static string MakeOwnedPartialPath(string destination, string id)
+    {
+        var full = Path.GetFullPath(destination);
+        var directory = Path.GetDirectoryName(full)!;
+        return Path.Combine(directory, $".myv-{id}.part");
+    }
+
+    private static bool IsOwnedPartialPath(string partial, string destination, string id)
+    {
+        try
+        {
+            return string.Equals(Path.GetFullPath(partial), MakeOwnedPartialPath(destination, id), StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return false; }
+    }
+
+    private bool IsCheckpointPath(RuntimeTask task, string path) =>
+        string.Equals(Path.GetFullPath(path), CheckpointPath(task.Id), StringComparison.OrdinalIgnoreCase);
+
+    private static bool TryDeleteOwnedPartial(string partial, string destination, string id)
+    {
+        if (!IsOwnedPartialPath(partial, destination, id)) return false;
+        try
+        {
+            if (File.Exists(partial)) File.Delete(partial);
+            return !File.Exists(partial);
+        }
+        catch { return false; }
+    }
+
+    private static void TryDeleteCheckpoint(string path) => TryDeleteFile(path);
+
+    private static void TryDeleteFile(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); } catch { }
+    }
+
+    private void Publish(RuntimeTask task)
+    {
+        try
+        {
+            var args = new ResumableTransferChangedEventArgs(task.ToSnapshot());
+            if (_eventContext is null || ReferenceEquals(SynchronizationContext.Current, _eventContext))
+                TransferChanged?.Invoke(this, args);
+            else
+                _eventContext.Post(_ =>
+                {
+                    try { TransferChanged?.Invoke(this, args); }
+                    catch { /* A UI subscriber must not crash the transfer worker or UI dispatcher. */ }
+                }, null);
+        }
+        catch { /* Subscriber errors must not break disk transfer. */ }
+    }
+
+    private void ThrowIfNotInitialized()
+    {
+        ThrowIfDisposed();
+        if (!_initialized) throw new InvalidOperationException("Call InitializeAsync before using the transfer engine.");
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (_disposed) throw new ObjectDisposedException(nameof(ResumableTransferEngine));
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Task[] runners;
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (_disposed) return;
+            _disposed = true;
+            foreach (var task in _tasks.Values)
+            {
+                lock (task.Sync) task.PauseRequested = true;
+            }
+            runners = _tasks.Values.Select(x => x.Runner).Where(x => x is not null).Cast<Task>().ToArray();
+        }
+        finally { _gate.Release(); }
+        try { await Task.WhenAll(runners).ConfigureAwait(false); } catch { }
+    }
+
+    private sealed class RuntimeTask
+    {
+        [System.Text.Json.Serialization.JsonIgnore] public object Sync { get; } = new();
+        public string Id { get; set; } = "";
+        public ResumableTransferDirection Direction { get; set; }
+        public string SourcePath { get; set; } = "";
+        public string DestinationPath { get; set; } = "";
+        public string PartialPath { get; set; } = "";
+        public string FileName { get; set; } = "";
+        public long TotalBytes { get; set; }
+        public long SourceLastWriteUtcTicks { get; set; }
+        public long BytesTransferred { get; set; }
+        public ResumableTransferStatus Status { get; set; }
+        public string? Error { get; set; }
+        public DateTimeOffset LastActivityUtc { get; set; }
+        [System.Text.Json.Serialization.JsonIgnore] public volatile bool PauseRequested;
+        [System.Text.Json.Serialization.JsonIgnore] public volatile bool CancelRequested;
+        [System.Text.Json.Serialization.JsonIgnore] public Task? Runner { get; set; }
+
+        public RuntimeTask CloneForPersistence() => new()
+        {
+            Id = Id, Direction = Direction, SourcePath = SourcePath, DestinationPath = DestinationPath,
+            PartialPath = PartialPath, FileName = FileName, TotalBytes = TotalBytes,
+            SourceLastWriteUtcTicks = SourceLastWriteUtcTicks, BytesTransferred = BytesTransferred,
+            Status = Status, Error = Error, LastActivityUtc = LastActivityUtc
+        };
+
+        public ResumableTransferSnapshot ToSnapshot()
+        {
+            lock (Sync)
+                return new(Id, FileName, Direction, Status, BytesTransferred, TotalBytes,
+                    Path.GetDirectoryName(Direction == ResumableTransferDirection.Upload ? DestinationPath : SourcePath) ?? "",
+                    TotalBytes == 0 ? 100 : Math.Clamp(BytesTransferred * 100d / TotalBytes, 0, 100), Error, LastActivityUtc);
+        }
+    }
+}
