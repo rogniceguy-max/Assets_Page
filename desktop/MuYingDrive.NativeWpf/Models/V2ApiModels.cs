@@ -49,6 +49,29 @@ public sealed class V2UserSession
 
     [JsonPropertyName("spaces")]
     public Dictionary<string, string> Spaces { get; init; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Internal Samba identity encoded in the server-provided personal path.
+    /// The display name remains <see cref="UserName"/>.
+    /// </summary>
+    [JsonIgnore]
+    public string SmbUserName
+    {
+        get
+        {
+            const string personalPrefix = "/03_个人空间/";
+            if (!Spaces.TryGetValue("personal", out var personalPath) ||
+                !personalPath.StartsWith(personalPrefix, StringComparison.Ordinal))
+                throw new InvalidDataException("The V2 API did not return a valid personal-space identity.");
+
+            var candidate = personalPath[personalPrefix.Length..];
+            if (candidate.Length != 29 || !candidate.StartsWith("myv2_", StringComparison.Ordinal) ||
+                candidate.AsSpan(5).IndexOfAnyExcept("0123456789abcdef") >= 0)
+                throw new InvalidDataException("The V2 API returned an invalid internal SMB identity.");
+
+            return candidate;
+        }
+    }
 }
 
 internal sealed class V2ApiErrorResponse

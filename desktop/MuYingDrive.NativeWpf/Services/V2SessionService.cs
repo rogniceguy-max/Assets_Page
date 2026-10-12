@@ -22,8 +22,7 @@ public sealed class V2SessionService
         if (!_vault.TryReadV2SessionToken(out var savedSession) || savedSession is null)
             return null;
 
-        if (!_vault.TryReadNasPassword(out var savedNas) || savedNas is null ||
-            !string.Equals(savedNas.UserName, ExtractUserName(savedSession.UserName), StringComparison.Ordinal))
+        if (!_vault.TryReadNasPassword(out var savedNas) || savedNas is null)
         {
             return null;
         }
@@ -44,6 +43,21 @@ public sealed class V2SessionService
         {
             ClearLocalCredentials();
             throw new V2ApiException("本机保存的登录身份与服务器记录不一致，请重新登录。");
+        }
+
+        var expectedSmbUserName = restored.User.SmbUserName;
+        if (!string.Equals(savedNas.UserName, expectedSmbUserName, StringComparison.Ordinal))
+        {
+            // Migrate credentials saved by the earlier client, which used the
+            // Chinese display name as the SMB identity. The display name and
+            // API session identity remain unchanged.
+            if (!string.Equals(savedNas.UserName, restored.User.UserName, StringComparison.Ordinal))
+            {
+                ClearLocalCredentials();
+                return null;
+            }
+
+            _vault.SaveNasPassword(expectedSmbUserName, savedNas.Password);
         }
 
         return new DriveSession(restored.User, savedSession.Token, _smb.Connect());
@@ -82,7 +96,7 @@ public sealed class V2SessionService
         try
         {
             _vault.SaveV2SessionToken(FormatIdentity(user), token);
-            _vault.SaveNasPassword(user.UserName, password);
+            _vault.SaveNasPassword(user.SmbUserName, password);
         }
         catch
         {
@@ -103,9 +117,4 @@ public sealed class V2SessionService
 
     private static string FormatIdentity(V2UserSession user) => $"{user.Id}|{user.UserName}";
 
-    private static string? ExtractUserName(string identity)
-    {
-        var separator = identity.IndexOf('|');
-        return separator < 0 ? null : identity[(separator + 1)..];
-    }
 }
