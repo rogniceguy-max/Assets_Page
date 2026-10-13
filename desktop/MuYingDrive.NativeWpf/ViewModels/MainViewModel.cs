@@ -11,6 +11,7 @@ namespace MuYingDrive.NativeWpf.ViewModels;
 public sealed class MainViewModel : ObservableObject
 {
     private readonly V2SessionService? _sessionService;
+    private readonly V2ApiClient? _api;
     private NasClientSettings? _settings;
     private object _currentPage;
     private readonly string? _configurationError;
@@ -34,6 +35,7 @@ public sealed class MainViewModel : ObservableObject
             _settings = settings;
             var apiOptions = new V2ApiClientOptions(settings.ApiBaseUri, settings.CertificateSha256);
             var api = new V2ApiClient(apiOptions);
+            _api = api;
             var profileSuffix = settings.CredentialProfile == "default" ? string.Empty : "." + settings.CredentialProfile;
             var vault = new WindowsCredentialVault(new WindowsCredentialVaultOptions(
                 "MuYingDrive.V2" + profileSuffix + ".ActiveSession",
@@ -82,6 +84,29 @@ public sealed class MainViewModel : ObservableObject
     public void ShowLogin() => CurrentPage = new LoginViewModel(this);
 
     public void ShowRegister() => CurrentPage = new RegisterViewModel(this);
+
+    /// <summary>Enters the login-free tour. No credentials are involved.</summary>
+    public async Task EnterVisitorAsync()
+    {
+        if (_api is null)
+        {
+            // A configuration problem belongs on the login page, not in a silent no-op.
+            if (CurrentPage is LoginViewModel unavailable)
+                unavailable.ErrorMessage = _configurationError ?? "客户端尚未配置 NAS 服务，请联系管理员。";
+            return;
+        }
+
+        var visitor = new VisitorViewModel(this, _api);
+        CurrentPage = visitor;
+        await visitor.InitializeAsync();
+    }
+
+    /// <summary>Leaves the tour, revoking the visitor session and clearing its cache.</summary>
+    public async Task ExitVisitorAsync(VisitorViewModel visitor)
+    {
+        await visitor.EndAsync();
+        ShowLogin();
+    }
 
     public Task InitializeAsync() => _initializeTask ??= InitializeCoreAsync();
 

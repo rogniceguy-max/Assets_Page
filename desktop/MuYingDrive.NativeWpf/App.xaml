@@ -12,6 +12,7 @@
             <DataTemplate DataType="{x:Type vm:LoginViewModel}"><views:LoginView /></DataTemplate>
             <DataTemplate DataType="{x:Type vm:RegisterViewModel}"><views:RegisterView /></DataTemplate>
             <DataTemplate DataType="{x:Type vm:WorkspaceViewModel}"><views:WorkspaceView /></DataTemplate>
+            <DataTemplate DataType="{x:Type vm:VisitorViewModel}"><views:VisitorView /></DataTemplate>
             <DataTemplate DataType="{x:Type vm:FilesViewModel}"><views:FilesView /></DataTemplate>
             <DataTemplate DataType="{x:Type vm:TransferViewModel}"><views:TransferView /></DataTemplate>
         </ResourceDictionary>
