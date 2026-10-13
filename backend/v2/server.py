@@ -24,6 +24,8 @@ from .service import ApiError, V2Application
 from .feedback import FeedbackService
 from .feedback_http import dispatch as dispatch_feedback
 from .update_failure_reports import InvalidUpdateFailureReport, UpdateFailureReportStore, validate_report
+from .visitor import VisitorReader, VisitorService
+from .visitor_http import dispatch as dispatch_visitor
 
 
 API_ROOT = "/api/v2"
@@ -45,8 +47,12 @@ def _bearer_token(headers) -> str | None:
 def create_handler(app: V2Application, *,
                    update_releases_dir: Path | None = None,
                    update_failure_db_path: Path | None = None,
-                   feedback: FeedbackService | None = None):
+                   feedback: FeedbackService | None = None,
+                   visitor: VisitorService | None = None):
     feedback = feedback or FeedbackService(app.session, app.db_path.parent / "feedback")
+    # No visitor reader configured means the tour is unavailable, not open: the routes
+    # still answer, but every read fails closed.
+    visitor = visitor or VisitorService(VisitorReader(None))
     release_store = ReleaseStore(update_releases_dir)
     failure_store = None
     db_path = update_failure_db_path or getattr(app, "db_path", None)
@@ -99,6 +105,8 @@ def create_handler(app: V2Application, *,
         def do_GET(self) -> None:  # noqa: N802
             if dispatch_feedback(self, feedback, _bearer_token(self.headers), "GET"):
                 return
+            if dispatch_visitor(self, visitor, "GET"):
+                return
             path = urlsplit(self.path).path
             if path == f"{API_ROOT}/health":
                 self._send_json(200, {"status": "ok", "version": "2"})
@@ -122,8 +130,15 @@ def create_handler(app: V2Application, *,
                 return
             self._send_error(ApiError(404, "NOT_FOUND", "接口不存在。"))
 
+        def do_DELETE(self) -> None:  # noqa: N802
+            # Only the visitor channel uses DELETE: ending a tour session.
+            if not dispatch_visitor(self, visitor, "DELETE"):
+                self._send_error(ApiError(404, "NOT_FOUND", "接口不存在。"))
+
         def do_POST(self) -> None:  # noqa: N802
             if dispatch_feedback(self, feedback, _bearer_token(self.headers), "POST"):
+                return
+            if dispatch_visitor(self, visitor, "POST"):
                 return
             parsed_path = urlsplit(self.path)
             path = parsed_path.path
@@ -417,9 +432,11 @@ def make_server(settings: Settings, app: V2Application) -> ThreadingHTTPServer:
     maintainers = {int(value.strip()) for value in raw_maintainers.split(",") if value.strip().isdigit() and int(value.strip()) > 0}
     feedback_root = Path(os.environ.get("MUYING_V2_FEEDBACK_DIR", str(settings.data_dir / "feedback")))
     feedback = FeedbackService(app.session, feedback_root, maintainers)
+    visitor = VisitorService(VisitorReader(settings.visitor_socket))
     server = V2HTTPServer((settings.bind_host, settings.port),
                           create_handler(app, update_releases_dir=settings.update_releases_dir,
-                                         update_failure_db_path=settings.database_path, feedback=feedback))
+                                         update_failure_db_path=settings.database_path,
+                                         feedback=feedback, visitor=visitor))
     server.daemon_threads = True
     server.request_queue_size = 64
 
