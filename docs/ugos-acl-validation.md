@@ -10,11 +10,13 @@
 
 |身份|UID|部门补充组|
 |---|---:|---|
-|沐影影视测试|1005|my_acl_film / GID 1006|
-|沐影文学测试|1006|my_acl_writing / GID 1007|
-|沐影参观测试|1007|无部门组|
+|[TEST-FILM]|1005|my_acl_film / GID 1006|
+|[TEST-WRITING]|1006|my_acl_writing / GID 1007|
+|[TEST-VISITOR]|1007|无部门组|
 
 用户及组均可被 UGOS 原生 `pathAcl` API 识别。原生账号创建通过管理员正常认证后的 `v1/user/create`，没有直接写厂商数据库。
+
+> **脱敏说明：** 本文及 `docs/validation/` 证据文件中，账号显示名与手机号样账号已替换为占位符（`[TEST-FILM]`、`[TEST-WRITING]`、`[TEST-VISITOR]`、`[REDACTED-ACCOUNT-ID]`）。占位符仅为对外发布替换，不改变任何操作结果、判定或结论。
 
 ## 权限矩阵
 

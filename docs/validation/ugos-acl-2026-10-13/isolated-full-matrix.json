@@ -1,6 +1,6 @@
 {
   "unix": {
-    "沐影影视测试": {
+    "[TEST-FILM]": {
       "film": {
         "list": {
           "allowed": true
@@ -129,7 +129,7 @@
         }
       }
     },
-    "沐影文学测试": {
+    "[TEST-WRITING]": {
       "film": {
         "list": {
           "allowed": true
@@ -258,7 +258,7 @@
         }
       }
     },
-    "沐影参观测试": {
+    "[TEST-VISITOR]": {
       "film": {
         "list": {
           "allowed": true
@@ -406,7 +406,7 @@
     }
   },
   "smb": {
-    "沐影影视测试": {
+    "[TEST-FILM]": {
       "film": {
         "list": {
           "exit": 0,
@@ -628,7 +628,7 @@
         }
       }
     },
-    "沐影文学测试": {
+    "[TEST-WRITING]": {
       "film": {
         "list": {
           "exit": 0,
@@ -850,7 +850,7 @@
         }
       }
     },
-    "沐影参观测试": {
+    "[TEST-VISITOR]": {
       "film": {
         "list": {
           "exit": 0,

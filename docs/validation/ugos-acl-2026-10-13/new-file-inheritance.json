@@ -2,7 +2,7 @@
   "checks": 108,
   "failures": [],
   "results": {
-    "沐影影视测试": {
+    "[TEST-FILM]": {
       "personal_writing/smb-created-1.txt": {
         "r": false,
         "r+": false
@@ -76,7 +76,7 @@
         "r+": true
       }
     },
-    "沐影文学测试": {
+    "[TEST-WRITING]": {
       "personal_writing/smb-created-1.txt": {
         "r": true,
         "r+": true
@@ -150,7 +150,7 @@
         "r+": false
       }
     },
-    "沐影参观测试": {
+    "[TEST-VISITOR]": {
       "personal_writing/smb-created-1.txt": {
         "r": false,
         "r+": false

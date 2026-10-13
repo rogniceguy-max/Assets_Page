@@ -19,7 +19,7 @@
         "mode": 16384
       }
     },
-    "assets_smb": "\n[Assets]\n\tcomment = Assets share directory\n\thide unreadable = Yes\n\tpath = /volume1/Assets\n\tskip smb perm = Yes\n\tuse sendfile = Yes\n\tvalid users = 123 19945022511 @admin @group_assets\n\tvfs objects = catia fruit full_audit recycle streams_xattr ug_xattr_filter\n\twrite list = 123 19945022511 @admin @group_assets\n\trecycle:exclude_dir    = #recycle\n\trecycle:maxsize        = 0\n\trecycle:minsize        = 0\n\trecycle:directory_mode = 0777\n\trecycle:versions       = Yes\n\trecycle:keeptree       = Yes\n\trecycle:repository     = #recycle\n",
+    "assets_smb": "\n[Assets]\n\tcomment = Assets share directory\n\thide unreadable = Yes\n\tpath = /volume1/Assets\n\tskip smb perm = Yes\n\tuse sendfile = Yes\n\tvalid users = 123 [REDACTED-ACCOUNT-ID] @admin @group_assets\n\tvfs objects = catia fruit full_audit recycle streams_xattr ug_xattr_filter\n\twrite list = 123 [REDACTED-ACCOUNT-ID] @admin @group_assets\n\trecycle:exclude_dir    = #recycle\n\trecycle:maxsize        = 0\n\trecycle:minsize        = 0\n\trecycle:directory_mode = 0777\n\trecycle:versions       = Yes\n\trecycle:keeptree       = Yes\n\trecycle:repository     = #recycle\n",
     "smb_status": "MainPID=10118\nNRestarts=0\nActiveState=active\nSubState=running\n"
   }
 }
