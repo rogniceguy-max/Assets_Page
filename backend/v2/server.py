@@ -431,8 +431,11 @@ def make_server(settings: Settings, app: V2Application) -> ThreadingHTTPServer:
     raw_maintainers = os.environ.get("MUYING_V2_FEEDBACK_MAINTAINERS", "")
     maintainers = {int(value.strip()) for value in raw_maintainers.split(",") if value.strip().isdigit() and int(value.strip()) > 0}
     feedback_root = Path(os.environ.get("MUYING_V2_FEEDBACK_DIR", str(settings.data_dir / "feedback")))
-    feedback = FeedbackService(app.session, feedback_root, maintainers)
     visitor = VisitorService(VisitorReader(settings.visitor_socket))
+    # A tour session may read public feedback and post anonymously; maintenance still
+    # requires an employee session with a maintainer id.
+    feedback = FeedbackService(app.session, feedback_root, maintainers,
+                               visitor_authenticate=visitor.has_session)
     server = V2HTTPServer((settings.bind_host, settings.port),
                           create_handler(app, update_releases_dir=settings.update_releases_dir,
                                          update_failure_db_path=settings.database_path,

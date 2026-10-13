@@ -145,6 +145,14 @@ class VisitorService:
                 self._sessions.pop(token, None)
                 raise ApiError(401, "VISITOR_SESSION_INVALID", "参观会话已失效，请重新进入。")
 
+    def has_session(self, token: str | None) -> bool:
+        """True when the token names a live visitor session. Never raises."""
+        if not token:
+            return False
+        with self._lock:
+            expiry = self._sessions.get(token)
+            return expiry is not None and expiry > time.monotonic()
+
     def end_session(self, token: str | None) -> None:
         if not token:
             return

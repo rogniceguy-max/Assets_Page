@@ -95,8 +95,12 @@ def sanitize_image(payload):
 
 
 class FeedbackService:
-    def __init__(self, authenticate, root: Path, maintainers=()):
+    def __init__(self, authenticate, root: Path, maintainers=(), visitor_authenticate=None):
         self.authenticate = authenticate
+        # Optional second authority: a login-free tour session. Such a caller may read
+        # public feedback and post anonymously, and never reaches a maintenance action,
+        # because those require manage=True which only an employee session can satisfy.
+        self.visitor_authenticate = visitor_authenticate
         self.root = root
         self.maintainers = frozenset(maintainers)
         self._lock = threading.Lock()
@@ -105,7 +109,12 @@ class FeedbackService:
     def authorize(self, token, manage=False):
         if not token:
             raise ApiError(401, "SESSION_REQUIRED", "请先登录。")
-        session = self.authenticate(token)
+        try:
+            session = self.authenticate(token)
+        except ApiError:
+            if not manage and self.visitor_authenticate is not None and self.visitor_authenticate(token):
+                return False
+            raise
         allowed = session["user"]["id"] in self.maintainers
         if manage and not allowed:
             raise ApiError(403, "FEEDBACK_FORBIDDEN", "仅授权维护人员可执行此操作。")

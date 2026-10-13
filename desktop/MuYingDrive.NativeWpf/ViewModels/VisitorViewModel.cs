@@ -179,8 +179,11 @@ public sealed class VisitorViewModel : ObservableObject, IFileBrowser
             _session = await _api.CreateVisitorSessionAsync().ConfigureAwait(true);
             _spaces.Clear();
             _spaces.AddRange(_session.Spaces);
+            // Icons follow the employee sidebar's meaning: a media library is a folder,
+            // the shared assets space is imagery.
             SidebarSpaces = _spaces
-                .Select(space => new WorkspaceNavItem(space.Id, space.Title, "FolderOpen"))
+                .Select(space => new WorkspaceNavItem(
+                    space.Id, space.Title, space.Id == "public" ? "Image" : "FolderOpen"))
                 .ToArray();
 
             if (_spaces.Count == 0)

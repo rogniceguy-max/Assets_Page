@@ -105,17 +105,28 @@ public sealed class WorkspaceViewModel : ObservableObject
         return workspace;
     }
 
-    /// <summary>The login-free tour: one navigation entry and three read-only spaces.</summary>
+    /// <summary>
+    /// The login-free tour: the same shell as an employee, with read-only spaces.
+    /// </summary>
+    /// <remarks>
+    /// The tour keeps the feedback page — it posts anonymously — but has no transfer
+    /// page and no update entry, so those are simply absent from the sidebar.
+    /// </remarks>
     public static WorkspaceViewModel ForVisitor(
         MainViewModel main,
         IFileBrowser browser,
         IReadOnlyList<WorkspaceNavItem> spaces,
+        IReadOnlyDictionary<string, object> pages,
         Func<string, Task> selectSpaceAsync,
         Func<Task> exitAsync,
+        FeedbackViewModel? feedback = null,
         Func<ValueTask>? disposeExtra = null)
     {
         var chrome = new WorkspaceChrome(
-            [new WorkspaceNavItem("文件", "文件", "Files")],
+            [
+                new WorkspaceNavItem("文件", "文件", "Files"),
+                new WorkspaceNavItem("反馈", "反馈", "CircleHelp"),
+            ],
             spaces,
             "参观",
             "退出游览",
@@ -123,9 +134,10 @@ public sealed class WorkspaceViewModel : ObservableObject
 
         var workspace = new WorkspaceViewModel(
             main, chrome,
-            new Dictionary<string, object>(StringComparer.Ordinal) { ["文件"] = browser },
+            new Dictionary<string, object>(pages, StringComparer.Ordinal),
             selectSpaceAsync,
             exitAsync,
+            feedback: feedback,
             disposeExtra: disposeExtra);
         workspace.Browser = browser;
         return workspace;

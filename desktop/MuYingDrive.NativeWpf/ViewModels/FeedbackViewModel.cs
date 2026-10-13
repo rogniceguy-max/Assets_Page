@@ -18,9 +18,20 @@ public sealed class FeedbackViewModel : ObservableObject, IDisposable
     private string? _submissionMessage;
 
     public FeedbackViewModel(DriveSession session, NasClientSettings settings)
+        : this(new V2ApiClient(new V2ApiClientOptions(settings.ApiBaseUri, settings.CertificateSha256)),
+               session.SessionToken)
     {
-        _api = new V2ApiClient(new V2ApiClientOptions(settings.ApiBaseUri, settings.CertificateSha256));
-        _token = session.SessionToken;
+    }
+
+    /// <summary>
+    /// Feedback over an already-configured client. Used by the login-free tour, whose
+    /// token is a visitor session: the server reports CanManage false for it, so the
+    /// maintenance controls never appear.
+    /// </summary>
+    public FeedbackViewModel(V2ApiClient api, string sessionToken)
+    {
+        _api = api;
+        _token = sessionToken;
         Draft = new FeedbackDraftViewModel(_api, _token, _lifetime.Token);
         Draft.Submitted += (_, result) =>
         {

@@ -102,12 +102,21 @@ public sealed class MainViewModel : ObservableObject
         var browser = new VisitorViewModel(this, _api);
         await browser.InitializeAsync().ConfigureAwait(true);
 
+        // The tour may post feedback anonymously; the server reports CanManage false
+        // for a visitor session, so the maintenance controls never appear.
+        var feedback = new FeedbackViewModel(_api, browser.SessionToken ?? string.Empty);
         var workspace = WorkspaceViewModel.ForVisitor(
             this,
             browser,
             browser.SidebarSpaces,
+            new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["文件"] = browser,
+                ["反馈"] = feedback
+            },
             key => browser.SelectSpaceByKeyAsync(key),
             () => ExitVisitorAsync(browser),
+            feedback,
             disposeExtra: () => browser.DisposeAsync());
         CurrentPage = workspace;
     }
