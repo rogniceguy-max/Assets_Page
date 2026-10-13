@@ -32,6 +32,7 @@ public sealed class VisitorViewModel : ObservableObject
     private bool _isBusy;
     private string _errorMessage = string.Empty;
     private int _loadRequestId;
+    private bool _isNavigating;
 
     public VisitorViewModel(MainViewModel main, V2ApiClient api)
     {
@@ -260,8 +261,21 @@ public sealed class VisitorViewModel : ObservableObject
         if (item is null || _session is null || SelectedSpace is null) return;
         if (item.IsDirectory)
         {
-            _currentPath = string.IsNullOrEmpty(_currentPath) ? item.Name : _currentPath + "/" + item.Name;
-            await LoadAsync().ConfigureAwait(true);
+            // A double click raises the command twice. Without this guard the second
+            // invocation appends the folder name again — ".../影视项目/影视项目" — and
+            // the listing comes back "not found" while the first load's contents are
+            // still on screen.
+            if (_isNavigating) return;
+            _isNavigating = true;
+            try
+            {
+                _currentPath = string.IsNullOrEmpty(_currentPath) ? item.Name : _currentPath + "/" + item.Name;
+                await LoadAsync().ConfigureAwait(true);
+            }
+            finally
+            {
+                _isNavigating = false;
+            }
             return;
         }
 
