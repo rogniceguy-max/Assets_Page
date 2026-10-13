@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWindowsForms>false</UseWindowsForms>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Trust\trusted-update-publisher.pem" />
+    <EmbeddedResource Include="Trust\trusted-code-signing-thumbprint.txt" />
+  </ItemGroup>
+</Project>

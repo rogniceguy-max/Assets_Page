@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MuYingDrive.UpdateCore;
 
 namespace MuYingDrive.NativeWpf.Services;
 
@@ -10,7 +11,20 @@ public sealed record NasClientSettings(Uri ApiBaseUri, string CertificateSha256,
 
     public static NasClientSettings Load()
     {
-        var settingsPath = Path.Combine(AppContext.BaseDirectory, "nas-client.json");
+        var stableSettingsPath = UpdatePathPolicy.ClientSettingsPath;
+        try { UpdatePathPolicy.EnsureNoReparsePointComponents(stableSettingsPath); }
+        catch (UnauthorizedAccessException exception)
+        {
+            throw new InvalidOperationException("客户端配置目录不安全。", exception);
+        }
+        var settingsPath = File.Exists(stableSettingsPath)
+            ? stableSettingsPath
+            : Path.Combine(AppContext.BaseDirectory, "nas-client.json");
+        try { UpdatePathPolicy.EnsureNoReparsePointComponents(settingsPath); }
+        catch (UnauthorizedAccessException exception)
+        {
+            throw new InvalidOperationException("客户端配置文件路径不安全。", exception);
+        }
         NasClientSettings? settings = null;
         if (File.Exists(settingsPath))
         {
@@ -19,6 +33,10 @@ public sealed record NasClientSettings(Uri ApiBaseUri, string CertificateSha256,
                 settings = JsonSerializer.Deserialize<NasClientSettings>(File.ReadAllText(settingsPath));
             }
             catch (IOException)
+            {
+                throw new InvalidOperationException("客户端 NAS 配置无法读取。", null);
+            }
+            catch (UnauthorizedAccessException)
             {
                 throw new InvalidOperationException("客户端 NAS 配置无法读取。", null);
             }

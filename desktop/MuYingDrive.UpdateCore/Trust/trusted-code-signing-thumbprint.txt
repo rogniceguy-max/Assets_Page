@@ -1,0 +1,2 @@
+# Replace with the SHA-256 thumbprint of the Authenticode publisher before distribution.
+# An empty trust anchor disables package installation safely.

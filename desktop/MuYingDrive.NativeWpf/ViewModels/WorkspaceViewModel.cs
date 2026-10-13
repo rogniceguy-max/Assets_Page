@@ -25,6 +25,7 @@ public sealed class WorkspaceViewModel : ObservableObject
         SelectSpaceCommand = new RelayCommand(parameter => SelectSpace(parameter as string ?? "本部门"));
         SignOutCommand = new AsyncRelayCommand(async _ => await _main.SignOutAsync(Session));
         ThemeChangedCommand = new RelayCommand(parameter => _main.ThemeService.SetPreference(parameter as string ?? "跟随系统"));
+        _main.PropertyChanged += HandleMainPropertyChanged;
     }
 
     public DriveSession Session { get; }
@@ -84,6 +85,13 @@ public sealed class WorkspaceViewModel : ObservableObject
     public RelayCommand SelectSpaceCommand { get; }
     public AsyncRelayCommand SignOutCommand { get; }
     public RelayCommand ThemeChangedCommand { get; }
+    public AsyncRelayCommand InstallUpdateNowCommand => _main.InstallUpdateNowCommand;
+    public bool IsUpdateReady => _main.IsUpdateReady;
+    public string UpdateReadyVersion => _main.UpdateReadyVersion;
+    public string UpdateButtonToolTip => IsUpdateReady
+        ? $"点击立即更新到版本 {UpdateReadyVersion}"
+        : "后台自动检查更新；有新版本时此处会显示红点";
+    public string UpdateButtonName => IsUpdateReady ? $"有新版本 {UpdateReadyVersion} 可用，立即更新" : "沐影盘更新，后台自动检查";
 
     public async Task InitializeAsync()
     {
@@ -91,7 +99,19 @@ public sealed class WorkspaceViewModel : ObservableObject
         await Files.InitializeAsync();
     }
 
-    public ValueTask DisposeAsync() => Transfers.DisposeAsync();
+    public ValueTask DisposeAsync()
+    {
+        _main.PropertyChanged -= HandleMainPropertyChanged;
+        return Transfers.DisposeAsync();
+    }
+
+    public void RefreshUpdateState()
+    {
+        OnPropertyChanged(nameof(IsUpdateReady));
+        OnPropertyChanged(nameof(UpdateReadyVersion));
+        OnPropertyChanged(nameof(UpdateButtonToolTip));
+        OnPropertyChanged(nameof(UpdateButtonName));
+    }
 
     private void Navigate(string destination)
     {
@@ -106,5 +126,11 @@ public sealed class WorkspaceViewModel : ObservableObject
         SelectedNavigation = "文件";
         CurrentContent = Files;
         OnPropertyChanged(nameof(PageTitle));
+    }
+
+    private void HandleMainPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName is nameof(MainViewModel.IsUpdateReady) or nameof(MainViewModel.UpdateReadyVersion))
+            RefreshUpdateState();
     }
 }
