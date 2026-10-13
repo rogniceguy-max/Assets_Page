@@ -21,7 +21,16 @@ public enum UpdateCheckState
 /// <summary>Checks the signed stable channel and pre-downloads only verified packages.</summary>
 public sealed class UpdateCoordinator : IAsyncDisposable
 {
-    private static readonly TimeSpan CheckInterval = TimeSpan.FromHours(8);
+    /// <summary>
+    /// How often the signed stable channel is polled.
+    /// </summary>
+    /// <remarks>
+    /// A check is one small HTTPS request — the manifest is about 0.5 KB and is served
+    /// with a strong ETag — and a package is downloaded only when a newer version exists.
+    /// Polling this often therefore costs almost nothing, while an eight-hour interval
+    /// could leave a published fix invisible for most of a working day.
+    /// </remarks>
+    private static readonly TimeSpan CheckInterval = TimeSpan.FromMinutes(15);
     private static readonly Regex PackageIdPattern = new("^[a-f0-9]{32}$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
     private readonly V2ApiClient _api;
     private readonly string _currentVersion;
@@ -124,6 +133,7 @@ public sealed class UpdateCoordinator : IAsyncDisposable
             if (!alreadyValidated)
                 await PackageIntegrity.ValidatePackageForReadyAsync(packagePath, verified.Value, cancellationToken).ConfigureAwait(false);
             _readyUpdate = new PreparedUpdate(verified, manifestPath, packagePath);
+            PruneSupersededCache();
             SetState(UpdateCheckState.Ready);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -193,8 +203,44 @@ public sealed class UpdateCoordinator : IAsyncDisposable
         if (newest is not null)
         {
             _readyUpdate = newest;
+            PruneSupersededCache();
             SetState(UpdateCheckState.Ready);
         }
+    }
+
+    /// <summary>
+    /// Deletes cached packages other than the one currently ready to install.
+    /// </summary>
+    /// <remarks>
+    /// Every cached package is roughly 140 MB. When a release supersedes one the user
+    /// never installed — which is the normal case for anyone who leaves the client open
+    /// across a publish — the older download is dead weight for the life of the install.
+    /// Only directories named as package ids are considered, so the runner, health and
+    /// transaction directories under the same root are never touched.
+    /// </remarks>
+    private void PruneSupersededCache()
+    {
+        if (_readyUpdate is null) return;
+        var keep = Path.GetDirectoryName(_readyUpdate.PackagePath);
+        if (string.IsNullOrEmpty(keep)) return;
+
+        try
+        {
+            if (!Directory.Exists(UpdatePathPolicy.UpdateRoot)) return;
+            foreach (var directory in Directory.EnumerateDirectories(UpdatePathPolicy.UpdateRoot, "*", SearchOption.TopDirectoryOnly))
+            {
+                if (!PackageIdPattern.IsMatch(Path.GetFileName(directory))) continue;
+                if (string.Equals(Path.GetFullPath(directory), Path.GetFullPath(keep), StringComparison.OrdinalIgnoreCase)) continue;
+                try
+                {
+                    Directory.Delete(directory, recursive: true);
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     public static string GetCurrentVersion()
