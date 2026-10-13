@@ -183,7 +183,7 @@ class FeedbackHttpTests(unittest.TestCase):
         values.setdefault("Content-Length", str(len(body)))
         raw = (f"{method} {path} HTTP/1.1\r\nHost: localhost\r\n" + "".join(f"{k}: {v}\r\n" for k, v in values.items()) + "\r\n").encode("ascii") + body
         # Exercise the real HTTP parser and handler without needing network permissions.
-        handler_type = create_handler(self.identity, self.service)
+        handler_type = create_handler(self.identity, feedback=self.service)
         handler = handler_type.__new__(handler_type)
         handler.rfile = io.BytesIO(raw)
         handler.wfile = io.BytesIO()

@@ -42,7 +42,8 @@ def _bearer_token(headers) -> str | None:
     return token if token and len(token) <= 256 else None
 
 
-def create_handler(app: V2Application, update_releases_dir: Path | None = None,
+def create_handler(app: V2Application, *,
+                   update_releases_dir: Path | None = None,
                    update_failure_db_path: Path | None = None,
                    feedback: FeedbackService | None = None):
     feedback = feedback or FeedbackService(app.session, app.db_path.parent / "feedback")
@@ -417,7 +418,8 @@ def make_server(settings: Settings, app: V2Application) -> ThreadingHTTPServer:
     feedback_root = Path(os.environ.get("MUYING_V2_FEEDBACK_DIR", str(settings.data_dir / "feedback")))
     feedback = FeedbackService(app.session, feedback_root, maintainers)
     server = V2HTTPServer((settings.bind_host, settings.port),
-                          create_handler(app, settings.update_releases_dir, settings.database_path, feedback))
+                          create_handler(app, update_releases_dir=settings.update_releases_dir,
+                                         update_failure_db_path=settings.database_path, feedback=feedback))
     server.daemon_threads = True
     server.request_queue_size = 64
 
