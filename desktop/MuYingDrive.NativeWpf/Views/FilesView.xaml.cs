@@ -5,9 +5,13 @@ using System.Windows.Input;
 
 namespace MuYingDrive.NativeWpf.Views;
 
+/// <summary>
+/// The shared file browser. Driven by <see cref="IFileBrowser"/> so the employee file
+/// page and the visitor tour render exactly the same view.
+/// </summary>
 public partial class FilesView : UserControl
 {
-    private FilesViewModel? _viewModel;
+    private IFileBrowser? _viewModel;
 
     public FilesView()
     {
@@ -22,7 +26,7 @@ public partial class FilesView : UserControl
             _viewModel.SelectionRequested -= HandleSelectionRequested;
         }
 
-        _viewModel = DataContext as FilesViewModel;
+        _viewModel = DataContext as IFileBrowser;
         if (_viewModel is not null)
         {
             _viewModel.SelectionRequested += HandleSelectionRequested;
@@ -44,7 +48,7 @@ public partial class FilesView : UserControl
 
     private void FileList_SelectionChanged(object sender, SelectionChangedEventArgs args)
     {
-        if (sender is ListBox list && DataContext is FilesViewModel viewModel)
+        if (sender is ListBox list && DataContext is IFileBrowser viewModel)
         {
             viewModel.UpdateSelectionCount(list.SelectedItems.Count);
         }
@@ -52,7 +56,7 @@ public partial class FilesView : UserControl
 
     private void FileList_PreviewKeyDown(object sender, KeyEventArgs args)
     {
-        if (sender is not ListBox list || DataContext is not FilesViewModel viewModel)
+        if (sender is not ListBox list || DataContext is not IFileBrowser viewModel)
         {
             return;
         }
@@ -72,8 +76,9 @@ public partial class FilesView : UserControl
             list.SelectedItems.Clear();
             args.Handled = true;
         }
-        else if (args.Key == Key.Delete && list.SelectedItem is not null)
+        else if (args.Key == Key.Delete && list.SelectedItem is not null && viewModel.CanModify)
         {
+            // A read-only browser has no delete path to invoke at all.
             viewModel.UnsupportedEditCommand.Execute("删除");
             args.Handled = true;
         }
@@ -81,7 +86,7 @@ public partial class FilesView : UserControl
 
     private void GalleryItem_MouseDoubleClick(object sender, MouseButtonEventArgs args)
     {
-        if (sender is ListBoxItem item && DataContext is FilesViewModel viewModel)
+        if (sender is ListBoxItem item && DataContext is IFileBrowser viewModel)
         {
             viewModel.OpenCommand.Execute(item.DataContext);
             args.Handled = true;

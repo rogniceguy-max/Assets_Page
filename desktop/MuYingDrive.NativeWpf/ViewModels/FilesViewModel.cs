@@ -3,13 +3,14 @@ using System.Diagnostics;
 using System.Windows;
 using System.ComponentModel;
 using System.Windows.Data;
+using System.Windows.Input;
 using MuYingDrive.NativeWpf.Infrastructure;
 using MuYingDrive.NativeWpf.Models;
 using MuYingDrive.NativeWpf.Services;
 
 namespace MuYingDrive.NativeWpf.ViewModels;
 
-public sealed class FilesViewModel : ObservableObject
+public sealed class FilesViewModel : ObservableObject, IFileBrowser
 {
     private readonly TransferViewModel _transfers;
     private readonly WindowsFilePickerService _filePicker = new();
@@ -120,6 +121,14 @@ public sealed class FilesViewModel : ObservableObject
     public bool IsEmpty => !IsLoading && !HasError && ItemsView.IsEmpty;
     public string EmptyMessage => string.IsNullOrWhiteSpace(SearchText) ? "此文件夹为空" : "没有匹配的文件";
     public bool CanUpload => _smbConnected && !IsReadOnly && !IsLoading;
+
+    /// <summary>
+    /// Employees may rename, move, copy and delete. The shared view uses this to omit
+    /// those menu entries for the read-only tour.
+    /// </summary>
+    public bool CanModify => true;
+
+    public string LoadingMessage => "正在读取 NAS 文件…";
     public bool CanNavigateUp => !string.Equals(_currentDirectory, _currentRoot, StringComparison.OrdinalIgnoreCase);
     public string CurrentPathLabel
     {
@@ -149,6 +158,17 @@ public sealed class FilesViewModel : ObservableObject
     public RelayCommand<DriveFileItem> DetailsCommand { get; }
     public RelayCommand UploadCommand { get; }
     public RelayCommand NavigateUpCommand { get; }
+
+    // Explicit interface implementations: the concrete command types stay available for
+    // RaiseCanExecuteChanged, while the shared view sees only ICommand.
+    ICommand IFileBrowser.OpenCommand => OpenCommand;
+    ICommand IFileBrowser.DownloadCommand => DownloadCommand;
+    ICommand IFileBrowser.NavigateUpCommand => NavigateUpCommand;
+    ICommand IFileBrowser.ToggleGridCommand => ToggleGridCommand;
+    ICommand IFileBrowser.ToggleListCommand => ToggleListCommand;
+    ICommand IFileBrowser.UploadCommand => UploadCommand;
+    ICommand IFileBrowser.UnsupportedEditCommand => UnsupportedEditCommand;
+    ICommand IFileBrowser.DetailsCommand => DetailsCommand;
 
     public async Task InitializeAsync() => await LoadCurrentDirectoryAsync();
 
