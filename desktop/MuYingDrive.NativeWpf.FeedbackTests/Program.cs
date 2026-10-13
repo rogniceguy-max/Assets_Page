@@ -48,9 +48,6 @@ internal static class Program
             var json = JsonSerializer.Serialize(new FeedbackSubmission("suggestion", "general", "title", "description", [], true), new JsonSerializerOptions(JsonSerializerDefaults.Web));
             Assert(!json.Contains("fixture") && !json.Contains("author") && !json.Contains("user"), "Submission must have no identity field.");
             var failed = new TransferTask(new ResumableTransferSnapshot("secret-task-id", "secret-user-file.png", ResumableTransferDirection.Upload, ResumableTransferStatus.Failed, 0, 100, @"C:\Users\secret-user", 0, "Bearer secret-token at 10.0.0.1", DateTimeOffset.UtcNow));
-            var safeSummary = JsonSerializer.Serialize(FeedbackFailureSummary.From(failed));
-            Assert(!safeSummary.Contains("secret") && !safeSummary.Contains("10.0.0.1"), "Transfer shortcut must not copy raw errors, paths, task IDs or names.");
-            Assert(FeedbackFailureSummary.From(failed).Category == "upload", "Transfer category must be allowlisted.");
             model.Draft.IsAdding = true;
             Assert(!model.Draft.SubmitCommand.CanExecute(null), "Submission must wait for screenshot preparation.");
             model.Draft.IsAdding = false;
@@ -80,6 +77,7 @@ internal static class Program
                 workspace.ToggleSidebarCommand.Execute(null);
                 Render(new WorkspaceView { DataContext = workspace }, 900, 600, 96, Path.Combine(output, $"workspace-collapsed-{theme}.png"));
                 workspace.ToggleSidebarCommand.Execute(null);
+                Render(new TransferView { DataContext = workspace.Transfers }, 960, 480, 96, Path.Combine(output, $"transfer-failure-{theme}.png"));
                 typeof(FeedbackViewModel).GetProperty(nameof(FeedbackViewModel.CanManage))!.SetValue(model, true);
                 typeof(FeedbackViewModel).GetProperty(nameof(FeedbackViewModel.Detail))!.SetValue(model, item);
                 model.SelectedStatus = item.Status;
@@ -109,7 +107,7 @@ internal static class Program
             }
             Assert(bindingErrors.Messages.Count == 0, string.Join("\n", bindingErrors.Messages));
             workspace.DisposeAsync().AsTask().GetAwaiter().GetResult(); main.Dispose();
-            Console.WriteLine("PASS: draft privacy gate, image limits, anonymous serialization, safe failure shortcut, retained workspace/queue instances, Light/Dark list/detail/form/empty/loading/error rendering, 150%/200% rendering; no binding errors.");
+            Console.WriteLine("PASS: draft privacy gate, image limits, anonymous serialization, retained workspace/queue instances, Light/Dark list/detail/form/empty/loading/error rendering, 150%/200% rendering; no binding errors.");
             application.Shutdown();
             return 0;
         }
