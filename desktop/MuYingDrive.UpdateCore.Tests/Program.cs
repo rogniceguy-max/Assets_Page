@@ -68,6 +68,72 @@ Throws<CryptographicException>("rejects a well-formed but unsigned envelope", ()
     UpdateManifestVerifier.Verify(Encoding.UTF8.GetBytes(envelope));
 });
 
+if (args.Length > 0 && args[0] == "--check-resources")
+{
+    // A StaticResource key that does not exist compiles fine and throws
+    // XamlParseException the moment the view is loaded — which is how the tour view
+    // crashed on its first click. WPF resolves keys against the file itself, then
+    // Application.Resources (including its merged theme dictionaries), so this mirrors
+    // exactly that lookup.
+    var clientDirectory = args[1];
+    var keyPattern = new System.Text.RegularExpressions.Regex("x:Key=\"([^\"]+)\"");
+    var usePattern = new System.Text.RegularExpressions.Regex("\\{StaticResource ([^}]+)\\}");
+
+    var appKeys = new HashSet<string>(StringComparer.Ordinal);
+    var appPath = Path.Combine(clientDirectory, "App.xaml");
+    foreach (System.Text.RegularExpressions.Match match in keyPattern.Matches(File.ReadAllText(appPath)))
+        appKeys.Add(match.Groups[1].Value.Trim());
+
+    var mergedKeys = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var source in System.Text.RegularExpressions.Regex.Matches(
+        File.ReadAllText(appPath), "Source=\"([^\"]+\\.xaml)\"").Select(m => m.Groups[1].Value))
+    {
+        var themePath = Path.Combine(clientDirectory, source.Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(themePath)) continue;
+        foreach (System.Text.RegularExpressions.Match match in keyPattern.Matches(File.ReadAllText(themePath)))
+            mergedKeys.Add(match.Groups[1].Value.Trim());
+    }
+    Console.WriteLine($"App.xaml defines {appKeys.Count} keys; merged themes define {mergedKeys.Count}");
+
+    // Keys from a dictionary a view merges into itself count for that view.
+    HashSet<string> KeysOf(string xamlPath)
+    {
+        var text = File.ReadAllText(xamlPath);
+        var keys = keyPattern.Matches(text).Select(m => m.Groups[1].Value.Trim())
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (System.Text.RegularExpressions.Match source in System.Text.RegularExpressions.Regex.Matches(
+            text, "Source=\"([^\"]+\\.xaml)\""))
+        {
+            var directory = Path.GetDirectoryName(xamlPath) ?? clientDirectory;
+            var referenced = Path.Combine(directory, source.Groups[1].Value.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(referenced))
+                foreach (System.Text.RegularExpressions.Match match in keyPattern.Matches(File.ReadAllText(referenced)))
+                    keys.Add(match.Groups[1].Value.Trim());
+        }
+        return keys;
+    }
+
+    var missing = 0;
+    foreach (var xaml in Directory.EnumerateFiles(clientDirectory, "*.xaml", SearchOption.AllDirectories))
+    {
+        var localKeys = KeysOf(xaml);
+        foreach (System.Text.RegularExpressions.Match match in usePattern.Matches(File.ReadAllText(xaml)))
+        {
+            var key = match.Groups[1].Value.Trim();
+            // A nested markup extension such as {x:Type TextBlock} is not a key lookup.
+            if (key.Contains('{') || key.Contains('}')) continue;
+            if (localKeys.Contains(key) || appKeys.Contains(key) || mergedKeys.Contains(key)) continue;
+            Console.WriteLine($"  FAIL  {Path.GetFileName(xaml)} uses {{StaticResource {key}}} but nothing defines it");
+            missing++;
+        }
+    }
+
+    Check($"every StaticResource key resolves ({missing} missing)", missing == 0);
+    Console.WriteLine();
+    Console.WriteLine(failures == 0 ? "ALL RESOURCE KEYS RESOLVE" : $"{failures} UNRESOLVED RESOURCE PROBLEM(S)");
+    return failures == 0 ? 0 : 1;
+}
+
 if (args.Length > 0 && args[0] == "--check-icons")
 {
     // XAML names icons as strings, and LucideIcon draws nothing for an unknown name —

@@ -39,7 +39,7 @@
 
                 <!-- Login-free tour: a quiet text link, deliberately not a second primary action. -->
                 <Button Style="{StaticResource Button.Ghost}" Height="28" MinWidth="0" Padding="6,0" Margin="0,8,0,0"
-                        Content="免登录游览：只读浏览影视 / 文学 / 公共素材"
+                        Content="免登录游览"
                         FontSize="{StaticResource Typography.FontSize.Caption}"
                         Foreground="{DynamicResource Brush.Text.Secondary}"
                         Command="{Binding EnterTourCommand}"

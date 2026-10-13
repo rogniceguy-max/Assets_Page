@@ -3,6 +3,11 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="clr-namespace:MuYingDrive.NativeWpf.Controls"
              Background="{DynamicResource Brush.Surface.Canvas}">
+    <!-- Converters are per-view in this project (there is no global instance), and a
+         missing StaticResource key only fails when the view is loaded at runtime. -->
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+    </UserControl.Resources>
     <!-- Read-only by construction: there is no upload, rename, move or delete control
          anywhere in this view, and the view model exposes no such command. -->
     <Grid Margin="24,18,24,16">
