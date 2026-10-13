@@ -38,7 +38,13 @@ public static class UpdateExecutionGuard
             FileShare.ReadWrite, 1, FileOptions.None);
     }
 
-    public static async Task<UpdaterGuard> AcquireUpdaterLockAsync(CancellationToken cancellationToken)
+    /// <param name="onWaiting">
+    /// Invoked on every retry while another process holds a lock. The locks are per
+    /// Windows user, not per install directory, so any running client blocks this —
+    /// callers should surface that instead of appearing to hang.
+    /// </param>
+    public static async Task<UpdaterGuard> AcquireUpdaterLockAsync(
+        CancellationToken cancellationToken, Action? onWaiting = null)
     {
         FileStream updaterMutex;
         while (true)
@@ -52,6 +58,7 @@ public static class UpdateExecutionGuard
             }
             catch (IOException)
             {
+                onWaiting?.Invoke();
                 await Task.Delay(500, cancellationToken).ConfigureAwait(false);
             }
         }
@@ -78,6 +85,7 @@ public static class UpdateExecutionGuard
                 }
                 catch (IOException)
                 {
+                    onWaiting?.Invoke();
                     await Task.Delay(500, cancellationToken).ConfigureAwait(false);
                 }
             }

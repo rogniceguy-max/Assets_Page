@@ -25,8 +25,9 @@ public partial class SetupWindow : Window
     {
         await _viewModel.RunAsync(arguments);
         _completed = true;
-        if (arguments.Contains("--quiet") && _viewModel.IsSucceeded && !_viewModel.HasLaunchPath)
-            Close();
+        // Unattended mode never waits for a click and never launches the client, so it
+        // closes on completion whether the install succeeded or failed.
+        if (arguments.Contains("--quiet")) Close();
     }
 
     private void Window_Closing(object? sender, CancelEventArgs e)

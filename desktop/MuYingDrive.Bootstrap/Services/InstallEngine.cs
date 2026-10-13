@@ -69,8 +69,17 @@ public sealed class InstallEngine
             progress.Report(new InstallProgress("正在安装沐影盘", "正在准备安装，请稍候。", "准备中"));
 
             // Take the same exclusive locks the updater uses so a running client blocks
-            // the install instead of being replaced underneath itself.
-            guard = await UpdateExecutionGuard.AcquireUpdaterLockAsync(cancellationToken).ConfigureAwait(false);
+            // the install instead of being replaced underneath itself. The locks are per
+            // Windows user rather than per install directory, so any running client
+            // blocks this; report the wait instead of appearing to hang.
+            var waitingReported = false;
+            guard = await UpdateExecutionGuard.AcquireUpdaterLockAsync(cancellationToken, () =>
+            {
+                if (waitingReported) return;
+                waitingReported = true;
+                progress.Report(new InstallProgress(
+                    "正在安装沐影盘", "请先关闭正在运行的沐影盘，安装会自动继续。", "等待沐影盘退出"));
+            }).ConfigureAwait(false);
             await UpdateExecutionGuard.WaitForClientProcessesExitAsync(InstallRoot, cancellationToken)
                 .ConfigureAwait(false);
 
