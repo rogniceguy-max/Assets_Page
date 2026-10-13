@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Console test harness, matching the repo's existing hand-rolled style
+    (desktop/MuYingDrive.NativeWpf.FeedbackTests) rather than pulling in a test
+    framework. Exits non-zero when any check fails.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MuYingDrive.UpdateCore\MuYingDrive.UpdateCore.csproj" />
+  </ItemGroup>
+
+</Project>

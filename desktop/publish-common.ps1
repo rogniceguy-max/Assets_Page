@@ -41,7 +41,9 @@ function Resolve-ReleaseSigningCertificate {
     #>
     param(
         [string]$CodeSigningCertificateSha1 = "",
-        [Parameter(Mandatory = $true)][string]$TrustedThumbprint
+        # An empty value means no Authenticode pin is embedded, which is a valid state,
+        # so this cannot be Mandatory (PowerShell rejects binding an empty string).
+        [AllowEmptyString()][string]$TrustedThumbprint = ""
     )
 
     $sha1 = ($CodeSigningCertificateSha1 -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
