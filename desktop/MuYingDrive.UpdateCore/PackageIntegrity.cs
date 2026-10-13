@@ -224,7 +224,13 @@ public static class PackageIntegrity
             throw new InvalidDataException("安装包程序版本与签名发布清单不一致。");
     }
 
-    private static string ValidateEntryName(ZipArchiveEntry entry)
+    /// <summary>
+    /// Validates a ZIP entry name and returns it rooted at the current platform's
+    /// separator, rejecting links, reparse points, absolute paths, traversal, and
+    /// reserved Windows names. Shared with the first-install bootstrap, which must
+    /// apply the same defenses when it expands its own payload.
+    /// </summary>
+    public static string ValidateEntryName(ZipArchiveEntry entry)
     {
         var attributes = entry.ExternalAttributes;
         var unixMode = (attributes >> 16) & 0xF000;

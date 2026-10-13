@@ -1,0 +1,34 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <SolidColorBrush x:Key="Brush.Surface.Canvas" Color="#FCFCFD" />
+    <SolidColorBrush x:Key="Brush.Surface.Panel" Color="#F9F9FB" />
+    <SolidColorBrush x:Key="Brush.Surface.Subtle" Color="#F0F0F3" />
+    <SolidColorBrush x:Key="Brush.Border.Subtle" Color="#E8E8EC" />
+    <SolidColorBrush x:Key="Brush.Border.Strong" Color="#D9D9E0" />
+    <SolidColorBrush x:Key="Brush.Text.Secondary" Color="#60646C" />
+    <SolidColorBrush x:Key="Brush.Text.Primary" Color="#1C2024" />
+    <SolidColorBrush x:Key="Brush.Accent.Primary" Color="#5B5BD6" />
+    <SolidColorBrush x:Key="Brush.Accent.Hover" Color="#5151CD" />
+    <SolidColorBrush x:Key="Brush.Control.Background" Color="#FCFCFD" />
+    <SolidColorBrush x:Key="Brush.Control.Border" Color="#D9D9E0" />
+    <SolidColorBrush x:Key="Brush.Control.HoverBackground" Color="#F0F0F3" />
+    <SolidColorBrush x:Key="Brush.Focus.Ring" Color="#5B5BD6" />
+    <Style TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Microsoft YaHei UI" />
+        <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+        <Setter Property="FontSize" Value="14" />
+    </Style>
+    <Style x:Key="ActionButton" TargetType="Button">
+        <Setter Property="Height" Value="36" /><Setter Property="MinWidth" Value="88" />
+        <Setter Property="Padding" Value="12,0" /><Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Background" Value="{DynamicResource Brush.Control.Background}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Control.Border}" />
+        <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+        <Setter Property="Cursor" Value="Hand" />
+    </Style>
+    <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource ActionButton}">
+        <Setter Property="Background" Value="{DynamicResource Brush.Accent.Primary}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Accent.Primary}" />
+        <Setter Property="Foreground" Value="White" />
+    </Style>
+</ResourceDictionary>

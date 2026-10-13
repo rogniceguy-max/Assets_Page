@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace MuYingDrive.UpdateCore;
 
 /// <summary>
@@ -84,6 +86,50 @@ public static class UpdateExecutionGuard
         {
             updaterMutex.Dispose();
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Waits until no process running the client from <paramref name="installRoot"/> remains.
+    /// </summary>
+    /// <remarks>
+    /// The updater needs this before swapping the install directory, and the first-install
+    /// bootstrap needs it before replacing an existing install. Both must hold the
+    /// exclusive locks from <see cref="AcquireUpdaterLockAsync"/> first, so no new client
+    /// can start while this waits.
+    /// </remarks>
+    public static async Task WaitForClientProcessesExitAsync(string installRoot, CancellationToken cancellationToken)
+    {
+        var expectedPath = Path.GetFullPath(Path.Combine(installRoot, "MuYingDrive.NativeWpf.exe"));
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var active = false;
+            foreach (var process in Process.GetProcessesByName("MuYingDrive.NativeWpf"))
+            {
+                using (process)
+                {
+                    try
+                    {
+                        var processPath = process.MainModule?.FileName;
+                        if (processPath is null)
+                            throw new IOException("无法确认沐影盘进程的安装路径。");
+                        if (!string.Equals(Path.GetFullPath(processPath), expectedPath, StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        active = true;
+                        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+                        break;
+                    }
+                    catch (ArgumentException) { }
+                    catch (InvalidOperationException) { }
+                    catch (System.ComponentModel.Win32Exception exception)
+                    {
+                        throw new IOException("无法确认其他沐影盘进程是否已退出。", exception);
+                    }
+                }
+            }
+            if (!active) return;
+            await Task.Delay(250, cancellationToken).ConfigureAwait(false);
         }
     }
 

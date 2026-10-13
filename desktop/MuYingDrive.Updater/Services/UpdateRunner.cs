@@ -126,40 +126,10 @@ public sealed class UpdateRunner
         }
     }
 
-    private static async Task WaitForAllClientProcessesExitAsync(string installRoot, CancellationToken cancellationToken)
-    {
-        var expectedPath = Path.GetFullPath(Path.Combine(installRoot, "MuYingDrive.NativeWpf.exe"));
-        while (true)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var active = false;
-            foreach (var process in Process.GetProcessesByName("MuYingDrive.NativeWpf"))
-            {
-                using (process)
-                {
-                    try
-                    {
-                        var processPath = process.MainModule?.FileName;
-                        if (processPath is null)
-                            throw new IOException("无法确认沐影盘进程的安装路径。");
-                        if (!string.Equals(Path.GetFullPath(processPath), expectedPath, StringComparison.OrdinalIgnoreCase))
-                            continue;
-                        active = true;
-                        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-                        break;
-                    }
-                    catch (ArgumentException) { }
-                    catch (InvalidOperationException) { }
-                    catch (System.ComponentModel.Win32Exception exception)
-                    {
-                        throw new IOException("无法确认其他沐影盘进程是否已退出。", exception);
-                    }
-                }
-            }
-            if (!active) return;
-            await Task.Delay(250, cancellationToken).ConfigureAwait(false);
-        }
-    }
+    // The wait-for-clients helper moved to UpdateExecutionGuard so the first-install
+    // bootstrap can share it instead of reimplementing the process scan.
+    private static Task WaitForAllClientProcessesExitAsync(string installRoot, CancellationToken cancellationToken) =>
+        UpdateExecutionGuard.WaitForClientProcessesExitAsync(installRoot, cancellationToken);
 
     private static string GetInstalledVersion(string installRoot)
     {

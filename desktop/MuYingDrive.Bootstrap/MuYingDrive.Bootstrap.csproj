@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>MuYingDrive.Setup</AssemblyName>
+    <RootNamespace>MuYingDrive.Bootstrap</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <!-- Self-contained so the setup executable needs no .NET runtime on a clean machine. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MuYingDrive.UpdateCore\MuYingDrive.UpdateCore.csproj" />
+  </ItemGroup>
+
+  <!--
+    The payload is produced by desktop/publish-installer.ps1 and is gitignored: the
+    self-contained client bundle is ~150 MB and must never be committed. A build
+    without it succeeds but the setup executable reports that it has no payload.
+  -->
+  <ItemGroup Condition="Exists('Payload\client-payload.zip')">
+    <EmbeddedResource Include="Payload\client-payload.zip" LogicalName="MuYingDrive.Bootstrap.Payload.client-payload.zip" />
+  </ItemGroup>
+  <ItemGroup Condition="Exists('Payload\nas-client.json')">
+    <EmbeddedResource Include="Payload\nas-client.json" LogicalName="MuYingDrive.Bootstrap.Payload.nas-client.json" />
+  </ItemGroup>
+
+</Project>
