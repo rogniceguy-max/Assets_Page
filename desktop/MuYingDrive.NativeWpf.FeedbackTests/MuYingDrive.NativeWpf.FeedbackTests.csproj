@@ -3,5 +3,12 @@
   <OutputType>Exe</OutputType><TargetFramework>net8.0-windows</TargetFramework>
   <UseWPF>true</UseWPF><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings>
  </PropertyGroup>
+ <!-- MuYingDrive.NativeWpf is self-contained in Release (see its csproj); a
+      non-self-contained project cannot reference a self-contained executable
+      (NETSDK1151), so this harness mirrors that configuration. -->
+ <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+  <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  <SelfContained>true</SelfContained>
+ </PropertyGroup>
  <ItemGroup><ProjectReference Include="../MuYingDrive.NativeWpf/MuYingDrive.NativeWpf.csproj"/></ItemGroup>
 </Project>
