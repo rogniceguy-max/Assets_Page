@@ -7,6 +7,7 @@ import os
 import ssl
 import sys
 import threading
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlsplit
@@ -14,6 +15,8 @@ from urllib.parse import urlsplit
 from .config import Settings, load_settings
 from .provisioner import AccountProvisioner
 from .service import ApiError, V2Application
+from .feedback import FeedbackService
+from .feedback_http import dispatch as dispatch_feedback
 
 
 API_ROOT = "/api/v2"
@@ -28,7 +31,8 @@ def _bearer_token(headers) -> str | None:
     return token if token and len(token) <= 256 else None
 
 
-def create_handler(app: V2Application):
+def create_handler(app: V2Application, feedback: FeedbackService | None = None):
+    feedback = feedback or FeedbackService(app.session, app.db_path.parent / "feedback")
     class V2RequestHandler(BaseHTTPRequestHandler):
         server_version = "MuYingHubV2"
         sys_version = ""
@@ -40,6 +44,8 @@ def create_handler(app: V2Application):
             return
 
         def do_GET(self) -> None:  # noqa: N802
+            if dispatch_feedback(self, feedback, _bearer_token(self.headers), "GET"):
+                return
             path = urlsplit(self.path).path
             if path == f"{API_ROOT}/health":
                 self._send_json(200, {"status": "ok", "version": "2"})
@@ -57,6 +63,8 @@ def create_handler(app: V2Application):
             self._send_error(ApiError(404, "NOT_FOUND", "接口不存在。"))
 
         def do_POST(self) -> None:  # noqa: N802
+            if dispatch_feedback(self, feedback, _bearer_token(self.headers), "POST"):
+                return
             path = urlsplit(self.path).path
             payload = self._read_json()
             if payload is None:
@@ -83,7 +91,11 @@ def create_handler(app: V2Application):
                 return
             self._send_error(ApiError(404, "NOT_FOUND", "接口不存在。"))
 
-        def _read_json(self) -> dict[str, Any] | None:
+        def do_PATCH(self) -> None:  # noqa: N802
+            if not dispatch_feedback(self, feedback, _bearer_token(self.headers), "PATCH"):
+                self._send_error(ApiError(404, "NOT_FOUND", "接口不存在。"))
+
+        def _read_json(self, maximum: int = MAX_BODY_BYTES) -> dict[str, Any] | None:
             if self.headers.get("Transfer-Encoding"):
                 self.close_connection = True
                 self._send_error(ApiError(411, "CONTENT_LENGTH_REQUIRED", "请求格式无效。"))
@@ -93,9 +105,9 @@ def create_handler(app: V2Application):
                 length = int(raw_length or "")
             except ValueError:
                 length = -1
-            if length < 0 or length > MAX_BODY_BYTES:
+            if length < 0 or length > maximum:
                 self.close_connection = True
-                self._send_error(ApiError(413 if length > MAX_BODY_BYTES else 411, "BODY_SIZE_INVALID", "请求长度无效。"))
+                self._send_error(ApiError(413 if length > maximum else 411, "BODY_SIZE_INVALID", "请求长度无效。"))
                 return None
             content_type = self.headers.get_content_type()
             if content_type != "application/json":
@@ -158,7 +170,17 @@ def make_server(settings: Settings, app: V2Application) -> ThreadingHTTPServer:
             request.settimeout(20)
             return request, address
 
-    server = V2HTTPServer((settings.bind_host, settings.port), create_handler(app))
+        def handle_error(self, request, client_address):
+            # Default socket error tracebacks include IPs; feedback must not emit them.
+            # Monitor aggregate health separately, without per-request identifiers.
+            return
+
+    # Explicit existing account IDs grant feedback maintenance only, default denied.
+    raw_maintainers = os.environ.get("MUYING_V2_FEEDBACK_MAINTAINERS", "")
+    maintainers = {int(value.strip()) for value in raw_maintainers.split(",") if value.strip().isdigit() and int(value.strip()) > 0}
+    feedback_root = Path(os.environ.get("MUYING_V2_FEEDBACK_DIR", str(settings.data_dir / "feedback")))
+    feedback = FeedbackService(app.session, feedback_root, maintainers)
+    server = V2HTTPServer((settings.bind_host, settings.port), create_handler(app, feedback))
     server.daemon_threads = True
     server.request_queue_size = 64
 
@@ -202,3 +224,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

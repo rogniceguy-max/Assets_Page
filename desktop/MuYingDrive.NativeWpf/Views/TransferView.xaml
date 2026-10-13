@@ -9,7 +9,7 @@
             <Border Padding="16" Margin="0,0,0,10" CornerRadius="{StaticResource CornerRadius.Card}"
                     Background="{DynamicResource Brush.Surface.Panel}" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1">
                 <Grid>
-                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
 
                     <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
@@ -87,6 +87,9 @@
                     <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ProgressLabel}" Foreground="{DynamicResource Brush.Text.Secondary}" FontSize="{StaticResource Typography.FontSize.Caption}" Margin="12,10,0,0" HorizontalAlignment="Right" />
                     <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Text="{Binding ErrorMessage}" Foreground="{DynamicResource Brush.Status.Danger}"
                                FontSize="{StaticResource Typography.FontSize.Caption}" Margin="42,8,0,0" TextWrapping="Wrap" />
+                    <Button Grid.Row="3" Grid.ColumnSpan="2" Content="反馈此问题" Click="ReportFeedback_Click" Tag="{Binding}" HorizontalAlignment="Left" Margin="42,8,0,0" AutomationProperties.Name="匿名反馈此传输问题">
+                        <Button.Style><Style TargetType="Button" BasedOn="{StaticResource Button.Compact}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding State}" Value="Failed"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Button.Style>
+                    </Button>
                 </Grid>
             </Border>
         </DataTemplate>
@@ -116,3 +119,4 @@
         </Grid>
     </Grid>
 </UserControl>
+
