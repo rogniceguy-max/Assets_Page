@@ -203,13 +203,10 @@ public sealed class InstallTransaction
         try
         {
             var filePath = Path.Combine(installRoot, "MuYingDrive.NativeWpf.exe");
-            var value = FileVersionInfo.GetVersionInfo(filePath).ProductVersion ?? FileVersionInfo.GetVersionInfo(filePath).FileVersion;
-            if (value is not null)
-            {
-                var parts = value.Split('.', StringSplitOptions.RemoveEmptyEntries).Take(3).ToArray();
-                var normalized = parts.Length == 3 ? string.Join('.', parts) : string.Empty;
-                if (UpdateFailureReporter.IsValidVersion(normalized)) return normalized;
-            }
+            var info = FileVersionInfo.GetVersionInfo(filePath);
+            var normalized = VersionStamp.NormalizeProductVersion(info.ProductVersion)
+                ?? VersionStamp.NormalizeProductVersion(info.FileVersion);
+            if (normalized is not null && UpdateFailureReporter.IsValidVersion(normalized)) return normalized;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException) { }
         return null;

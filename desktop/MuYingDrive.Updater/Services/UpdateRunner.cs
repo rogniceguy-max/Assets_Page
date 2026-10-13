@@ -165,12 +165,13 @@ public sealed class UpdateRunner
     {
         var app = Path.Combine(installRoot, "MuYingDrive.NativeWpf.exe");
         if (!File.Exists(app)) throw new FileNotFoundException("当前安装中缺少沐影盘主程序。");
-        var fileVersion = FileVersionInfo.GetVersionInfo(app).ProductVersion ?? FileVersionInfo.GetVersionInfo(app).FileVersion;
-        if (string.IsNullOrWhiteSpace(fileVersion)) throw new InvalidDataException("无法读取当前安装版本。");
-        var components = fileVersion.Split('.', StringSplitOptions.RemoveEmptyEntries).Take(3).ToArray();
-        if (components.Length != 3 || !components.All(x => int.TryParse(x, out _)))
-            throw new InvalidDataException("当前安装版本格式无效。");
-        return string.Join('.', components);
+        var info = FileVersionInfo.GetVersionInfo(app);
+        // VersionStamp strips the "+<source revision>" suffix the SDK adds to
+        // ProductVersion; parsing that raw value failed on every release build.
+        var version = VersionStamp.NormalizeProductVersion(info.ProductVersion)
+            ?? VersionStamp.NormalizeProductVersion(info.FileVersion);
+        if (version is null) throw new InvalidDataException("当前安装版本格式无效。");
+        return version;
     }
 
     private static string? ExistingClientPath()
