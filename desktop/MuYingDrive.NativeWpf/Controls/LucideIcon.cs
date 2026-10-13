@@ -156,7 +156,12 @@ public sealed class LucideIcon : FrameworkElement
             ["Monitor"] = Group(
                 RoundRect(2, 3, 20, 14, 2),
                 Path("M8 21h8 M12 17v4")),
+            // Both were referenced by XAML but never defined, so the controls rendered
+            // blank: ChevronLeft on the file view's navigate-up button, X on the
+            // transfer view's cancel button.
+            ["ChevronLeft"] = Path("m15 18-6-6 6-6"),
             ["ChevronRight"] = Path("m9 18 6-6-6-6"),
+            ["X"] = Path("M18 6 6 18M6 6l12 12"),
             ["Lock"] = Group(
                 RoundRect(3, 11, 18, 11, 2),
                 Path("M7 11V7a5 5 0 0 1 10 0v4")),

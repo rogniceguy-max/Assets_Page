@@ -68,6 +68,41 @@ Throws<CryptographicException>("rejects a well-formed but unsigned envelope", ()
     UpdateManifestVerifier.Verify(Encoding.UTF8.GetBytes(envelope));
 });
 
+if (args.Length > 0 && args[0] == "--check-icons")
+{
+    // XAML names icons as strings, and LucideIcon draws nothing for an unknown name —
+    // a silent blank control. That is how the file view's navigate-up button and the
+    // transfer view's cancel button shipped without icons. Keep the two lists in sync.
+    var clientDirectory = args[1];
+    var defined = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
+        File.ReadAllText(Path.Combine(clientDirectory, "Controls", "LucideIcon.cs")),
+        "\\[\"([A-Za-z0-9]+)\"\\]\\s*="))
+    {
+        defined.Add(match.Groups[1].Value);
+    }
+
+    Console.WriteLine($"LucideIcon defines {defined.Count} icons");
+    var used = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    foreach (var xaml in Directory.EnumerateFiles(clientDirectory, "*.xaml", SearchOption.AllDirectories))
+    {
+        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
+            File.ReadAllText(xaml), "LucideIcon Icon=\"([A-Za-z0-9]+)\""))
+        {
+            used.TryAdd(match.Groups[1].Value, Path.GetFileName(xaml));
+        }
+    }
+
+    foreach (var (name, file) in used)
+    {
+        Check($"{name,-16} (used in {file}) is defined", defined.Contains(name));
+    }
+
+    Console.WriteLine();
+    Console.WriteLine(failures == 0 ? "ALL ICONS RESOLVE" : $"{failures} UNRESOLVED ICON(S)");
+    return failures == 0 ? 0 : 1;
+}
+
 if (args.Length > 0 && args[0] == "--probe-update")
 {
     // Exercises the client's exact update plumbing — settings file, TLS pin, manifest
