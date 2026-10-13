@@ -33,6 +33,7 @@ public sealed class V2ApiException : Exception
 public sealed class V2ApiClient : IDisposable
 {
     private const int MaxResponseBytes = 64 * 1024;
+    private static readonly TimeSpan UpdateReadIdleTimeout = TimeSpan.FromMinutes(1);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true
@@ -100,7 +101,119 @@ public sealed class V2ApiClient : IDisposable
             .ConfigureAwait(false);
     }
 
+    public Task<byte[]> GetStableUpdateManifestAsync(CancellationToken cancellationToken = default) =>
+        SendBytesAsync(HttpMethod.Get, "api/v2/updates/stable/manifest", null, cancellationToken);
+
+    public async Task DownloadUpdatePackageAsync(string packageId, string sha256, long expectedSize,
+        string partialPath, IProgress<long>? receivedBytes = null, CancellationToken cancellationToken = default)
+    {
+        if (packageId.Length != 32 || !packageId.All(Uri.IsHexDigit) || sha256.Length != 64 || !sha256.All(Uri.IsHexDigit))
+            throw new ArgumentException("The signed update manifest contains an invalid package identifier.");
+
+        var etag = new EntityTagHeaderValue($"\"{sha256.ToLowerInvariant()}\"");
+        Directory.CreateDirectory(Path.GetDirectoryName(partialPath)!);
+        var currentLength = File.Exists(partialPath) ? new FileInfo(partialPath).Length : 0;
+        if (currentLength > expectedSize)
+        {
+            File.Delete(partialPath);
+            currentLength = 0;
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(_baseUri, $"api/v2/updates/packages/{packageId.ToLowerInvariant()}"));
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/octet-stream"));
+        if (currentLength > 0)
+        {
+            request.Headers.Range = new RangeHeaderValue(currentLength, null);
+            request.Headers.IfRange = new RangeConditionHeaderValue(etag);
+        }
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new V2ApiException("更新包下载超时；下次检查时会尝试续传。");
+        }
+        catch (HttpRequestException exception)
+        {
+            throw new V2ApiException("无法安全下载更新包；请检查网络后重试。", inner: exception);
+        }
+
+        using (response)
+        {
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorBody = await ReadBoundedAsync(response.Content, cancellationToken).ConfigureAwait(false);
+                throw CreateApiError(response.StatusCode, errorBody);
+            }
+
+            var responseEtag = response.Headers.ETag;
+            if (responseEtag is null || responseEtag.IsWeak || !string.Equals(responseEtag.Tag, etag.Tag, StringComparison.Ordinal))
+                throw new V2ApiException("更新包版本标识与签名清单不一致。");
+
+            long writeOffset;
+            if (response.StatusCode == HttpStatusCode.PartialContent)
+            {
+                var range = response.Content.Headers.ContentRange;
+                if (range?.From != currentLength || range.Length != expectedSize || currentLength == 0)
+                    throw new V2ApiException("服务器返回的更新续传范围无效。");
+                writeOffset = currentLength;
+            }
+            else if (response.StatusCode == HttpStatusCode.OK)
+            {
+                writeOffset = 0;
+            }
+            else
+            {
+                throw new V2ApiException("服务器返回的更新包响应无效。");
+            }
+
+            var expectedResponseBytes = expectedSize - writeOffset;
+            if (expectedResponseBytes < 0 || response.Content.Headers.ContentLength is long contentLength && contentLength != expectedResponseBytes)
+                throw new V2ApiException("更新包响应长度与签名清单不一致。");
+
+            await using var input = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+            await using var output = new FileStream(partialPath,
+                writeOffset == 0 ? FileMode.Create : FileMode.OpenOrCreate,
+                FileAccess.Write, FileShare.None, 128 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan | FileOptions.WriteThrough);
+            output.Position = writeOffset;
+            var buffer = new byte[128 * 1024];
+            long written = 0;
+            while (true)
+            {
+                var read = await ReadUpdateChunkAsync(input, buffer, cancellationToken).ConfigureAwait(false);
+                if (read == 0) break;
+                written = checked(written + read);
+                if (written > expectedResponseBytes)
+                    throw new V2ApiException("更新包响应超过签名清单声明的长度。");
+                await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+                receivedBytes?.Report(writeOffset + written);
+            }
+            await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+            output.Flush(flushToDisk: true);
+            if (written != expectedResponseBytes)
+                throw new EndOfStreamException("更新包下载尚未完成；下次检查时会从已保存的位置继续。");
+        }
+    }
+
     public void Dispose() => _http.Dispose();
+
+    private static async Task<int> ReadUpdateChunkAsync(Stream stream, Memory<byte> buffer, CancellationToken cancellationToken)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(UpdateReadIdleTimeout);
+        try
+        {
+            return await stream.ReadAsync(buffer, timeout.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new V2ApiException("更新包下载长时间没有数据；已保留已收数据，稍后可继续续传。");
+        }
+    }
 
     private async Task<T> SendJsonAsync<T>(HttpMethod method, string relativePath, object? payload, string? bearerToken, CancellationToken cancellationToken)
     {
@@ -144,6 +257,34 @@ public sealed class V2ApiClient : IDisposable
             {
                 throw new V2ApiException("服务器返回的数据格式无效。", response.StatusCode, inner: ex);
             }
+        }
+    }
+
+    private async Task<byte[]> SendBytesAsync(HttpMethod method, string relativePath, string? bearerToken, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(method, new Uri(_baseUri, relativePath));
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        if (bearerToken is not null)
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
+        HttpResponseMessage response;
+        try
+        {
+            response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new V2ApiException("更新检查超时；沐影盘仍可正常使用。");
+        }
+        catch (HttpRequestException exception)
+        {
+            throw new V2ApiException("无法安全检查更新；沐影盘仍可正常使用。", inner: exception);
+        }
+        using (response)
+        {
+            var body = await ReadBoundedAsync(response.Content, cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                throw CreateApiError(response.StatusCode, body);
+            return body;
         }
     }
 

@@ -2,22 +2,28 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import ssl
 import sys
 import threading
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlsplit
 
 from .config import Settings, load_settings
 from .provisioner import AccountProvisioner
+from .release_store import ReleaseNotFound, ReleaseStore, ReleaseUnavailable
 from .service import ApiError, V2Application
 
 
 API_ROOT = "/api/v2"
 MAX_BODY_BYTES = 64 * 1024
+PACKAGE_PATH_RE = re.compile(rf"^{API_ROOT}/updates/packages/([a-f0-9]{{32}})$")
+RELEASE_CHUNK_BYTES = 256 * 1024
 
 
 def _bearer_token(headers) -> str | None:
@@ -28,7 +34,9 @@ def _bearer_token(headers) -> str | None:
     return token if token and len(token) <= 256 else None
 
 
-def create_handler(app: V2Application):
+def create_handler(app: V2Application, update_releases_dir: Path | None = None):
+    release_store = ReleaseStore(update_releases_dir)
+
     class V2RequestHandler(BaseHTTPRequestHandler):
         server_version = "MuYingHubV2"
         sys_version = ""
@@ -43,6 +51,13 @@ def create_handler(app: V2Application):
             path = urlsplit(self.path).path
             if path == f"{API_ROOT}/health":
                 self._send_json(200, {"status": "ok", "version": "2"})
+                return
+            if path == f"{API_ROOT}/updates/stable/manifest":
+                self._serve_update_manifest()
+                return
+            package_match = PACKAGE_PATH_RE.fullmatch(path)
+            if package_match:
+                self._serve_update_package(package_match.group(1))
                 return
             if path == f"{API_ROOT}/session":
                 token = _bearer_token(self.headers)
@@ -116,6 +131,130 @@ def create_handler(app: V2Application):
         def _send_error(self, error: ApiError) -> None:
             self._send_json(error.status, {"success": False, "code": error.code, "error": str(error)})
 
+        def _serve_update_manifest(self) -> None:
+            try:
+                body, opened, _manifest = release_store.open_manifest()
+            except ReleaseUnavailable:
+                self._send_json(503, {"success": False, "code": "UPDATE_RELEASE_UNAVAILABLE", "error": "更新服务暂不可用。"})
+                return
+            try:
+                etag = self._release_etag(body)
+                not_modified = self._etag_matches(self.headers.get("If-None-Match"), etag)
+                self.send_response(304 if not_modified else 200)
+                self._send_release_headers("application/json; charset=utf-8", None if not_modified else len(body), etag)
+                self.end_headers()
+                if not_modified is False:
+                    self.wfile.write(body)
+            finally:
+                opened.close()
+
+        def _serve_update_package(self, package_id: str) -> None:
+            if not release_store.configured:
+                self._send_json(503, {"success": False, "code": "UPDATE_RELEASE_UNAVAILABLE", "error": "更新服务暂不可用。"})
+                return
+            try:
+                opened, package_sha256 = release_store.open_verified_package(package_id)
+            except ReleaseNotFound:
+                self._send_json(404, {"success": False, "code": "UPDATE_PACKAGE_NOT_FOUND", "error": "更新包不存在。"})
+                return
+            except ReleaseUnavailable:
+                self._send_json(503, {"success": False, "code": "UPDATE_RELEASE_UNAVAILABLE", "error": "更新服务暂不可用。"})
+                return
+            try:
+                etag = f'"{package_sha256}"'
+                if self._etag_matches(self.headers.get("If-None-Match"), etag):
+                    self.send_response(304)
+                    self._send_release_headers("application/zip", None, etag)
+                    self.send_header("Accept-Ranges", "bytes")
+                    self.end_headers()
+                    return
+
+                start, end, partial = 0, opened.size - 1, False
+                range_header = self.headers.get("Range")
+                if range_header and (self.headers.get("If-Range") is not None and
+                                     (self.headers.get("If-Range") != etag or etag.startswith("W/"))):
+                    range_header = None
+                if range_header:
+                    parsed_range = self._parse_byte_range(range_header, opened.size)
+                    if parsed_range is False:
+                        self.send_response(416)
+                        self.send_header("Content-Range", f"bytes */{opened.size}")
+                        self._send_release_headers("application/zip", 0, etag)
+                        self.send_header("Accept-Ranges", "bytes")
+                        self.end_headers()
+                        return
+                    if parsed_range is not None:
+                        start, end = parsed_range
+                        partial = True
+
+                length = max(0, end - start + 1)
+                self.send_response(206 if partial else 200)
+                self._send_release_headers("application/zip", length, etag)
+                self.send_header("Accept-Ranges", "bytes")
+                if partial:
+                    self.send_header("Content-Range", f"bytes {start}-{end}/{opened.size}")
+                self.end_headers()
+                os.lseek(opened.file_descriptor, start, os.SEEK_SET)
+                remaining = length
+                while remaining:
+                    chunk = os.read(opened.file_descriptor, min(RELEASE_CHUNK_BYTES, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+            finally:
+                opened.close()
+
+        @staticmethod
+        def _release_etag(body: bytes) -> str:
+            return f'"{hashlib.sha256(body).hexdigest()}"'
+
+        @staticmethod
+        def _etag_matches(header: str | None, etag: str) -> bool:
+            if not header:
+                return False
+            for value in header.split(","):
+                candidate = value.strip()
+                if candidate == "*" or candidate == etag or candidate.removeprefix("W/") == etag:
+                    return True
+            return False
+
+        @staticmethod
+        def _parse_byte_range(value: str, size: int) -> tuple[int, int] | bool | None:
+            match = re.fullmatch(r"bytes=(\d*)-(\d*)", value.strip())
+            if not match:
+                return None
+            if size <= 0:
+                return False
+            first, last = match.groups()
+            if not first and not last:
+                return None
+            if len(first) > 20:
+                return False
+            if not first:
+                if len(last) > 20:
+                    return 0, size - 1
+                suffix_length = int(last)
+                if suffix_length <= 0:
+                    return False
+                return max(0, size - suffix_length), size - 1
+            start = int(first)
+            if start >= size:
+                return False
+            end = size - 1 if not last or len(last) > 20 else int(last)
+            if end < start:
+                return False
+            return start, min(end, size - 1)
+
+        def _send_release_headers(self, content_type: str, length: int | None, etag: str) -> None:
+            self.send_header("Content-Type", content_type)
+            if length is not None:
+                self.send_header("Content-Length", str(length))
+            self.send_header("Cache-Control", "public, max-age=300, must-revalidate")
+            self.send_header("ETag", etag)
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
+
         def _send_json(self, status: int, data: dict[str, Any]) -> None:
             body = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
             self.send_response(status)
@@ -158,7 +297,7 @@ def make_server(settings: Settings, app: V2Application) -> ThreadingHTTPServer:
             request.settimeout(20)
             return request, address
 
-    server = V2HTTPServer((settings.bind_host, settings.port), create_handler(app))
+    server = V2HTTPServer((settings.bind_host, settings.port), create_handler(app, settings.update_releases_dir))
     server.daemon_threads = True
     server.request_queue_size = 64
 

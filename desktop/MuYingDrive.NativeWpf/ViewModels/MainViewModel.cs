@@ -1,6 +1,9 @@
 using MuYingDrive.NativeWpf.Infrastructure;
 using MuYingDrive.NativeWpf.Models;
 using MuYingDrive.NativeWpf.Services;
+using MuYingDrive.UpdateCore;
+using System.Diagnostics;
+using System.Text.Json;
 using System.Windows;
 
 namespace MuYingDrive.NativeWpf.ViewModels;
@@ -12,22 +15,37 @@ public sealed class MainViewModel : ObservableObject
     private object _currentPage;
     private readonly string? _configurationError;
     private Task? _initializeTask;
+    private UpdateCoordinator? _updateCoordinator;
+    private bool _installUpdateOnExit;
+    private bool _shutdownComplete;
+    private string? _preparedHandoffPath;
+    private string? _preparedUpdaterPath;
+    private string _updateCloseErrorMessage = string.Empty;
 
     public MainViewModel()
     {
         ThemeService = new ThemeService();
+        InstallUpdateNowCommand = new AsyncRelayCommand(async _ => await InstallUpdateNowAsync(), _ => IsUpdateReady);
+        InstallAfterExitCommand = new RelayCommand(_ => QueueUpdateForExit(), _ => IsUpdateReady);
         var login = new LoginViewModel(this);
         _currentPage = login;
         try
         {
             var settings = NasClientSettings.Load();
             _settings = settings;
-            var api = new V2ApiClient(new V2ApiClientOptions(settings.ApiBaseUri, settings.CertificateSha256));
+            var apiOptions = new V2ApiClientOptions(settings.ApiBaseUri, settings.CertificateSha256);
+            var api = new V2ApiClient(apiOptions);
             var vault = new WindowsCredentialVault(new WindowsCredentialVaultOptions(
                 "MuYingDrive.V2.ActiveSession",
                 "MuYingDrive.V2.ActiveSmbCredential"));
             var smb = new WindowsSmbConnectionService(new WindowsSmbConnectionOptions(settings.ShareRoot), vault);
             _sessionService = new V2SessionService(api, vault, smb);
+            if (!App.IsUpdateHealthCheck)
+            {
+                _updateCoordinator = new UpdateCoordinator(apiOptions, UpdateCoordinator.GetCurrentVersion());
+                _updateCoordinator.Changed += HandleUpdateChanged;
+                _updateCoordinator.Start();
+            }
         }
         catch (Exception exception) when (exception is InvalidOperationException or ArgumentException)
         {
@@ -37,6 +55,25 @@ public sealed class MainViewModel : ObservableObject
     }
 
     public ThemeService ThemeService { get; }
+
+    public AsyncRelayCommand InstallUpdateNowCommand { get; }
+    public RelayCommand InstallAfterExitCommand { get; }
+    public bool IsUpdateReady => _updateCoordinator?.ReadyUpdate is not null;
+    public bool HasPreparedUpdateHandoff => _preparedHandoffPath is not null && _preparedUpdaterPath is not null;
+    public bool IsUpdateScheduled => _installUpdateOnExit;
+    public string UpdateScheduleText => _installUpdateOnExit ? "已安排退出后更新" : "退出后更新";
+    public void EnsureClientConfigurationValid()
+    {
+        if (_sessionService is null || _configurationError is not null)
+            throw new InvalidOperationException("The client service configuration is unavailable.");
+    }
+    public string UpdateReadyVersion => _updateCoordinator?.ReadyUpdate?.Manifest.Value.Version ?? string.Empty;
+    public string UpdateCloseErrorMessage
+    {
+        get => _updateCloseErrorMessage;
+        private set => SetProperty(ref _updateCloseErrorMessage, value);
+    }
+    public event EventHandler? CloseRequested;
 
     public object CurrentPage
     {
@@ -80,7 +117,12 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    public void Dispose() => _sessionService?.Dispose();
+    public void Dispose()
+    {
+        if (_shutdownComplete) return;
+        _shutdownComplete = true;
+        _sessionService?.Dispose();
+    }
 
     public async Task SignOutAsync(DriveSession session)
     {
@@ -121,6 +163,7 @@ public sealed class MainViewModel : ObservableObject
 
     public async Task ShutdownAsync()
     {
+        if (_shutdownComplete) return;
         if (_initializeTask is not null)
         {
             try { await _initializeTask; }
@@ -128,7 +171,153 @@ public sealed class MainViewModel : ObservableObject
         }
         if (CurrentPage is WorkspaceViewModel workspace)
             await workspace.DisposeAsync();
-        Dispose();
+        if (_updateCoordinator is not null)
+        {
+            _updateCoordinator.Changed -= HandleUpdateChanged;
+            await _updateCoordinator.DisposeAsync();
+            _updateCoordinator = null;
+        }
+        _sessionService?.Dispose();
+        _shutdownComplete = true;
+    }
+
+    public async Task<bool> PrepareForShutdownAsync()
+    {
+        UpdateCloseErrorMessage = string.Empty;
+        if (!_installUpdateOnExit || !IsUpdateReady)
+            return true;
+
+        if (CurrentPage is WorkspaceViewModel workspace && !await workspace.Transfers.PrepareForUpdateAsync())
+        {
+            UpdateCloseErrorMessage = "有传输任务未能安全保存检查点。请稍后重试；沐影盘仍保持打开。";
+            return false;
+        }
+
+        try
+        {
+            await PrepareHandoffAsync();
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or
+            System.Security.Cryptography.CryptographicException or JsonException)
+        {
+            _installUpdateOnExit = false;
+            _preparedHandoffPath = null;
+            _preparedUpdaterPath = null;
+            UpdateCloseErrorMessage = exception switch
+            {
+                UnauthorizedAccessException => "当前用户无权更新此安装目录。本次更新已取消，沐影盘将按常规方式关闭。",
+                System.Security.Cryptography.CryptographicException => "更新签名配置或更新包验证失败。本次更新已取消，沐影盘将按常规方式关闭。",
+                _ => "无法安全准备独立更新程序。本次更新已取消，沐影盘将按常规方式关闭。"
+            };
+            return true;
+        }
+    }
+
+    public bool LaunchPreparedUpdater()
+    {
+        if (_preparedHandoffPath is null || _preparedUpdaterPath is null)
+            return false;
+        try
+        {
+            var start = new ProcessStartInfo(_preparedUpdaterPath) { UseShellExecute = false };
+            start.ArgumentList.Add("--request");
+            start.ArgumentList.Add(_preparedHandoffPath);
+            return Process.Start(start) is not null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return false;
+        }
+    }
+
+    private async Task InstallUpdateNowAsync()
+    {
+        if (!IsUpdateReady) return;
+        if (CurrentPage is WorkspaceViewModel workspace && !await workspace.Transfers.PrepareForUpdateAsync())
+        {
+            MessageBox.Show("有传输任务未能安全保存检查点。请稍后重试。", "暂时无法更新", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        _installUpdateOnExit = true;
+        InstallUpdateNowCommand.RaiseCanExecuteChanged();
+        CloseRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void QueueUpdateForExit()
+    {
+        if (!IsUpdateReady) return;
+        _installUpdateOnExit = true;
+        OnPropertyChanged(nameof(IsUpdateReady));
+        OnPropertyChanged(nameof(IsUpdateScheduled));
+        OnPropertyChanged(nameof(UpdateScheduleText));
+        InstallUpdateNowCommand.RaiseCanExecuteChanged();
+        InstallAfterExitCommand.RaiseCanExecuteChanged();
+    }
+
+    private async Task PrepareHandoffAsync()
+    {
+        var prepared = _updateCoordinator?.ReadyUpdate ?? throw new InvalidOperationException("The update is no longer ready.");
+        var manifestInfo = new FileInfo(prepared.ManifestPath);
+        if (!manifestInfo.Exists || manifestInfo.Length is <= 0 or > 64 * 1024)
+            throw new InvalidDataException("The cached signed manifest has an invalid size.");
+        var manifestBytes = await File.ReadAllBytesAsync(prepared.ManifestPath);
+        var verified = UpdateManifestVerifier.Verify(manifestBytes);
+        if (!manifestBytes.AsSpan().SequenceEqual(prepared.Manifest.EnvelopeBytes))
+            throw new System.Security.Cryptography.CryptographicException("The cached signed manifest changed.");
+        await PackageIntegrity.VerifySha256Async(prepared.PackagePath, verified.Value);
+
+        var updateId = Guid.NewGuid().ToString("N");
+        var cacheDirectory = Path.GetDirectoryName(prepared.PackagePath)!;
+        var updaterSource = Path.Combine(AppContext.BaseDirectory, "Updater", "MuYingDrive.Updater.exe");
+        var publisherThumbprint = UpdateTrustAnchor.LoadCodeSigningThumbprint();
+        PackageIntegrity.VerifyAuthenticodePublisher(updaterSource, publisherThumbprint);
+
+        var runnerDirectory = Path.Combine(UpdatePathPolicy.UpdateRoot, "runner", updateId);
+        Directory.CreateDirectory(runnerDirectory);
+        if ((File.GetAttributes(runnerDirectory) & FileAttributes.ReparsePoint) != 0)
+            throw new UnauthorizedAccessException("更新程序缓存不能位于重解析路径中。");
+        _preparedUpdaterPath = Path.Combine(runnerDirectory, "MuYingDrive.Updater.exe");
+        File.Copy(updaterSource, _preparedUpdaterPath, overwrite: false);
+        PackageIntegrity.VerifyAuthenticodePublisher(_preparedUpdaterPath, publisherThumbprint);
+
+        var currentProcess = Process.GetCurrentProcess();
+        var handoff = new UpdateHandoffRequest
+        {
+            UpdateId = updateId,
+            ClientProcessId = Environment.ProcessId,
+            ClientProcessStartUtcTicks = currentProcess.StartTime.ToUniversalTime().Ticks,
+            ManifestPath = prepared.ManifestPath,
+            PackagePath = prepared.PackagePath,
+            InstallRoot = UpdatePathPolicy.InstallRoot
+        };
+        _preparedHandoffPath = Path.Combine(cacheDirectory, "handoff.json");
+        var temporary = _preparedHandoffPath + ".tmp";
+        await using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None,
+                         4096, FileOptions.WriteThrough))
+        {
+            await JsonSerializer.SerializeAsync(stream, handoff);
+            await stream.FlushAsync();
+            stream.Flush(flushToDisk: true);
+        }
+        File.Move(temporary, _preparedHandoffPath, overwrite: true);
+    }
+
+    private void HandleUpdateChanged(object? sender, EventArgs args)
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher is null) return;
+        dispatcher.BeginInvoke(() =>
+        {
+            OnPropertyChanged(nameof(IsUpdateReady));
+            OnPropertyChanged(nameof(UpdateReadyVersion));
+            OnPropertyChanged(nameof(IsUpdateScheduled));
+            OnPropertyChanged(nameof(UpdateScheduleText));
+            InstallUpdateNowCommand.RaiseCanExecuteChanged();
+            InstallAfterExitCommand.RaiseCanExecuteChanged();
+            if (CurrentPage is WorkspaceViewModel workspace)
+                workspace.RefreshUpdateState();
+        });
     }
 
     private async Task EnterWorkspaceAsync(DriveSession session)

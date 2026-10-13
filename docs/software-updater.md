@@ -1,6 +1,6 @@
 # 沐影盘软件更新模块（独立开发分支）
 
-状态：设计与接口契约草案；**未接入生产、未提供可安装更新包**。
+状态：架构和界面已在本分支实现；**未接入生产、未配置发布信任密钥、未提供可安装更新包**。客户端在没有受信任公钥和 Authenticode 指纹时 fail closed，不会把任何版本标记为就绪。
 
 ## 当前运行时和正式发布策略（已确认）
 
@@ -18,6 +18,30 @@
 - 验证可信发布者、版本、包 SHA-256 和发布清单数字签名；失败时恢复旧版本或保持旧版本可用。
 - 更新 UI 不应占用登录页、主窗口顶部品牌区或常驻底部状态栏。
 
+## 当前实现
+
+- `desktop/MuYingDrive.UpdateCore/`：签名 envelope/schema 校验、版本防降级、SHA-256、Windows Authenticode 发布者固定、ZIP 路径/链接/展开大小防护、更新路径策略和跨进程启动/安装锁。
+- `desktop/MuYingDrive.NativeWpf/`：独立检查、可续传下载和校验，更新就绪时在工作区显示短暂轻提示。安装目标按用户确认使用 `%LOCALAPPDATA%\Programs\MuYingDrive`；缓存位于 `%LOCALAPPDATA%\MuYingDrive\Updates`。
+- `desktop/MuYingDrive.Updater/`：独立的 .NET 8 WPF 进程。等该安装目录下所有客户端退出后复核清单和包，允许在安装切换前取消，展开到同卷暂存目录，保留旧目录，验证新进程启动并以 0 退出后才把事务记为成功；失败时回滚或保留恢复所需文件。更新事务状态保存在 JSON journal，状态变化另追加到 JSONL 事件日志。
+- `backend/v2/release_store.py` 和 `server.py`：只读稳定清单和固定 opaque ID 包读取端点；支持 ETag、条件请求和单段 Range。普通客户端没有发布/覆盖接口。
+- `desktop/publish-update.ps1`：Windows x64 自包含发布、Authenticode 签名、ZIP/SHA-256 和 ECDSA 签名清单生成。私钥和发布证书必须来自发布管理员的本地安全存储。
+
+发布清单是包含 `payload` 和 `signature` 的 JSON envelope。`payload` 是 UTF-8 JSON 的 Base64，ECDSA P-256/SHA-256 签名覆盖这些**原始 payload 字节**。负载固定为 stable、Windows x64，并包含版本、32 位小写十六进制 package ID、字节数、SHA-256 和 UTC 发布时间。包通过 `/api/v2/updates/packages/{package_id}` 读取；下载使用签名 SHA-256 作为强 ETag 和 Range 的 If-Range。
+
+发布目录约定为：
+
+```text
+<MUYING_V2_UPDATE_RELEASES_DIR>/
+  stable.manifest.json
+  packages/<32-hex-package-id>.zip
+```
+
+发布操作必须先在同一文件系统的临时路径写完并校验 ZIP，再以新的唯一 package ID 原子发布；已发布的包文件不可原地覆盖，NAS 服务账号对包目录应只读。后端会拒绝带 POSIX 写权限位的包文件。最后原子替换 `stable.manifest.json`。若有管理员在传输期间改动存储文件，客户端仍会重新校验完整签名 SHA-256 并拒绝安装；此举可能中断下载，因此发布流程必须用新 ID 和原子替换。
+
+更新器与主客户端在 `%LOCALAPPDATA%\MuYingDrive` 使用两个文件句柄协调启动：多个普通客户端可共享客户端锁；更新器获得互斥安装锁和排他的客户端锁后，新的普通客户端无法启动。健康检查通过更新专用参数启动，不取得普通客户端锁。第一次升级旧版客户端时若客户端锁文件不存在，更新器会在目标进程退出后安全创建。
+
+当前 `desktop/MuYingDrive.UpdateCore/Trust/` 中的公钥和指纹文件只是空配置说明。需先写入 ECDSA P-256 发布公钥及 Authenticode 证书的 SHA-256 指纹，再使用匹配的私钥和 Windows 证书存储中的签名证书构建发布。私钥不得放入仓库或 NAS。发布脚本不会自动部署到 NAS；发布目录由管理员单独指定。
+
 ## 代码基线
 
 分支从 `codex/nas-smb-v2` 创建：
@@ -27,28 +51,23 @@
 - `desktop/MuYingDrive.NativeWpf/ViewModels/MainViewModel.cs`：启动和退出流程入口。
 - `desktop/MuYingDrive.NativeWpf/ViewModels/TransferViewModel.cs`：`PauseAllAsync` 及任务列表。
 - `desktop/MuYingDrive.NativeWpf/Services/ResumableTransferEngine.cs`：账号隔离、断点及传输检查点。
-- `backend/v2/server.py`：HTTPS API；目前仅有认证与健康接口。
-- `backend/v2/config.py`：环境配置；当前没有发布包目录配置。
-- `desktop/MuYingDrive.NativeWpf/MuYingDrive.NativeWpf.csproj`：尚无正式安装与升级打包链路。
+- `backend/v2/server.py`：HTTPS API；现已提供稳定清单和 opaque ID 包的只读 GET 路由。
+- `backend/v2/config.py`：通过可选 `MUYING_V2_UPDATE_RELEASES_DIR` 指向发布目录。
+- `desktop/MuYingDrive.NativeWpf/MuYingDrive.NativeWpf.csproj`：Release 目标为 win-x64、自包含；`desktop/publish-update.ps1` 负责本地生成已签名发布包。
 
-## 拟定结构（尚未实现）
+## 代码结构
 
 ```
-backend/v2/update/
-  manifest.py              # 发布清单生成、校验和版本检查
-  release_store.py         # 只读版本索引和包文件访问
-desktop/MuYingDrive.NativeWpf/Updates/
-  UpdateClient.cs          # 检查最新发布清单
-  UpdateDownloadService.cs # 流式预下载、限速、断点和哈希复核
-  UpdateCoordinator.cs     # 状态机：检查、准备、就绪、等待退出、安装
-desktop/MuYingDrive.Updater/
-  Program.cs               # 进程外更新器；只允许已验证的本地暂存包
-  InstallTransaction.cs    # 原子切换及失败回滚
+backend/v2/release_store.py
+desktop/MuYingDrive.UpdateCore/
+desktop/MuYingDrive.NativeWpf/Services/UpdateCoordinator.cs
+desktop/MuYingDrive.Updater/Services/InstallTransaction.cs
+desktop/publish-update.ps1
 docs/
   software-updater.md
 ```
 
-## 建议 API（拟定）
+## 更新 API
 
 - `GET /api/v2/updates/stable/manifest`：返回签名发布清单，明确版本、平台/架构、大小、校验和、发布时间及包标识。
 - `GET /api/v2/updates/packages/{opaque_id}`：NAS 托管包，支持 `Range`、`ETag`、明确长度与缓存策略。不可将客户端传入字符串拼成磁盘路径。
@@ -66,7 +85,7 @@ docs/
 - 原有 `MainWindow.Closing` 是可用的协调点，但不得在旧版退出流程与新安装流程中重复关闭/死锁。
 - 安装器需要等待客户端进程完全退出，检查包版本和权限，在用户可写的安装布局执行原子版本目录切换；旧版本保留至新版本健康确认。
 - 发生安装错误时回滚或恢复旧版本；不允许删除用户账户、会话、传输检查点、个人设置或业务缓存。
-- 首版先确定 per-user / per-machine、是否需要 UAC、安装器形式和是否托盘驻留；不确定前不得声称可在所有 Windows 电脑上静默更新。
+- 用户已确定首版采用 per-user 安装：`%LOCALAPPDATA%\Programs\MuYingDrive`，不请求 UAC。更新器只接受该固定目标路径；其他安装布局会 fail closed。当前没有托盘驻留；客户端关闭窗口即按现有生命周期退出。
 
 ## 验收测试
 
@@ -84,11 +103,21 @@ docs/
 - 在独立 Windows 测试安装目录及 NAS 测试发布目录验证。
 - 仅当打包、安全验证及回滚闭环通过后，才考虑合并和生产部署。
 
+## 尚未完成的发布验收
+
+- 尚无正式 ECDSA 发布公钥、Authenticode SHA-256 发布者指纹、签名证书和发布私钥配置；更新客户端因此 fail closed。
+- `desktop/publish-update.ps1` 仅生成供更新器使用的自包含 ZIP 与签名清单，不创建首次安装用的 Setup/MSI；首次安装须由管理员预置到 per-user 固定目录并提供 NAS 配置。
+- 未在独立 Windows x64 自包含发布产物上验证 .NET 发布、数字签名、版本切换、用户目录权限、健康握手、恢复日志和旧版本清理策略。
+- 未验证生产 NAS 的 `MUYING_V2_UPDATE_RELEASES_DIR` 发布目录、反向代理 Range 行为或客户端证书 pin 配置。
+- 更新发布目录写入、密钥轮换、证书续期与旧版本保留期限仍需发布管理员流程；本分支没有 NAS 部署或生产服务变更。
+- 后端在发布请求时验证包的大小和签名清单 SHA-256；运维仍须遵守不可原地覆盖包文件的发布约定，以确保强 ETag 和断点续传语义稳定。
+- 没有进行文档验收清单中的安全/故障注入或 Windows 10/11 界面实测；不得据此声称已完成生产部署。
+
 ## 更新界面设计与视觉锁定（本分支执行约束）
 
 更新**专属 UI**（含提醒、验证、安装、失败回滚状态及独立更新程序的进度窗口）属于 `codex/software-updater`，不交给 `codex/ui-refinement` 另造一套。主应用沿用原生 WPF；独立更新程序也必须使用 **.NET 8 + 原生 WPF/XAML/C#**，禁止 WebView2、React、HTML、Tauri/Electron 或内嵌浏览器界面。
 
 **完整且应直接实施的窗口蓝图：** [独立更新器 UI 结构与验收规范](updater-ui-spec.md)。该规范明确紧凑窗口（基线宽约 460 DIP）、标题/状态/说明/进度条/阶段/操作区的固定排列、真实进度规则、成功失败和回滚文案，以及深浅主题与原生键盘交互。不得自行改为全屏安装器、多步欢迎向导、常驻软件更新导航或新视觉语言。
 
-就绪提醒提供「立即更新」「退出后更新」，具体挂载在主窗口的哪一处仍需产品 UI 评审（Notion 尚未确认）；**不得擅自新增永久更新中心、顶栏按钮或登录页版本区域**。本次仅冻结专用独立更新器的布局基线，不改变 Notion 尚待确认的入口位置。
+就绪提醒提供「立即更新」「退出后更新」，用户已确认在文件工作区内显示短暂轻提示。该提示仅在包签名、版本和 SHA-256 全部通过后出现，不新增常驻更新中心、登录页版本区域或底栏状态栏。
 

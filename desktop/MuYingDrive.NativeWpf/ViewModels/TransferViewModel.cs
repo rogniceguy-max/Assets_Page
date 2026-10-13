@@ -10,7 +10,9 @@ namespace MuYingDrive.NativeWpf.ViewModels;
 public sealed class TransferViewModel : ObservableObject
 {
     private readonly ResumableTransferEngine _engine;
+    private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private string _operationErrorMessage = string.Empty;
+    private bool _acceptTransferActions = true;
 
     public TransferViewModel(long accountId)
     {
@@ -18,14 +20,14 @@ public sealed class TransferViewModel : ObservableObject
         _engine.TransferChanged += HandleTransferChanged;
         Tasks = [];
         Tasks.CollectionChanged += HandleTasksChanged;
-        PauseCommand = new AsyncRelayCommand(parameter => RunCommandSafelyAsync(
-            () => PauseAsync(parameter as TransferTask), "暂停传输失败，请检查存储位置后重试。"));
-        ResumeCommand = new AsyncRelayCommand(parameter => RunCommandSafelyAsync(
-            () => ResumeAsync(parameter as TransferTask), "继续传输失败，请检查文件和 NAS 连接后重试。"));
-        RetryCommand = new AsyncRelayCommand(parameter => RunCommandSafelyAsync(
-            () => RetryAsync(parameter as TransferTask), "重试传输失败，请检查文件和 NAS 连接后重试。"));
-        CancelCommand = new AsyncRelayCommand(parameter => RunCommandSafelyAsync(
-            () => CancelAsync(parameter as TransferTask), "取消传输失败，请稍后重试。"));
+        PauseCommand = new AsyncRelayCommand(parameter => RunLifecycleCommandAsync(
+            () => PauseAsync(parameter as TransferTask), "暂停传输失败，请检查存储位置后重试。"), _ => _acceptTransferActions);
+        ResumeCommand = new AsyncRelayCommand(parameter => RunLifecycleCommandAsync(
+            () => ResumeAsync(parameter as TransferTask), "继续传输失败，请检查文件和 NAS 连接后重试。"), _ => _acceptTransferActions);
+        RetryCommand = new AsyncRelayCommand(parameter => RunLifecycleCommandAsync(
+            () => RetryAsync(parameter as TransferTask), "重试传输失败，请检查文件和 NAS 连接后重试。"), _ => _acceptTransferActions);
+        CancelCommand = new AsyncRelayCommand(parameter => RunLifecycleCommandAsync(
+            () => CancelAsync(parameter as TransferTask), "取消传输失败，请稍后重试。"), _ => _acceptTransferActions);
     }
 
     public ObservableCollection<TransferTask> Tasks { get; }
@@ -56,24 +58,57 @@ public sealed class TransferViewModel : ObservableObject
     public async Task AddDownloadAsync(DriveFileItem file, string localDestination)
     {
         ArgumentNullException.ThrowIfNull(file);
-        await StartAsync(() => _engine.StartDownloadAsync(file.FullPath, localDestination));
+        await StartTransferAsync(() => _engine.StartDownloadAsync(file.FullPath, localDestination));
     }
 
     public async Task AddUploadAsync(string localSource, string nasDestination)
     {
-        await StartAsync(() => _engine.StartUploadAsync(localSource, nasDestination));
+        await StartTransferAsync(() => _engine.StartUploadAsync(localSource, nasDestination));
     }
 
-    public async Task PauseAllAsync()
+    public async Task<bool> PauseAllAsync()
+    {
+        await _lifecycleGate.WaitAsync();
+        try { return await PauseRunningAndVerifyAsync(); }
+        finally { _lifecycleGate.Release(); }
+    }
+
+    public async Task<bool> PrepareForUpdateAsync()
+    {
+        await _lifecycleGate.WaitAsync();
+        try
+        {
+            _acceptTransferActions = false;
+            RaiseTransferCommandStates();
+            if (await PauseRunningAndVerifyAsync())
+                return true;
+            _acceptTransferActions = true;
+            RaiseTransferCommandStates();
+            return false;
+        }
+        catch
+        {
+            _acceptTransferActions = true;
+            RaiseTransferCommandStates();
+            return false;
+        }
+        finally { _lifecycleGate.Release(); }
+    }
+
+    private async Task<bool> PauseRunningAndVerifyAsync()
     {
         try
         {
-            var running = Tasks.Where(task => task.State == TransferState.Running).ToArray();
+            var running = _engine.GetTasks().Where(task => task.Status == ResumableTransferStatus.Running).ToArray();
             await Task.WhenAll(running.Select(task => _engine.PauseAsync(task.Id)));
+            var afterPause = _engine.GetTasks().ToDictionary(task => task.Id, StringComparer.Ordinal);
+            return running.All(previous => afterPause.TryGetValue(previous.Id, out var current) &&
+                current.Status is ResumableTransferStatus.Paused or ResumableTransferStatus.Completed);
         }
         catch (Exception)
         {
             OperationErrorMessage = "正在保存传输进度时遇到问题；未完成任务会在下次启动时检查。";
+            return false;
         }
     }
 
@@ -87,6 +122,32 @@ public sealed class TransferViewModel : ObservableObject
     private async Task StartAsync(Func<Task<ResumableTransferSnapshot>> start)
     {
         await RunCommandSafelyAsync(async () => Upsert(await start()), "无法开始传输，请检查目标位置、权限和 NAS 连接后重试。");
+    }
+
+    private async Task StartTransferAsync(Func<Task<ResumableTransferSnapshot>> start)
+    {
+        await _lifecycleGate.WaitAsync();
+        try
+        {
+            if (!_acceptTransferActions)
+            {
+                OperationErrorMessage = "正在准备安全退出，暂时不能开始新的传输。";
+                return;
+            }
+            await StartAsync(start);
+        }
+        finally { _lifecycleGate.Release(); }
+    }
+
+    private async Task RunLifecycleCommandAsync(Func<Task> action, string fallbackMessage)
+    {
+        await _lifecycleGate.WaitAsync();
+        try
+        {
+            if (_acceptTransferActions)
+                await RunCommandSafelyAsync(action, fallbackMessage);
+        }
+        finally { _lifecycleGate.Release(); }
     }
 
     private async Task RunCommandSafelyAsync(Func<Task> action, string fallbackMessage)
@@ -168,5 +229,13 @@ public sealed class TransferViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(HasTasks));
         OnPropertyChanged(nameof(IsEmpty));
+    }
+
+    private void RaiseTransferCommandStates()
+    {
+        PauseCommand.RaiseCanExecuteChanged();
+        ResumeCommand.RaiseCanExecuteChanged();
+        RetryCommand.RaiseCanExecuteChanged();
+        CancelCommand.RaiseCanExecuteChanged();
     }
 }
