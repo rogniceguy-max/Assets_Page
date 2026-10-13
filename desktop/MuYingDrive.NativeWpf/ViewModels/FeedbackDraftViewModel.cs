@@ -65,11 +65,19 @@ public sealed class FeedbackDraftViewModel : ObservableObject
             return;
         }
 
+        // Kind and Category are bound to ComboBox.SelectedValue, which is TwoWay: when
+        // the ItemsSource is applied WPF clears the selection and can write null back
+        // into these properties. Sending that null makes the server reject the whole
+        // submission with a message that names no field, so fall back to the defaults
+        // whenever the bound value is missing or not one of the offered choices.
+        var kind = KindChoices.Any(choice => choice.Value == Kind) ? Kind : "problem";
+        var category = Categories.Any(choice => choice.Value == Category) ? Category : "general";
+
         IsBusy = true; Error = "";
         try
         {
             var images = Images.Select(i => new FeedbackImagePayload(i.Mime, Convert.ToBase64String(i.Bytes))).ToArray();
-            var result = await _api.CreateFeedbackAsync(_token, new FeedbackSubmission(Kind, Category, title, description, images, PrivacyConfirmed), _ct);
+            var result = await _api.CreateFeedbackAsync(_token, new FeedbackSubmission(kind, category, title, description, images, PrivacyConfirmed), _ct);
             Title = ""; Description = ""; Images.Clear(); PrivacyConfirmed = false;
             Submitted?.Invoke(this, result);
         }
