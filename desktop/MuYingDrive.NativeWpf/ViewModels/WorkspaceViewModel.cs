@@ -23,6 +23,7 @@ public sealed class WorkspaceViewModel : ObservableObject
     private readonly Func<ValueTask>? _disposeExtra;
     private readonly TransferViewModel? _transfers;
     private readonly FeedbackViewModel? _feedback;
+    private readonly Action<string>? _onPageActivated;
     private string? _selectedSpaceKey;
     private object _currentContent;
     private bool _isSidebarExpanded = true;
@@ -35,11 +36,13 @@ public sealed class WorkspaceViewModel : ObservableObject
         Func<Task> exitAsync,
         TransferViewModel? transfers = null,
         FeedbackViewModel? feedback = null,
-        Func<ValueTask>? disposeExtra = null)
+        Func<ValueTask>? disposeExtra = null,
+        Action<string>? onPageActivated = null)
     {
         _main = main;
         _pages = pages;
         _selectSpaceAsync = selectSpaceAsync;
+        _onPageActivated = onPageActivated;
         _transfers = transfers;
         _feedback = feedback;
         _disposeExtra = disposeExtra;
@@ -97,7 +100,8 @@ public sealed class WorkspaceViewModel : ObservableObject
             },
             key => { files.SetSpace(key); return Task.CompletedTask; },
             () => main.SignOutAsync(session),
-            transfers, feedback);
+            transfers, feedback,
+            onPageActivated: key => { if (key == "反馈") _ = feedback.EnsureLoadedAsync(); });
 
         workspace.Session = session;
         workspace.Account = session.User;
@@ -138,7 +142,8 @@ public sealed class WorkspaceViewModel : ObservableObject
             selectSpaceAsync,
             exitAsync,
             feedback: feedback,
-            disposeExtra: disposeExtra);
+            disposeExtra: disposeExtra,
+            onPageActivated: key => { if (key == "反馈") _ = feedback?.EnsureLoadedAsync(); });
         workspace.Browser = browser;
         return workspace;
     }
@@ -236,6 +241,9 @@ public sealed class WorkspaceViewModel : ObservableObject
         CurrentContent = page;
         MarkSelected();
         OnPropertyChanged(nameof(PageTitle));
+        // Some pages fetch on first display; without this the feedback list opened empty
+        // until a filter was clicked.
+        _onPageActivated?.Invoke(destination);
     }
 
     private async Task SelectSpaceAsync(string? space)
