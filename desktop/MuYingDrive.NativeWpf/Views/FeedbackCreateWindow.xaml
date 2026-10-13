@@ -1,0 +1,62 @@
+<Window x:Class="MuYingDrive.NativeWpf.Views.FeedbackCreateWindow"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ Title="新建反馈" Width="680" Height="720" MinWidth="480" MinHeight="480"
+ WindowStartupLocation="CenterOwner" Background="{DynamicResource Brush.Surface.Canvas}"
+ Foreground="{DynamicResource Brush.Text.Primary}" FontFamily="{StaticResource Typography.FontFamily}"
+ AllowDrop="True" PreviewDragOver="OnDragOver" Drop="OnDrop" PreviewKeyDown="OnKeyDown" Closing="OnClosing">
+ <Window.Resources><ResourceDictionary><ResourceDictionary.MergedDictionaries><ResourceDictionary Source="FeedbackStyles.xaml"/></ResourceDictionary.MergedDictionaries></ResourceDictionary></Window.Resources>
+ <Grid Margin="24">
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+  <TextBlock Text="新建反馈" FontSize="{StaticResource Typography.FontSize.PageTitle}" FontWeight="SemiBold" Margin="0,0,0,16"/>
+  <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+   <StackPanel>
+    <StackPanel IsEnabled="{Binding IsEditable}">
+     <Grid Margin="0,0,0,16">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="16"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+      <StackPanel><TextBlock Text="类型" Margin="0,0,0,6"/><ComboBox ItemsSource="{Binding KindChoices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding Kind}" AutomationProperties.Name="反馈类型"/></StackPanel>
+      <StackPanel Grid.Column="2"><TextBlock Text="问题类型 / 相关场景" Margin="0,0,0,6"/><ComboBox ItemsSource="{Binding Categories}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding Category}" AutomationProperties.Name="相关场景"/></StackPanel>
+     </Grid>
+     <TextBlock Text="标题" Margin="0,0,0,6"/>
+     <TextBox x:Name="TitleBox" Text="{Binding Title, UpdateSourceTrigger=PropertyChanged}" MaxLength="120" AutomationProperties.Name="反馈标题" Margin="0,0,0,16"/>
+     <TextBlock Text="描述" Margin="0,0,0,6"/>
+     <TextBlock Text="{Binding DescriptionHint}" Foreground="{DynamicResource Brush.Text.Secondary}" Margin="0,0,0,6" TextWrapping="Wrap"/>
+     <TextBox Text="{Binding Description, UpdateSourceTrigger=PropertyChanged}" MaxLength="4000" AcceptsReturn="True" TextWrapping="Wrap" Height="140" Style="{StaticResource Feedback.Multiline}" VerticalScrollBarVisibility="Auto" AutomationProperties.Name="反馈描述" Margin="0,0,0,16"/>
+     <TextBlock Text="截图（可选）" Margin="0,0,0,8"/>
+     <WrapPanel Margin="0,0,0,8">
+      <Button Content="选择截图" Click="ChooseImages_Click" Margin="0,0,8,4"/>
+      <Button Content="粘贴截图" Click="PasteImage_Click" Margin="0,0,0,4"/>
+     </WrapPanel>
+     <TextBlock Text="支持拖入或粘贴 PNG / JPEG；最多 4 张，每张 2 MiB，总计 6 MiB。" TextWrapping="Wrap" Foreground="{DynamicResource Brush.Text.Secondary}" FontSize="{StaticResource Typography.FontSize.Caption}" Margin="0,0,0,12"/>
+     <ItemsControl ItemsSource="{Binding Images}">
+      <ItemsControl.ItemTemplate><DataTemplate>
+       <Border BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" CornerRadius="{StaticResource CornerRadius.Control}" Padding="8" Margin="0,0,0,8">
+        <StackPanel>
+         <Image Source="{Binding Image}" Stretch="Uniform" MaxHeight="220" AutomationProperties.Name="提交前截图预览"/>
+         <Button Content="移除此截图" HorizontalAlignment="Right" Command="{Binding DataContext.RemoveImageCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" Style="{StaticResource Button.Ghost}" Margin="0,8,0,0"/>
+        </StackPanel>
+       </Border>
+      </DataTemplate></ItemsControl.ItemTemplate>
+     </ItemsControl>
+     <Border Padding="12" Margin="0,8,0,12" Background="{DynamicResource Brush.Surface.Panel}" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" CornerRadius="{StaticResource CornerRadius.Control}">
+      <StackPanel>
+       <TextBlock Text="发布前请检查" FontWeight="SemiBold" Margin="0,0,0,6"/>
+       <TextBlock Text="反馈公开后，所有已登录员工都能查看。请遮盖截图像素中的姓名、聊天、客户数据和地址，并删除文字中的账号、凭据及内部路径。带截图的反馈需经维护人员审核后公开。" TextWrapping="Wrap" Foreground="{DynamicResource Brush.Text.Secondary}"/>
+      </StackPanel>
+     </Border>
+     <CheckBox IsChecked="{Binding PrivacyConfirmed}" Foreground="{DynamicResource Brush.Text.Primary}" AutomationProperties.Name="确认已检查文字和截图隐私" Margin="0,0,0,12">
+      <TextBlock Text="我已预览文字和截图，并遮盖敏感内容" TextWrapping="Wrap"/>
+     </CheckBox>
+    </StackPanel>
+    <TextBlock Text="{Binding Error}" Foreground="{DynamicResource Brush.Status.Danger}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" Margin="0,0,0,12"/>
+    <TextBlock Text="正在提交……" Foreground="{DynamicResource Brush.Text.Secondary}">
+     <TextBlock.Style><Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsBusy}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+    </TextBlock>
+   </StackPanel>
+  </ScrollViewer>
+  <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+   <Button Content="取消" Click="Cancel_Click" IsEnabled="{Binding IsEditable}" Margin="0,0,8,0"/>
+   <Button Content="提交反馈" Command="{Binding SubmitCommand}" Style="{StaticResource Button.Primary}"/>
+  </StackPanel>
+ </Grid>
+</Window>

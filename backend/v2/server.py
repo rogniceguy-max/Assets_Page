@@ -21,6 +21,8 @@ from .config import Settings, load_settings
 from .provisioner import AccountProvisioner
 from .release_store import ReleaseNotFound, ReleaseStore, ReleaseUnavailable
 from .service import ApiError, V2Application
+from .feedback import FeedbackService
+from .feedback_http import dispatch as dispatch_feedback
 from .update_failure_reports import InvalidUpdateFailureReport, UpdateFailureReportStore, validate_report
 
 
@@ -41,7 +43,9 @@ def _bearer_token(headers) -> str | None:
 
 
 def create_handler(app: V2Application, update_releases_dir: Path | None = None,
-                   update_failure_db_path: Path | None = None):
+                   update_failure_db_path: Path | None = None,
+                   feedback: FeedbackService | None = None):
+    feedback = feedback or FeedbackService(app.session, app.db_path.parent / "feedback")
     release_store = ReleaseStore(update_releases_dir)
     failure_store = None
     db_path = update_failure_db_path or getattr(app, "db_path", None)
@@ -92,6 +96,8 @@ def create_handler(app: V2Application, update_releases_dir: Path | None = None,
             return
 
         def do_GET(self) -> None:  # noqa: N802
+            if dispatch_feedback(self, feedback, _bearer_token(self.headers), "GET"):
+                return
             path = urlsplit(self.path).path
             if path == f"{API_ROOT}/health":
                 self._send_json(200, {"status": "ok", "version": "2"})
@@ -116,6 +122,8 @@ def create_handler(app: V2Application, update_releases_dir: Path | None = None,
             self._send_error(ApiError(404, "NOT_FOUND", "接口不存在。"))
 
         def do_POST(self) -> None:  # noqa: N802
+            if dispatch_feedback(self, feedback, _bearer_token(self.headers), "POST"):
+                return
             parsed_path = urlsplit(self.path)
             path = parsed_path.path
             if path == UPDATE_FAILURE_REPORT_PATH:
@@ -170,6 +178,10 @@ def create_handler(app: V2Application, update_releases_dir: Path | None = None,
                 self._send_json(200, {"success": True})
                 return
             self._send_error(ApiError(404, "NOT_FOUND", "接口不存在。"))
+
+        def do_PATCH(self) -> None:  # noqa: N802
+            if not dispatch_feedback(self, feedback, _bearer_token(self.headers), "PATCH"):
+                self._send_error(ApiError(404, "NOT_FOUND", "接口不存在。"))
 
         def _read_json(self, maximum_bytes: int = MAX_BODY_BYTES, reject_duplicate_fields: bool = False) -> dict[str, Any] | None:
             if self.headers.get("Transfer-Encoding"):
@@ -394,8 +406,18 @@ def make_server(settings: Settings, app: V2Application) -> ThreadingHTTPServer:
             request.settimeout(20)
             return request, address
 
+        def handle_error(self, request, client_address):
+            # Default socket error tracebacks include IPs; feedback must not emit them.
+            # Monitor aggregate health separately, without per-request identifiers.
+            return
+
+    # Explicit existing account IDs grant feedback maintenance only, default denied.
+    raw_maintainers = os.environ.get("MUYING_V2_FEEDBACK_MAINTAINERS", "")
+    maintainers = {int(value.strip()) for value in raw_maintainers.split(",") if value.strip().isdigit() and int(value.strip()) > 0}
+    feedback_root = Path(os.environ.get("MUYING_V2_FEEDBACK_DIR", str(settings.data_dir / "feedback")))
+    feedback = FeedbackService(app.session, feedback_root, maintainers)
     server = V2HTTPServer((settings.bind_host, settings.port),
-                          create_handler(app, settings.update_releases_dir, settings.database_path))
+                          create_handler(app, settings.update_releases_dir, settings.database_path, feedback))
     server.daemon_threads = True
     server.request_queue_size = 64
 
@@ -439,3 +461,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

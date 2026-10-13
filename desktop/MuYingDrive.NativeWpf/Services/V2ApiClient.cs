@@ -30,7 +30,7 @@ public sealed class V2ApiException : Exception
 /// HTTPS client for V2 identity endpoints. Hostname and certificate validity checks
 /// remain mandatory; the configured SHA-256 pin can anchor the exact self-signed leaf.
 /// </summary>
-public sealed class V2ApiClient : IDisposable
+public sealed partial class V2ApiClient : IDisposable
 {
     private const int MaxResponseBytes = 64 * 1024;
     private static readonly TimeSpan UpdateReadIdleTimeout = TimeSpan.FromMinutes(1);
@@ -215,7 +215,7 @@ public sealed class V2ApiClient : IDisposable
         }
     }
 
-    private async Task<T> SendJsonAsync<T>(HttpMethod method, string relativePath, object? payload, string? bearerToken, CancellationToken cancellationToken)
+    private async Task<T> SendJsonAsync<T>(HttpMethod method, string relativePath, object? payload, string? bearerToken, CancellationToken cancellationToken, int maximumResponseBytes = MaxResponseBytes)
     {
         using var request = new HttpRequestMessage(method, new Uri(_baseUri, relativePath));
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -244,7 +244,7 @@ public sealed class V2ApiClient : IDisposable
 
         using (response)
         {
-            var body = await ReadBoundedAsync(response.Content, cancellationToken).ConfigureAwait(false);
+            var body = await ReadBoundedAsync(response.Content, cancellationToken, maximumResponseBytes).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
                 throw CreateApiError(response.StatusCode, body);
 
@@ -288,9 +288,9 @@ public sealed class V2ApiClient : IDisposable
         }
     }
 
-    private static async Task<byte[]> ReadBoundedAsync(HttpContent content, CancellationToken cancellationToken)
+    private static async Task<byte[]> ReadBoundedAsync(HttpContent content, CancellationToken cancellationToken, int maximum = MaxResponseBytes)
     {
-        if (content.Headers.ContentLength is > MaxResponseBytes)
+        if (content.Headers.ContentLength > maximum)
             throw new V2ApiException("服务器响应超出允许大小。");
 
         await using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
@@ -301,7 +301,7 @@ public sealed class V2ApiClient : IDisposable
             var count = await stream.ReadAsync(chunk, cancellationToken).ConfigureAwait(false);
             if (count == 0)
                 break;
-            if (buffer.Length + count > MaxResponseBytes)
+            if (buffer.Length + count > maximum)
                 throw new V2ApiException("服务器响应超出允许大小。");
             buffer.Write(chunk, 0, count);
         }
@@ -402,3 +402,4 @@ public sealed class V2ApiClient : IDisposable
             throw new V2ApiException("服务器返回的用户信息无效。");
     }
 }
+

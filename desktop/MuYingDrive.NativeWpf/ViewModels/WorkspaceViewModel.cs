@@ -19,6 +19,7 @@ public sealed class WorkspaceViewModel : ObservableObject
         Account = session.User;
         Transfers = new TransferViewModel(session.User.Id);
         Files = new FilesViewModel(session, settings, Transfers);
+        Feedback = new FeedbackViewModel(session, settings);
         _currentContent = Files;
         ToggleSidebarCommand = new RelayCommand(_ => IsSidebarExpanded = !IsSidebarExpanded);
         NavigateCommand = new RelayCommand(parameter => Navigate(parameter as string ?? "文件"));
@@ -32,6 +33,7 @@ public sealed class WorkspaceViewModel : ObservableObject
     public V2UserSession Account { get; }
     public FilesViewModel Files { get; }
     public TransferViewModel Transfers { get; }
+    public FeedbackViewModel Feedback { get; }
     public IReadOnlyList<string> ThemeChoices { get; } = ["跟随系统", "浅色", "深色"];
 
     public string CurrentTheme
@@ -66,7 +68,7 @@ public sealed class WorkspaceViewModel : ObservableObject
         }
     }
 
-    public string PageTitle => SelectedNavigation == "传输" ? "传输" : "文件";
+    public string PageTitle => SelectedNavigation;
 
     public object CurrentContent
     {
@@ -101,6 +103,7 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     public ValueTask DisposeAsync()
     {
+        Feedback.Dispose();
         _main.PropertyChanged -= HandleMainPropertyChanged;
         return Transfers.DisposeAsync();
     }
@@ -115,8 +118,9 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     private void Navigate(string destination)
     {
-        SelectedNavigation = destination == "传输" ? "传输" : "文件";
-        CurrentContent = SelectedNavigation == "传输" ? Transfers : Files;
+        SelectedNavigation = destination is "传输" or "反馈" ? destination : "文件";
+        CurrentContent = SelectedNavigation switch { "传输" => Transfers, "反馈" => Feedback, _ => Files };
+        if (SelectedNavigation == "反馈") _ = Feedback.EnsureLoadedAsync();
         OnPropertyChanged(nameof(PageTitle));
     }
 
@@ -134,3 +138,4 @@ public sealed class WorkspaceViewModel : ObservableObject
             RefreshUpdateState();
     }
 }
+

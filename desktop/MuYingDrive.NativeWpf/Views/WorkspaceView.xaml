@@ -2,9 +2,12 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="clr-namespace:MuYingDrive.NativeWpf.Controls"
+             xmlns:vm="clr-namespace:MuYingDrive.NativeWpf.ViewModels"
+             xmlns:views="clr-namespace:MuYingDrive.NativeWpf.Views"
              Background="{DynamicResource Brush.Surface.Canvas}">
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+        <DataTemplate DataType="{x:Type vm:FeedbackViewModel}"><views:FeedbackView /></DataTemplate>
         <Style x:Key="NavItem" TargetType="Button" BasedOn="{StaticResource Button.Nav}">
             <Style.Triggers>
                 <DataTrigger Binding="{Binding IsSidebarExpanded}" Value="False">
@@ -48,6 +51,14 @@
         <Style x:Key="NavSpaceOwn" TargetType="Button" BasedOn="{StaticResource NavItem}">
             <Style.Triggers>
                 <DataTrigger Binding="{Binding SelectedSpace}" Value="本部门"><Setter Property="Background" Value="{DynamicResource Brush.Selection.Background}" /></DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="NavCurrentFeedback" TargetType="Button" BasedOn="{StaticResource NavItem}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SelectedNavigation}" Value="反馈">
+                    <Setter Property="Background" Value="{DynamicResource Brush.Selection.Background}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+                </DataTrigger>
             </Style.Triggers>
         </Style>
         <Style x:Key="NavSpacePublic" TargetType="Button" BasedOn="{StaticResource NavItem}">
@@ -108,6 +119,9 @@
                 </Button>
                 <Button Grid.Row="2" Style="{StaticResource NavCurrentTransfer}" Command="{Binding NavigateCommand}" CommandParameter="传输" ToolTip="传输">
                     <StackPanel Orientation="Horizontal"><controls:LucideIcon Icon="Upload" Width="18" Height="18" Stroke="{DynamicResource Brush.Text.Secondary}" /><TextBlock Text="传输" Style="{StaticResource NavLabel}" /></StackPanel>
+                </Button>
+                <Button Grid.Row="3" Style="{StaticResource NavCurrentFeedback}" Command="{Binding NavigateCommand}" CommandParameter="反馈" ToolTip="反馈" AutomationProperties.Name="反馈">
+                    <StackPanel Orientation="Horizontal"><controls:LucideIcon Icon="CircleHelp" Width="18" Height="18" Stroke="{DynamicResource Brush.Text.Secondary}" /><TextBlock Text="反馈" Style="{StaticResource NavLabel}" /></StackPanel>
                 </Button>
                 <Border Grid.Row="4" Height="1" Background="{DynamicResource Brush.Border.Subtle}" Margin="4,0" />
                 <TextBlock Grid.Row="5" Text="空间" FontSize="{StaticResource Typography.FontSize.Caption}"
@@ -183,3 +197,4 @@
         </Grid>
     </Grid>
 </UserControl>
+
