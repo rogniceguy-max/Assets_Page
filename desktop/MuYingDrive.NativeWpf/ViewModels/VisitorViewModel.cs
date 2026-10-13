@@ -62,14 +62,16 @@ public sealed class VisitorViewModel : ObservableObject, IFileBrowser
         UploadCommand = new RelayCommand(_ => { }, _ => false);
         UnsupportedEditCommand = new RelayCommand<string>(_ => { }, _ => false);
         DetailsCommand = new RelayCommand<DriveFileItem>(ShowDetails);
-        SpaceCommand = new RelayCommand(parameter => _ = SelectSpaceAsync(parameter as VisitorSpace));
         ExitCommand = new AsyncRelayCommand(_ => _main.ExitVisitorAsync(this));
         RefreshCommand = new AsyncRelayCommand(_ => LoadAsync(), _ => !IsBusy);
     }
 
     public ObservableCollection<DriveFileItem> Files { get; }
     public ICollectionView ItemsView { get; }
-    public ObservableCollection<VisitorSpace> Spaces { get; } = [];
+
+    /// <summary>The three spaces as sidebar entries, for the shared workspace shell.</summary>
+    public IReadOnlyList<WorkspaceNavItem> SidebarSpaces { get; private set; } = [];
+    private readonly List<VisitorSpace> _spaces = [];
 
     public RelayCommand<DriveFileItem> OpenCommand { get; }
     public RelayCommand<DriveFileItem> DownloadCommand { get; }
@@ -81,7 +83,6 @@ public sealed class VisitorViewModel : ObservableObject, IFileBrowser
     public RelayCommand UploadCommand { get; }
     public RelayCommand<string> UnsupportedEditCommand { get; }
     public RelayCommand<DriveFileItem> DetailsCommand { get; }
-    public RelayCommand SpaceCommand { get; }
     public AsyncRelayCommand ExitCommand { get; }
     public AsyncRelayCommand RefreshCommand { get; }
 
@@ -176,16 +177,18 @@ public sealed class VisitorViewModel : ObservableObject, IFileBrowser
         try
         {
             _session = await _api.CreateVisitorSessionAsync().ConfigureAwait(true);
-            Spaces.Clear();
-            foreach (var space in _session.Spaces)
-                Spaces.Add(space);
+            _spaces.Clear();
+            _spaces.AddRange(_session.Spaces);
+            SidebarSpaces = _spaces
+                .Select(space => new WorkspaceNavItem(space.Id, space.Title, "FolderOpen"))
+                .ToArray();
 
-            if (Spaces.Count == 0)
+            if (_spaces.Count == 0)
             {
                 ErrorMessage = "参观暂未开放，请稍后再试。";
                 return;
             }
-            await SelectSpaceAsync(Spaces[0]).ConfigureAwait(true);
+            await SelectSpaceAsync(_spaces[0]).ConfigureAwait(true);
         }
         catch (V2ApiException exception)
         {
@@ -225,6 +228,12 @@ public sealed class VisitorViewModel : ObservableObject, IFileBrowser
         string.IsNullOrWhiteSpace(SearchText) ||
         candidate is not DriveFileItem item ||
         item.Name.Contains(SearchText, StringComparison.CurrentCultureIgnoreCase);
+
+    /// <summary>Selects a space by its server-side id, as the sidebar does.</summary>
+    public Task SelectSpaceByKeyAsync(string spaceId) =>
+        SelectSpaceAsync(_spaces.FirstOrDefault(space => space.Id == spaceId));
+
+    public ValueTask DisposeAsync() => new(EndAsync());
 
     private async Task SelectSpaceAsync(VisitorSpace? space)
     {

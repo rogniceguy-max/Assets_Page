@@ -8,77 +8,67 @@
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
         <DataTemplate DataType="{x:Type vm:FeedbackViewModel}"><views:FeedbackView /></DataTemplate>
+        <!-- The employee workspace and the tour share this shell; the sidebar is driven
+             by data so the tour simply has fewer entries rather than a separate view. -->
         <Style x:Key="NavItem" TargetType="Button" BasedOn="{StaticResource Button.Nav}">
             <Style.Triggers>
                 <DataTrigger Binding="{Binding IsSidebarExpanded}" Value="False">
                     <Setter Property="HorizontalContentAlignment" Value="Center" />
                     <Setter Property="Padding" Value="0" />
                 </DataTrigger>
-            </Style.Triggers>
-        </Style>
-        <Style x:Key="NavLabel" TargetType="TextBlock">
-            <Setter Property="Margin" Value="12,0,0,0" />
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding IsSidebarExpanded}" Value="False">
-                    <Setter Property="Visibility" Value="Collapsed" />
-                </DataTrigger>
-            </Style.Triggers>
-        </Style>
-        <Style x:Key="NavSectionLabel" TargetType="TextBlock">
-            <Setter Property="Margin" Value="10,0,0,10" />
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding IsSidebarExpanded}" Value="False">
-                    <Setter Property="Visibility" Value="Collapsed" />
-                </DataTrigger>
-            </Style.Triggers>
-        </Style>
-        <Style x:Key="NavCurrentFile" TargetType="Button" BasedOn="{StaticResource NavItem}">
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding SelectedNavigation}" Value="文件">
+                <DataTrigger Binding="{Binding IsSelected}" Value="True">
                     <Setter Property="Background" Value="{DynamicResource Brush.Selection.Background}" />
                     <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
                 </DataTrigger>
             </Style.Triggers>
         </Style>
-        <Style x:Key="NavCurrentTransfer" TargetType="Button" BasedOn="{StaticResource NavItem}">
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding SelectedNavigation}" Value="传输">
-                    <Setter Property="Background" Value="{DynamicResource Brush.Selection.Background}" />
-                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
-                </DataTrigger>
-            </Style.Triggers>
-        </Style>
-        <Style x:Key="NavSpaceOwn" TargetType="Button" BasedOn="{StaticResource NavItem}">
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding SelectedSpace}" Value="本部门"><Setter Property="Background" Value="{DynamicResource Brush.Selection.Background}" /></DataTrigger>
-            </Style.Triggers>
-        </Style>
-        <Style x:Key="NavCurrentFeedback" TargetType="Button" BasedOn="{StaticResource NavItem}">
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding SelectedNavigation}" Value="反馈">
-                    <Setter Property="Background" Value="{DynamicResource Brush.Selection.Background}" />
-                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
-                </DataTrigger>
-            </Style.Triggers>
-        </Style>
-        <Style x:Key="NavSpacePublic" TargetType="Button" BasedOn="{StaticResource NavItem}">
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding SelectedSpace}" Value="公共素材"><Setter Property="Background" Value="{DynamicResource Brush.Selection.Background}" /></DataTrigger>
-            </Style.Triggers>
-        </Style>
-        <Style x:Key="NavSpacePersonal" TargetType="Button" BasedOn="{StaticResource NavItem}">
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding SelectedSpace}" Value="个人空间"><Setter Property="Background" Value="{DynamicResource Brush.Selection.Background}" /></DataTrigger>
-            </Style.Triggers>
-        </Style>
-        <Style x:Key="NavSpaceOther" TargetType="Button" BasedOn="{StaticResource NavItem}">
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding SelectedSpace}" Value="其他部门"><Setter Property="Background" Value="{DynamicResource Brush.Selection.Background}" /></DataTrigger>
-            </Style.Triggers>
-        </Style>
+        <DataTemplate x:Key="NavItemTemplate">
+            <Button Style="{StaticResource NavItem}"
+                    Command="{Binding DataContext.NavigateCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                    CommandParameter="{Binding Key}" ToolTip="{Binding Label}"
+                    AutomationProperties.Name="{Binding Label}">
+                <StackPanel Orientation="Horizontal">
+                    <controls:LucideIcon Icon="{Binding Icon}" Width="18" Height="18" Stroke="{DynamicResource Brush.Text.Secondary}" />
+                    <TextBlock Text="{Binding Label}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Margin" Value="12,0,0,0" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding DataContext.IsSidebarExpanded, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="False">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Button>
+        </DataTemplate>
+        <DataTemplate x:Key="SpaceItemTemplate">
+            <Button Style="{StaticResource NavItem}"
+                    Command="{Binding DataContext.SelectSpaceCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                    CommandParameter="{Binding Key}" ToolTip="{Binding Label}"
+                    AutomationProperties.Name="{Binding Label}">
+                <StackPanel Orientation="Horizontal">
+                    <controls:LucideIcon Icon="{Binding Icon}" Width="18" Height="18" Stroke="{DynamicResource Brush.Text.Secondary}" />
+                    <TextBlock Text="{Binding Label}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Margin" Value="12,0,0,0" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding DataContext.IsSidebarExpanded, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="False">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Button>
+        </DataTemplate>
         <ContextMenu x:Key="AccountMenu">
-            <MenuItem Header="退出登录"
-                      Command="{Binding PlacementTarget.DataContext.SignOutCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+            <MenuItem Header="{Binding PlacementTarget.DataContext.ExitLabel, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      Command="{Binding PlacementTarget.DataContext.ExitCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
         </ContextMenu>
     </UserControl.Resources>
 
@@ -103,41 +93,33 @@
             <Grid Margin="8,18,8,16">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="12" />
-                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="24" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <Button Grid.Row="0" Style="{StaticResource NavCurrentFile}" Command="{Binding NavigateCommand}" CommandParameter="文件" ToolTip="文件">
-                    <StackPanel Orientation="Horizontal"><controls:LucideIcon Icon="Files" Width="18" Height="18" Stroke="{DynamicResource Brush.Text.Secondary}" /><TextBlock Text="文件" Style="{StaticResource NavLabel}" /></StackPanel>
-                </Button>
-                <Button Grid.Row="2" Style="{StaticResource NavCurrentTransfer}" Command="{Binding NavigateCommand}" CommandParameter="传输" ToolTip="传输">
-                    <StackPanel Orientation="Horizontal"><controls:LucideIcon Icon="Upload" Width="18" Height="18" Stroke="{DynamicResource Brush.Text.Secondary}" /><TextBlock Text="传输" Style="{StaticResource NavLabel}" /></StackPanel>
-                </Button>
-                <Button Grid.Row="3" Style="{StaticResource NavCurrentFeedback}" Command="{Binding NavigateCommand}" CommandParameter="反馈" ToolTip="反馈" AutomationProperties.Name="反馈">
-                    <StackPanel Orientation="Horizontal"><controls:LucideIcon Icon="CircleHelp" Width="18" Height="18" Stroke="{DynamicResource Brush.Text.Secondary}" /><TextBlock Text="反馈" Style="{StaticResource NavLabel}" /></StackPanel>
-                </Button>
-                <Border Grid.Row="4" Height="1" Background="{DynamicResource Brush.Border.Subtle}" Margin="4,0" />
-                <TextBlock Grid.Row="5" Text="空间" FontSize="{StaticResource Typography.FontSize.Caption}"
-                           Foreground="{DynamicResource Brush.Text.Secondary}" Style="{StaticResource NavSectionLabel}" />
-                <Button Grid.Row="6" Style="{StaticResource NavSpaceOwn}" Command="{Binding SelectSpaceCommand}" CommandParameter="本部门" ToolTip="本部门">
-                    <StackPanel Orientation="Horizontal"><controls:LucideIcon Icon="FolderOpen" Width="18" Height="18" Stroke="{DynamicResource Brush.Text.Secondary}" /><TextBlock Text="本部门" Style="{StaticResource NavLabel}" /></StackPanel>
-                </Button>
-                <Button Grid.Row="7" Style="{StaticResource NavSpacePublic}" Command="{Binding SelectSpaceCommand}" CommandParameter="公共素材" ToolTip="公共素材">
-                    <StackPanel Orientation="Horizontal"><controls:LucideIcon Icon="Image" Width="18" Height="18" Stroke="{DynamicResource Brush.Text.Secondary}" /><TextBlock Text="公共素材" Style="{StaticResource NavLabel}" /></StackPanel>
-                </Button>
-                <Button Grid.Row="8" Style="{StaticResource NavSpacePersonal}" Command="{Binding SelectSpaceCommand}" CommandParameter="个人空间" ToolTip="个人空间">
-                    <StackPanel Orientation="Horizontal"><controls:LucideIcon Icon="UserRound" Width="18" Height="18" Stroke="{DynamicResource Brush.Text.Secondary}" /><TextBlock Text="个人空间" Style="{StaticResource NavLabel}" /></StackPanel>
-                </Button>
-                <Button Grid.Row="9" Style="{StaticResource NavSpaceOther}" Command="{Binding SelectSpaceCommand}" CommandParameter="其他部门" ToolTip="其他部门" VerticalAlignment="Top" Margin="0,0,0,0">
-                    <StackPanel Orientation="Horizontal"><controls:LucideIcon Icon="Folder" Width="18" Height="18" Stroke="{DynamicResource Brush.Text.Secondary}" /><TextBlock Text="其他部门" Style="{StaticResource NavLabel}" /></StackPanel>
-                </Button>
+                <ItemsControl Grid.Row="0" ItemsSource="{Binding NavigationItems}" ItemTemplate="{StaticResource NavItemTemplate}" />
+
+                <Border Grid.Row="2" Height="1" Background="{DynamicResource Brush.Border.Subtle}" Margin="4,0" />
+
+                <TextBlock Grid.Row="3" Text="空间" FontSize="{StaticResource Typography.FontSize.Caption}"
+                           Foreground="{DynamicResource Brush.Text.Secondary}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Margin" Value="10,0,0,10" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsSidebarExpanded}" Value="False">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+
+                <ScrollViewer Grid.Row="4" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding SpaceItems}" ItemTemplate="{StaticResource SpaceItemTemplate}" />
+                </ScrollViewer>
             </Grid>
         </Border>
 
@@ -165,9 +147,11 @@
                 <ComboBox Grid.Column="2" Width="112" Height="32" MinHeight="32" Margin="0,0,14,0"
                           ItemsSource="{Binding ThemeChoices}" SelectedItem="{Binding CurrentTheme, UpdateSourceTrigger=PropertyChanged}"
                           AutomationProperties.Name="主题" />
+                <!-- The tour has no update entry; the button is absent rather than disabled. -->
                 <Button Grid.Column="3" Style="{StaticResource Button.Ghost}" Width="36" MinWidth="36" Height="36"
                         Padding="0" Margin="0,0,8,0" Command="{Binding InstallUpdateNowCommand}"
-                        ToolTip="{Binding UpdateButtonToolTip}" AutomationProperties.Name="{Binding UpdateButtonName}">
+                        ToolTip="{Binding UpdateButtonToolTip}" AutomationProperties.Name="{Binding UpdateButtonName}"
+                        Visibility="{Binding ShowUpdateEntry, Converter={StaticResource BooleanToVisibilityConverter}}">
                     <Grid Width="36" Height="36">
                         <controls:LucideIcon Icon="RefreshCw" Width="18" Height="18"
                                               Stroke="{DynamicResource Brush.Text.Secondary}"
@@ -183,7 +167,7 @@
                         Click="AccountButton_Click" ToolTip="账户菜单" AutomationProperties.Name="账户菜单">
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <controls:LucideIcon Icon="UserRound" Width="16" Height="16" Stroke="{DynamicResource Brush.Text.Secondary}" VerticalAlignment="Center" />
-                        <TextBlock Text="{Binding Account.UserName}" Foreground="{DynamicResource Brush.Text.Secondary}"
+                        <TextBlock Text="{Binding AccountLabel}" Foreground="{DynamicResource Brush.Text.Secondary}"
                                    Margin="8,0,6,0" VerticalAlignment="Center" MaxWidth="140" TextTrimming="CharacterEllipsis" />
                         <controls:LucideIcon Icon="ChevronRight" Width="14" Height="14" Stroke="{DynamicResource Brush.Text.Secondary}"
                                              VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
@@ -197,4 +181,3 @@
         </Grid>
     </Grid>
 </UserControl>
-

@@ -96,9 +96,20 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
 
-        var visitor = new VisitorViewModel(this, _api);
-        CurrentPage = visitor;
-        await visitor.InitializeAsync();
+        // The tour uses the same shell as a signed-in employee, so it is presented as a
+        // workspace with one navigation entry and three read-only spaces. The spaces are
+        // only known once the server session exists, hence the ordering.
+        var browser = new VisitorViewModel(this, _api);
+        await browser.InitializeAsync().ConfigureAwait(true);
+
+        var workspace = WorkspaceViewModel.ForVisitor(
+            this,
+            browser,
+            browser.SidebarSpaces,
+            key => browser.SelectSpaceByKeyAsync(key),
+            () => ExitVisitorAsync(browser),
+            disposeExtra: () => browser.DisposeAsync());
+        CurrentPage = workspace;
     }
 
     /// <summary>Leaves the tour, revoking the visitor session and clearing its cache.</summary>
@@ -154,8 +165,8 @@ public sealed class MainViewModel : ObservableObject
         try
         {
             var workspace = CurrentPage as WorkspaceViewModel;
-            if (workspace is not null)
-                await workspace.Transfers.PauseAllAsync();
+            if (workspace?.Transfers is { } transfers)
+                await transfers.PauseAllAsync();
             await _sessionService.SignOutAsync(session);
             if (workspace is not null)
                 await workspace.DisposeAsync();
@@ -210,7 +221,7 @@ public sealed class MainViewModel : ObservableObject
         if (!_installUpdateOnExit || !IsUpdateReady)
             return true;
 
-        if (CurrentPage is WorkspaceViewModel workspace && !await workspace.Transfers.PrepareForUpdateAsync())
+        if (CurrentPage is WorkspaceViewModel { Transfers: { } transfers } && !await transfers.PrepareForUpdateAsync())
         {
             UpdateCloseErrorMessage = "有传输任务未能安全保存检查点。请稍后重试；沐影盘仍保持打开。";
             return false;
@@ -257,7 +268,8 @@ public sealed class MainViewModel : ObservableObject
     private async Task InstallUpdateNowAsync()
     {
         if (!IsUpdateReady) return;
-        if (CurrentPage is WorkspaceViewModel workspace && !await workspace.Transfers.PrepareForUpdateAsync())
+        // A visitor workspace carries no transfers, so there is nothing to prepare.
+        if (CurrentPage is WorkspaceViewModel { Transfers: { } transfers } && !await transfers.PrepareForUpdateAsync())
         {
             MessageBox.Show("有传输任务未能安全保存检查点。请稍后重试。", "暂时无法更新", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
@@ -334,7 +346,7 @@ public sealed class MainViewModel : ObservableObject
     {
         if (_settings is null)
             throw new V2ApiException("客户端尚未配置 NAS 服务，请联系管理员。");
-        var workspace = new WorkspaceViewModel(this, session, _settings);
+        var workspace = WorkspaceViewModel.ForEmployee(this, session, _settings);
         CurrentPage = workspace;
         await workspace.InitializeAsync();
     }
