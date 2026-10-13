@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Console test harness for the setup executable's view model, matching the repo's
+    hand-rolled style (MuYingDrive.UpdateCore.Tests) rather than pulling in a test
+    framework. Exits non-zero when any check fails.
+
+    UseWPF is required because the view model drives System.Windows.Input.ICommand.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MuYingDrive.Bootstrap\MuYingDrive.Bootstrap.csproj" />
+  </ItemGroup>
+
+</Project>

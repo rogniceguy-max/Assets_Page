@@ -42,7 +42,7 @@ public sealed class SetupViewModel : ObservableObject
         {
             if (!SetProperty(ref _isBusy, value)) return;
             OnPropertyChanged(nameof(ActionText));
-            CancelCommand.RaiseCanExecuteChanged();
+            RaiseCommandStates();
         }
     }
     public bool IsSucceeded { get => _isSucceeded; private set => SetProperty(ref _isSucceeded, value); }
@@ -53,7 +53,7 @@ public sealed class SetupViewModel : ObservableObject
         private set
         {
             if (!SetProperty(ref _wasCancelled, value)) return;
-            CancelCommand.RaiseCanExecuteChanged();
+            RaiseCommandStates();
         }
     }
     public bool HasLaunchPath => !string.IsNullOrWhiteSpace(_launchPath);
@@ -69,10 +69,11 @@ public sealed class SetupViewModel : ObservableObject
         private set => SetProperty(ref _isProgressIndeterminate, value);
     }
 
-    public ICommand CloseCommand { get; }
-    public ICommand LaunchCommand { get; }
-    // RelayCommand rather than ICommand: the enabled state depends on IsBusy, which
-    // changes underneath it, so it has to be able to raise its own CanExecuteChanged.
+    // RelayCommand rather than ICommand throughout: every one of these decides whether it
+    // is enabled from properties that change while the window is open, and only the
+    // concrete type can raise CanExecuteChanged when they do.
+    public RelayCommand CloseCommand { get; }
+    public RelayCommand LaunchCommand { get; }
     public RelayCommand CancelCommand { get; }
 
     public async Task RunAsync(string[] arguments)
@@ -173,6 +174,24 @@ public sealed class SetupViewModel : ObservableObject
 
     private static void Trace(string message) => InstallTrace.Write(message);
 
+    /// <summary>
+    /// Tells WPF to re-ask every command whether it is enabled.
+    /// </summary>
+    /// <remarks>
+    /// WPF queries <c>CanExecute</c> once when the binding is applied and only asks again
+    /// when the command raises <c>CanExecuteChanged</c>. The view model starts busy, so
+    /// that first query answers "disabled" for everything — and without this the answer
+    /// is never revisited. The buttons then render in the disabled chrome, where a dark
+    /// theme's near-white label is invisible on the light system fill: the window looks
+    /// finished but nothing on it can be clicked.
+    /// </remarks>
+    private void RaiseCommandStates()
+    {
+        CloseCommand.RaiseCanExecuteChanged();
+        LaunchCommand.RaiseCanExecuteChanged();
+        CancelCommand.RaiseCanExecuteChanged();
+    }
+
     private void ApplyResult(InstallResult result)
     {
         Title = result.Title;
@@ -183,6 +202,9 @@ public sealed class SetupViewModel : ObservableObject
         HasFailed = !result.Succeeded;
         _launchPath = result.LaunchPath;
         OnPropertyChanged(nameof(HasLaunchPath));
+        // After the launch path, not before: IsBusy above already re-asked, but it did so
+        // while HasLaunchPath was still false, so the launch button would stay disabled.
+        RaiseCommandStates();
     }
 
     private void SetFailure(string message)
