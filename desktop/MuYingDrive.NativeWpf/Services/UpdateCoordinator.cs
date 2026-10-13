@@ -72,6 +72,7 @@ public sealed class UpdateCoordinator : IAsyncDisposable
     {
         if (!IsSupportedInstallLocation())
             return;
+        PruneUpdateHistory();
         await _checkGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -205,6 +206,62 @@ public sealed class UpdateCoordinator : IAsyncDisposable
             _readyUpdate = newest;
             PruneSupersededCache();
             SetState(UpdateCheckState.Ready);
+        }
+    }
+
+    /// <summary>
+    /// Reclaims the disk that finished updates left behind.
+    /// </summary>
+    /// <remarks>
+    /// Each completed update leaves the install directory it replaced
+    /// (<c>Programs\MuYingDrive.previous-&lt;id&gt;</c>, ~317 MB) and the updater it ran
+    /// from (<c>Updates\runner\&lt;id&gt;</c>, ~154 MB), and neither was ever removed —
+    /// 4.6 GB after eight updates on one machine.
+    ///
+    /// It is done here rather than in the updater because the updater runs from its own
+    /// runner directory, and Windows will not let a running executable delete the
+    /// directory holding it. The client is never inside either one.
+    ///
+    /// Failures are swallowed on purpose. This reclaims disk space; no update, and no
+    /// login, should ever fail because housekeeping could not run.
+    /// </remarks>
+    private void PruneUpdateHistory()
+    {
+        try
+        {
+            var programsDirectory = Path.GetDirectoryName(UpdatePathPolicy.InstallRoot);
+            if (string.IsNullOrEmpty(programsDirectory)) return;
+
+            var result = UpdateHistoryPruner.Prune(programsDirectory, UpdatePathPolicy.UpdateRoot);
+            if (result.InstallBackupsDeleted == 0 && result.RunnerDirectoriesDeleted == 0) return;
+
+            Trace($"pruned {result.InstallBackupsDeleted} install backup(s) and " +
+                  $"{result.RunnerDirectoriesDeleted} runner director(y|ies), " +
+                  $"{result.BytesReclaimed / (1024 * 1024)} MB reclaimed");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Appends a line to the update housekeeping log.
+    /// </summary>
+    /// <remarks>
+    /// Best effort, like the setup executable's trace: this deletes hundreds of megabytes
+    /// at a time, so there has to be a record of when and how much, but a trace failure
+    /// must never break the cleanup it is describing.
+    /// </remarks>
+    private static void Trace(string message)
+    {
+        try
+        {
+            Directory.CreateDirectory(UpdatePathPolicy.UserDataRoot);
+            File.AppendAllText(Path.Combine(UpdatePathPolicy.UserDataRoot, "update-cleanup.log"),
+                $"{DateTime.UtcNow:yyyy-MM-dd'T'HH:mm:ss.fffZ}  {message}{Environment.NewLine}");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
         }
     }
 

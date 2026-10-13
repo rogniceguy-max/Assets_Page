@@ -138,6 +138,144 @@ Console.WriteLine("UpdateFailureText.DescribeConnectionFailure");
             .Contains("无法下载客户端安装包"));
 }
 
+Console.WriteLine("UpdateHistoryPruner.Prune");
+{
+    var root = Path.Combine(Path.GetTempPath(), "muying-prune-" + Guid.NewGuid().ToString("N"));
+    var programs = Path.Combine(root, "Programs");
+    var updateRoot = Path.Combine(root, "Updates");
+    var transactions = Path.Combine(updateRoot, "transactions");
+    var runners = Path.Combine(updateRoot, "runner");
+    foreach (var directory in new[] { programs, transactions, runners }) Directory.CreateDirectory(directory);
+
+    const int BackupBytes = 100;
+    const int RunnerBytes = 50;
+
+    var oldest = new string('a', 32);
+    var middle = new string('b', 32);
+    var newest = new string('c', 32);
+    var inFlight = new string('d', 32);
+    var orphan = new string('e', 32);
+    // Rolled-back transactions pair with failed- directories, and only those.
+    var failedNewest = new string('f', 32);
+    var failedOlder = new string('1', 32);
+
+    void Journal(string id, string state, string updatedUtc) =>
+        File.WriteAllText(Path.Combine(transactions, id + ".json"),
+            $"{{\"update_id\":\"{id}\",\"version\":\"1.0.0\",\"state\":\"{state}\",\"updated_utc\":\"{updatedUtc}\"}}");
+
+    void MakeBackup(string prefix, string id, int bytes)
+    {
+        var directory = Path.Combine(programs, prefix + id);
+        Directory.CreateDirectory(directory);
+        File.WriteAllBytes(Path.Combine(directory, "MuYingDrive.NativeWpf.exe"), new byte[bytes]);
+    }
+
+    void MakeRunner(string id, int bytes)
+    {
+        var directory = Path.Combine(runners, id);
+        Directory.CreateDirectory(directory);
+        File.WriteAllBytes(Path.Combine(directory, "MuYingDrive.Updater.exe"), new byte[bytes]);
+    }
+
+    // Three settled updates, oldest to newest.
+    Journal(oldest, "healthy", "2026-01-01T01:00:00Z");
+    Journal(middle, "healthy", "2026-01-01T02:00:00Z");
+    Journal(newest, "healthy", "2026-01-01T03:00:00Z");
+    foreach (var id in new[] { oldest, middle, newest })
+    {
+        MakeBackup("MuYingDrive.previous-", id, BackupBytes);
+        MakeRunner(id, RunnerBytes);
+    }
+
+    // Still running: its journal says so, and deleting either directory would be wrong.
+    Journal(inFlight, "new-installed", "2026-01-01T04:00:00Z");
+    MakeBackup("MuYingDrive.previous-", inFlight, BackupBytes);
+    MakeRunner(inFlight, RunnerBytes);
+
+    // No journal at all. Unreadable provenance is not settled provenance.
+    MakeBackup("MuYingDrive.previous-", orphan, BackupBytes);
+
+    // A name that is not a 32-hex id can never match a journal, so it is never considered.
+    MakeBackup("MuYingDrive.previous-", "not-a-valid-identifier", BackupBytes);
+
+    // Kept for diagnosis; the newest rolled-back one survives like an install backup does.
+    Journal(failedNewest, "rolled-back", "2026-01-01T05:00:00Z");
+    Journal(failedOlder, "rolled-back", "2026-01-01T00:30:00Z");
+    MakeBackup("MuYingDrive.failed-", failedNewest, BackupBytes);
+    MakeBackup("MuYingDrive.failed-", failedOlder, BackupBytes);
+    // A healthy transaction must never justify deleting a failed- directory, and vice
+    // versa: the two prefixes pair with different settled states.
+    MakeBackup("MuYingDrive.failed-", newest, BackupBytes);
+
+    // A dry run has to reach the same decision and change nothing, or it is not a check.
+    var preview = UpdateHistoryPruner.Prune(programs, updateRoot, dryRun: true);
+    Check("a dry run reports the same removals",
+        preview.InstallBackupsDeleted == 3 && preview.RunnerDirectoriesDeleted == 3);
+    Check("a dry run reports the same bytes", preview.BytesReclaimed == 3 * BackupBytes + 3 * RunnerBytes);
+    Check("a dry run deletes nothing",
+        Directory.Exists(Backup("MuYingDrive.previous-", middle)) &&
+        Directory.Exists(Backup("MuYingDrive.previous-", oldest)) &&
+        Directory.Exists(Backup("MuYingDrive.failed-", failedOlder)) &&
+        Directory.Exists(Runner(oldest)));
+
+    var result = UpdateHistoryPruner.Prune(programs, updateRoot);
+
+    bool Gone(string path) => !Directory.Exists(path);
+    string Backup(string prefix, string id) => Path.Combine(programs, prefix + id);
+    string Runner(string id) => Path.Combine(runners, id);
+
+    Check("keeps the newest settled install backup", Directory.Exists(Backup("MuYingDrive.previous-", newest)));
+    Check("deletes the older settled install backups",
+        Gone(Backup("MuYingDrive.previous-", middle)) && Gone(Backup("MuYingDrive.previous-", oldest)));
+    Check("deletes every settled runner directory",
+        Gone(Runner(oldest)) && Gone(Runner(middle)) && Gone(Runner(newest)));
+    Check("keeps an in-flight update's backup", Directory.Exists(Backup("MuYingDrive.previous-", inFlight)));
+    Check("keeps an in-flight update's runner directory", Directory.Exists(Runner(inFlight)));
+    Check("keeps a backup whose journal is missing", Directory.Exists(Backup("MuYingDrive.previous-", orphan)));
+    Check("keeps a directory whose name is not an id",
+        Directory.Exists(Backup("MuYingDrive.previous-", "not-a-valid-identifier")));
+    Check("keeps the newest rolled-back directory", Directory.Exists(Backup("MuYingDrive.failed-", failedNewest)));
+    Check("deletes the older rolled-back directory", Gone(Backup("MuYingDrive.failed-", failedOlder)));
+    Check("a healthy transaction does not justify deleting a failed- directory",
+        Directory.Exists(Backup("MuYingDrive.failed-", newest)));
+    Check("reports what it removed", result.InstallBackupsDeleted == 3 && result.RunnerDirectoriesDeleted == 3);
+    // Two settled previous- backups and one failed- backup (100 each), plus three runners (50 each).
+    Check("reports the bytes reclaimed", result.BytesReclaimed == 3 * BackupBytes + 3 * RunnerBytes);
+
+    // Running it again must be a no-op, since the coordinator calls it on every cycle.
+    var second = UpdateHistoryPruner.Prune(programs, updateRoot);
+    Check("a second pass removes nothing",
+        second.InstallBackupsDeleted == 0 && second.RunnerDirectoriesDeleted == 0);
+    Check("a second pass still leaves the rollback point",
+        Directory.Exists(Backup("MuYingDrive.previous-", newest)));
+
+    // An empty or absent tree must not throw.
+    var empty = UpdateHistoryPruner.Prune(Path.Combine(root, "absent"), Path.Combine(root, "absent"));
+    Check("an absent tree is handled quietly",
+        empty.InstallBackupsDeleted == 0 && empty.RunnerDirectoriesDeleted == 0);
+
+    try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+}
+
+if (args.Length > 0 && args[0] == "--prune-dry-run")
+{
+    // Reports what the client's housekeeping would remove on THIS machine, without
+    // removing it. Lets the decision be checked against real directories before a first
+    // real run, rather than trusting the unit tests alone.
+    var programsDirectory = Path.GetDirectoryName(UpdatePathPolicy.InstallRoot)!;
+    Console.WriteLine("UpdateHistoryPruner dry run");
+    Console.WriteLine($"  install root : {UpdatePathPolicy.InstallRoot}");
+    Console.WriteLine($"  update root  : {UpdatePathPolicy.UpdateRoot}");
+    var preview = UpdateHistoryPruner.Prune(programsDirectory, UpdatePathPolicy.UpdateRoot, dryRun: true);
+    Console.WriteLine($"  would remove : {preview.InstallBackupsDeleted} install backup(s), " +
+                      $"{preview.RunnerDirectoriesDeleted} runner director(y|ies)");
+    Console.WriteLine($"  would reclaim: {preview.BytesReclaimed / (1024 * 1024)} MB");
+    Console.WriteLine("  (nothing was deleted)");
+    Console.WriteLine();
+    Console.WriteLine(failures == 0 ? "ALL CHECKS PASSED" : $"{failures} CHECK(S) FAILED");
+    return failures == 0 ? 0 : 1;
+}
+
 if (args.Length > 0 && args[0] == "--check-resources")
 {
     // A StaticResource key that does not exist compiles fine and throws

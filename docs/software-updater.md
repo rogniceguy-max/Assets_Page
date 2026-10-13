@@ -153,6 +153,23 @@ docs/
   与"连不上服务器"区分开（`MuYingDrive.UpdateCore/UpdateFailureText.cs`，有单元测试覆盖）。
   下载中途断流也不再向用户抛出英文 CLR 异常文本。
 
+已修复（2026-10-13，清理历史遗留）：
+
+- **更新残留不再累积**。此前每次成功更新都会留下两份从不删除的目录：
+  `Programs\MuYingDrive.previous-<id>`（约 317 MB，被替换掉的安装目录）与
+  `Updates\runner\<id>`（约 154 MB，该次更新运行的更新器）。单机 8 次更新累积到 **4.6 GB**，
+  且每台机器都会如此。原因是**没有任何代码删除它们**——`InstallTransaction` 在标记
+  `healthy` 后直接返回，而恢复扫描对 `healthy` 明确跳过。
+  新增 `MuYingDrive.UpdateCore/UpdateHistoryPruner.cs`，由客户端
+  `UpdateCoordinator` 在每个检查周期调用：删除已落定事务的 `runner\<id>`，
+  安装备份按前缀各保留**最新 1 份**（保住回滚能力），其余删除。
+  不在更新器里做，是因为更新器运行在自己的 `runner` 目录中，
+  Windows 不允许运行中的可执行文件删除其所在目录。
+  **只处理事务日志已落定的目录**：日志缺失、不可读或仍在进行中的一律不碰。
+  清理记录写入 `%LOCALAPPDATA%\MuYingDrive\update-cleanup.log`。
+  对真实目录可用 `dotnet run --project desktop/MuYingDrive.UpdateCore.Tests -- --prune-dry-run`
+  预览将要删除的内容（不实际删除）。
+
 仍需完成：
 
 - **证书与密钥轮换流程**：TLS 叶子证书与 ECDSA 发布密钥的续期/轮换尚未定义。
