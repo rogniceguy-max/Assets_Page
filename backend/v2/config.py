@@ -19,6 +19,7 @@ class Settings:
     visitor_socket: Path | None
     public_root: Path
     update_releases_dir: Path | None
+    installer_dir: Path | None
 
 
 def load_settings() -> Settings:
@@ -28,6 +29,7 @@ def load_settings() -> Settings:
     socket_path = os.environ.get("MUYING_V2_PROVISIONER_SOCKET")
     visitor_socket = os.environ.get("MUYING_V2_VISITOR_SOCKET")
     update_releases_dir = os.environ.get("MUYING_V2_UPDATE_RELEASES_DIR")
+    installer_dir = os.environ.get("MUYING_V2_INSTALLER_DIR")
     return Settings(
         bind_host=os.environ.get("MUYING_V2_BIND_HOST", "127.0.0.1"),
         port=int(os.environ.get("MUYING_V2_PORT", "8443")),
@@ -40,4 +42,6 @@ def load_settings() -> Settings:
         public_root=Path(os.environ.get("MUYING_V2_PUBLIC_ROOT", "/volume1/Assets")),
         # Keep the original path so the release store can reject symlinked roots.
         update_releases_dir=Path(update_releases_dir).absolute() if update_releases_dir else None,
+        # Same treatment: an unset directory means the download routes answer 503.
+        installer_dir=Path(installer_dir).absolute() if installer_dir else None,
     )

@@ -18,6 +18,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .config import Settings, load_settings
+from .installer_store import InstallerStore
 from .provisioner import AccountProvisioner
 from .release_store import ReleaseNotFound, ReleaseStore, ReleaseUnavailable
 from .service import ApiError, V2Application
@@ -34,6 +35,11 @@ MAX_UPDATE_FAILURE_REPORT_BYTES = 2048
 UPDATE_FAILURE_REPORT_PATH = f"{API_ROOT}/diagnostics/update-failures"
 PACKAGE_PATH_RE = re.compile(rf"^{API_ROOT}/updates/packages/([a-f0-9]{{32}})$")
 RELEASE_CHUNK_BYTES = 256 * 1024
+# Human-facing, so deliberately outside API_ROOT: this is a URL to paste to a
+# colleague, not part of the client protocol.
+DOWNLOAD_ROOT = "/download"
+INSTALLER_FILE_PATH = f"{DOWNLOAD_ROOT}/muying-setup.exe"
+INSTALLER_DIGEST_PATH = f"{DOWNLOAD_ROOT}/muying-setup.sha256"
 
 
 def _bearer_token(headers) -> str | None:
@@ -46,6 +52,8 @@ def _bearer_token(headers) -> str | None:
 
 def create_handler(app: V2Application, *,
                    update_releases_dir: Path | None = None,
+                   installer_dir: Path | None = None,
+                   installer: InstallerStore | None = None,
                    update_failure_db_path: Path | None = None,
                    feedback: FeedbackService | None = None,
                    visitor: VisitorService | None = None):
@@ -54,6 +62,11 @@ def create_handler(app: V2Application, *,
     # still answer, but every read fails closed.
     visitor = visitor or VisitorService(VisitorReader(None))
     release_store = ReleaseStore(update_releases_dir)
+    # Unset means the download routes answer 503 rather than serving something
+    # unintended; the same fail-closed posture the update store takes. Injectable so the
+    # routes can be exercised on a platform without the POSIX directory primitives the
+    # real store is built on.
+    installer = installer or InstallerStore(installer_dir)
     failure_store = None
     db_path = update_failure_db_path or getattr(app, "db_path", None)
     if db_path is not None:
@@ -117,6 +130,15 @@ def create_handler(app: V2Application, *,
             package_match = PACKAGE_PATH_RE.fullmatch(path)
             if package_match:
                 self._serve_update_package(package_match.group(1))
+                return
+            if path in (DOWNLOAD_ROOT, DOWNLOAD_ROOT + "/"):
+                self._serve_download_index()
+                return
+            if path == INSTALLER_FILE_PATH:
+                self._serve_installer()
+                return
+            if path == INSTALLER_DIGEST_PATH:
+                self._serve_installer_digest()
                 return
             if path == f"{API_ROOT}/session":
                 token = _bearer_token(self.headers)
@@ -309,6 +331,143 @@ def create_handler(app: V2Application, *,
             finally:
                 opened.close()
 
+        def _serve_installer(self) -> None:
+            """Streams the newest first-install package.
+
+            Unauthenticated on purpose: it is meant to be pasted to a colleague who has
+            nothing installed yet, and the LAN is the boundary. The package is unsigned,
+            so the digest route beside it is what lets a download be checked.
+            """
+            if not installer.configured:
+                self._send_error(ApiError(503, "INSTALLER_UNAVAILABLE", "安装包下载暂不可用。"))
+                return
+            try:
+                name = installer.latest_name()
+                digest = installer.sha256(name)
+                opened = installer.open(name)
+            except ReleaseNotFound:
+                self._send_error(ApiError(404, "INSTALLER_NOT_FOUND", "尚未发布安装包。"))
+                return
+            except (ReleaseUnavailable, OSError):
+                self._send_error(ApiError(503, "INSTALLER_UNAVAILABLE", "安装包下载暂不可用。"))
+                return
+
+            try:
+                etag = f'"{digest}"'
+                if self._etag_matches(self.headers.get("If-None-Match"), etag):
+                    self.send_response(304)
+                    self._send_release_headers("application/octet-stream", None, etag)
+                    self.send_header("Accept-Ranges", "bytes")
+                    self.end_headers()
+                    return
+
+                start, end, partial = 0, opened.size - 1, False
+                range_header = self.headers.get("Range")
+                if range_header and (self.headers.get("If-Range") is not None and
+                                     (self.headers.get("If-Range") != etag or etag.startswith("W/"))):
+                    range_header = None
+                if range_header:
+                    parsed_range = self._parse_byte_range(range_header, opened.size)
+                    if parsed_range is False:
+                        self.send_response(416)
+                        self.send_header("Content-Range", f"bytes */{opened.size}")
+                        self._send_release_headers("application/octet-stream", 0, etag)
+                        self.send_header("Accept-Ranges", "bytes")
+                        self.end_headers()
+                        return
+                    if parsed_range is not None:
+                        start, end = parsed_range
+                        partial = True
+
+                length = max(0, end - start + 1)
+                self.send_response(206 if partial else 200)
+                self._send_release_headers("application/octet-stream", length, etag)
+                self.send_header("Accept-Ranges", "bytes")
+                # A browser needs the filename, and it is the versioned one rather than
+                # the URL's stable alias so a saved copy says which version it is.
+                self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+                if partial:
+                    self.send_header("Content-Range", f"bytes {start}-{end}/{opened.size}")
+                self.end_headers()
+                os.lseek(opened.file_descriptor, start, os.SEEK_SET)
+                remaining = length
+                while remaining:
+                    chunk = os.read(opened.file_descriptor, min(RELEASE_CHUNK_BYTES, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+            finally:
+                opened.close()
+
+        def _serve_installer_digest(self) -> None:
+            if not installer.configured:
+                self._send_error(ApiError(503, "INSTALLER_UNAVAILABLE", "安装包下载暂不可用。"))
+                return
+            try:
+                name = installer.latest_name()
+                digest = installer.sha256(name)
+            except ReleaseNotFound:
+                self._send_error(ApiError(404, "INSTALLER_NOT_FOUND", "尚未发布安装包。"))
+                return
+            except (ReleaseUnavailable, OSError):
+                self._send_error(ApiError(503, "INSTALLER_UNAVAILABLE", "安装包下载暂不可用。"))
+                return
+
+            # The format `sha256sum -c` expects, so the file can be saved next to the
+            # download and verified without the reader reformatting anything.
+            body = f"{digest}  {name}\n".encode("utf-8")
+            self.send_response(200)
+            self._send_release_headers("text/plain; charset=utf-8", len(body), f'"{digest}"')
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _serve_download_index(self) -> None:
+            """A short plain-text index so the bare URL is not a dead end.
+
+            Nothing from the request is echoed back — no Host header, no path — so this
+            page cannot be used to reflect anything into a browser.
+            """
+            if not installer.configured:
+                self._send_error(ApiError(503, "INSTALLER_UNAVAILABLE", "安装包下载暂不可用。"))
+                return
+
+            try:
+                name = installer.latest_name()
+                digest = installer.sha256(name)
+                opened = installer.open(name)
+                try:
+                    size = opened.size
+                finally:
+                    # Opened only to read the size; leaving it open leaks a descriptor
+                    # per request, and on Windows holds a lock on the published file.
+                    opened.close()
+            except ReleaseNotFound:
+                body = "沐影盘安装包下载\n\n尚未发布安装包。\n"
+            except (ReleaseUnavailable, OSError):
+                body = "沐影盘安装包下载\n\n安装包下载暂不可用。\n"
+            else:
+                mebibytes = size / (1024 * 1024)
+                body = (
+                    "沐影盘安装包下载\n"
+                    "\n"
+                    f"版本文件  {name}\n"
+                    f"大小      {mebibytes:.1f} MB\n"
+                    f"SHA-256   {digest}\n"
+                    "\n"
+                    f"下载      {INSTALLER_FILE_PATH}\n"
+                    f"校验值    {INSTALLER_DIGEST_PATH}\n"
+                    "\n"
+                    "安装不需要管理员权限。首次运行若出现「Windows 已保护你的电脑」，\n"
+                    "点「更多信息」再点「仍要运行」即可。\n"
+                )
+
+            encoded = body.encode("utf-8")
+            self.send_response(200)
+            self._send_release_headers("text/plain; charset=utf-8", len(encoded), f'"{hashlib.sha256(encoded).hexdigest()}"')
+            self.end_headers()
+            self.wfile.write(encoded)
+
         @staticmethod
         def _release_etag(body: bytes) -> str:
             return f'"{hashlib.sha256(body).hexdigest()}"'
@@ -438,6 +597,7 @@ def make_server(settings: Settings, app: V2Application) -> ThreadingHTTPServer:
                                visitor_authenticate=visitor.has_session)
     server = V2HTTPServer((settings.bind_host, settings.port),
                           create_handler(app, update_releases_dir=settings.update_releases_dir,
+                                         installer_dir=settings.installer_dir,
                                          update_failure_db_path=settings.database_path,
                                          feedback=feedback, visitor=visitor))
     server.daemon_threads = True
