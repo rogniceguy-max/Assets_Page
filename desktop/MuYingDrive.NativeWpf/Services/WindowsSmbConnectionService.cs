@@ -57,8 +57,10 @@ public enum SmbConnectionFailure
 public sealed class WindowsSmbConnectionService
 {
     private const int ResourceTypeDisk = 1;
+    private const int ResourceScopeConnected = 1;
     private const uint ErrorNotFound = 1168;
     private const uint ErrorNotConnected = 2250;
+    private const uint ErrorNoMoreItems = 259;
 
     private readonly WindowsSmbConnectionOptions _options;
     private readonly WindowsCredentialVault _credentialVault;
@@ -92,25 +94,102 @@ public sealed class WindowsSmbConnectionService
     }
 
     /// <summary>
-    /// Drops this process's connection to the configured UNC share. A new account
-    /// must call this before connecting: Windows refuses a second connection to the
-    /// same server under a different user name (WNet error 1219) while the previous
-    /// account's connection is still present in the logon session. A missing
-    /// connection is treated as success so callers can always run this before a
-    /// fresh connect.
+    /// Drops every connection this Windows logon session has to the server that hosts
+    /// the configured share. A new account must call this before connecting.
     /// </summary>
+    /// <remarks>
+    /// Windows refuses a second connection to a <em>server</em> under a different user
+    /// name (WNet error 1219), and that rule is per server, not per share. Cancelling
+    /// only the configured share is not enough: if Explorer or any other application
+    /// holds a different share on the same NAS — routine for employees — signing in as
+    /// another account still fails. Every connection to that server is enumerated and
+    /// dropped, plus the configured share in case enumeration missed it.
+    /// A connection that is already gone counts as success.
+    /// </remarks>
     public SmbConnectionResult Disconnect()
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("Windows SMB connections are available only on Windows.");
 
-        // Force the drop: without fForce, Windows returns ERROR_OPEN_FILES while any
-        // other process still holds a handle and the credential conflict would persist.
-        var error = WNetCancelConnection2W(_options.ShareRoot, 0, true);
-        if (error == 0 || error == ErrorNotFound || error == ErrorNotConnected)
-            return new SmbConnectionResult(0);
+        var serverPrefix = ServerPrefix(_options.ShareRoot);
+        var firstFailure = 0u;
 
-        return new SmbConnectionResult(error);
+        foreach (var remoteName in EnumerateConnectedShares())
+        {
+            if (!remoteName.StartsWith(serverPrefix, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            // Force the drop: without fForce, Windows returns ERROR_OPEN_FILES while
+            // another process still holds a handle and the conflict would persist.
+            var error = WNetCancelConnection2W(remoteName, 0, true);
+            if (IsCancellationFailure(error) && firstFailure == 0)
+                firstFailure = error;
+        }
+
+        var direct = WNetCancelConnection2W(_options.ShareRoot, 0, true);
+        if (IsCancellationFailure(direct) && firstFailure == 0)
+            firstFailure = direct;
+
+        return new SmbConnectionResult(firstFailure);
+    }
+
+    /// <summary>Returns "\\server\" for a UNC share root, used to match every share on it.</summary>
+    private static string ServerPrefix(string shareRoot)
+    {
+        var components = shareRoot.Split('\\', StringSplitOptions.RemoveEmptyEntries);
+        return components.Length == 0 ? shareRoot : @"\\" + components[0] + "\\";
+    }
+
+    private static bool IsCancellationFailure(uint error) =>
+        error is not 0 and not ErrorNotFound and not ErrorNotConnected;
+
+    /// <summary>
+    /// Lists the remote names this logon session currently has connected. Enumeration
+    /// failures yield an empty list rather than an exception: the caller always falls
+    /// back to cancelling the configured share directly.
+    /// </summary>
+    private static IReadOnlyList<string> EnumerateConnectedShares()
+    {
+        var names = new List<string>();
+        if (WNetOpenEnumW(ResourceScopeConnected, ResourceTypeDisk, 0, IntPtr.Zero, out var handle) != 0)
+            return names;
+
+        try
+        {
+            const int BufferBytes = 16 * 1024;
+            var buffer = Marshal.AllocHGlobal(BufferBytes);
+            try
+            {
+                var entrySize = Marshal.SizeOf<NetResource>();
+                while (names.Count < 256)
+                {
+                    var count = uint.MaxValue;
+                    var bufferSize = (uint)BufferBytes;
+                    var result = WNetEnumResourceW(handle, ref count, buffer, ref bufferSize);
+                    if (result == ErrorNoMoreItems)
+                        break;
+                    if (result != 0)
+                        return names;
+
+                    for (var index = 0u; index < count; index++)
+                    {
+                        var entry = Marshal.PtrToStructure<NetResource>(buffer + (int)(index * (uint)entrySize));
+                        if (!string.IsNullOrWhiteSpace(entry.RemoteName))
+                            names.Add(entry.RemoteName!);
+                    }
+                }
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+        finally
+        {
+            WNetCloseEnum(handle);
+        }
+
+        return names;
     }
 
     /// <summary>
@@ -181,5 +260,23 @@ public sealed class WindowsSmbConnectionService
         string name,
         uint flags,
         [MarshalAs(UnmanagedType.Bool)] bool force);
+
+    [DllImport("Mpr.dll", EntryPoint = "WNetOpenEnumW", CharSet = CharSet.Unicode, SetLastError = false, ExactSpelling = true)]
+    private static extern uint WNetOpenEnumW(
+        int scope,
+        int type,
+        int usage,
+        IntPtr netResource,
+        out IntPtr handle);
+
+    [DllImport("Mpr.dll", EntryPoint = "WNetEnumResourceW", CharSet = CharSet.Unicode, SetLastError = false, ExactSpelling = true)]
+    private static extern uint WNetEnumResourceW(
+        IntPtr handle,
+        ref uint count,
+        IntPtr buffer,
+        ref uint bufferSize);
+
+    [DllImport("Mpr.dll", EntryPoint = "WNetCloseEnum", SetLastError = false, ExactSpelling = true)]
+    private static extern uint WNetCloseEnum(IntPtr handle);
 
 }
