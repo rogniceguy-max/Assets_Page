@@ -31,17 +31,26 @@ public static class UpdateTrustAnchor
         }
     }
 
+    /// <summary>
+    /// Returns the pinned Authenticode publisher SHA-256 fingerprint, or an empty
+    /// string when no publisher pin is configured. An empty pin disables Authenticode
+    /// verification (see <see cref="PackageIntegrity.VerifyAuthenticodePublisher"/>);
+    /// the ECDSA manifest signature and the whole-package SHA-256 remain the trust
+    /// anchor. A non-empty but malformed value still fails closed.
+    /// </summary>
     public static string LoadCodeSigningThumbprint()
     {
         var configuredLine = ReadResource(PublisherThumbprintResource)
             .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
             .Select(line => line.Split('#', 2)[0].Trim())
             .FirstOrDefault(line => line.Length > 0) ?? string.Empty;
+        if (configuredLine.Length == 0)
+            return string.Empty;
         if (configuredLine.Any(character => !Uri.IsHexDigit(character) && character is not ':' and not '-' && !char.IsWhiteSpace(character)))
             throw new CryptographicException("Authenticode 发布者指纹格式无效；已安全停用更新功能。");
         var value = new string(configuredLine.Where(Uri.IsHexDigit).ToArray()).ToUpperInvariant();
         if (!Regex.IsMatch(value, "^[0-9A-F]{64}$", RegexOptions.CultureInvariant))
-            throw new CryptographicException("Authenticode 发布者指纹尚未配置；已安全停用更新功能。");
+            throw new CryptographicException("Authenticode 发布者指纹格式无效；已安全停用更新功能。");
         return value;
     }
 

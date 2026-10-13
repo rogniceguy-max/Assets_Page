@@ -1,9 +1,11 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][ValidatePattern('^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')][string]$Version,
-    [Parameter(Mandatory = $true)][string]$CodeSigningCertificateSha1,
+    # Optional: leave empty to skip Authenticode signing entirely. The ECDSA manifest
+    # signature and the package SHA-256 remain the trust anchor for the update.
+    [string]$CodeSigningCertificateSha1 = "",
     [Parameter(Mandatory = $true)][string]$ManifestSigningPrivateKeyPem,
-    [Parameter(Mandatory = $true)][string]$TimestampServer,
+    [string]$TimestampServer = "",
     [Parameter(Mandatory = $true)][string]$ReleaseDirectory,
     [string]$SignToolPath = "signtool.exe"
 )
@@ -30,17 +32,33 @@ if (-not (Test-Path -LiteralPath $publisherKeyPath -PathType Leaf) -or -not (Tes
 $trustedThumbprintText = (Get-Content -LiteralPath $publisherThumbprintPath | Where-Object { $_ -notmatch '^\s*#' } | Select-Object -First 1)
 $trustedThumbprint = if ($null -ne $trustedThumbprintText -and $trustedThumbprintText.Trim() -match '^[0-9A-Fa-f]{64}$') { $trustedThumbprintText.Trim().ToUpperInvariant() } else { "" }
 $signingCertSha1 = ($CodeSigningCertificateSha1 -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
-if ($trustedThumbprint.Length -ne 64 -or $signingCertSha1.Length -ne 40) {
-    throw "Configure the 64-character SHA-256 publisher trust anchor and provide the signing certificate SHA-1 store thumbprint."
-}
+$signAuthenticode = $signingCertSha1.Length -gt 0
 
-$signingCertificate = Get-ChildItem -Path Cert:\CurrentUser\My | Where-Object { $_.Thumbprint -eq $signingCertSha1 } | Select-Object -First 1
-if ($null -eq $signingCertificate) {
-    throw "The Authenticode certificate was not found in the current user's certificate store."
+# A pin that is present but unparsable would make the shipped client fail closed on
+# an anchor it cannot read, so reject it here instead of at every employee machine.
+if ($trustedThumbprint.Length -ne 0 -and $trustedThumbprint.Length -ne 64) {
+    throw "The embedded Authenticode publisher thumbprint is present but is not a 64-character SHA-256 value."
 }
-$certificateSha256 = $signingCertificate.GetCertHashString([System.Security.Cryptography.HashAlgorithmName]::SHA256).ToUpperInvariant()
-if ($certificateSha256 -ne $trustedThumbprint) {
-    throw "The Authenticode certificate does not match the embedded publisher thumbprint."
+if ($signAuthenticode) {
+    if ($signingCertSha1.Length -ne 40) {
+        throw "The supplied code-signing certificate SHA-1 thumbprint is not 40 hex characters."
+    }
+    if ($trustedThumbprint.Length -ne 64) {
+        throw "A signing certificate was supplied but no 64-character publisher pin is embedded; write the thumbprint into Trust/trusted-code-signing-thumbprint.txt first."
+    }
+    $signingCertificate = Get-ChildItem -Path Cert:\CurrentUser\My | Where-Object { $_.Thumbprint -eq $signingCertSha1 } | Select-Object -First 1
+    if ($null -eq $signingCertificate) {
+        throw "The Authenticode certificate was not found in the current user's certificate store."
+    }
+    $certificateSha256 = $signingCertificate.GetCertHashString([System.Security.Cryptography.HashAlgorithmName]::SHA256).ToUpperInvariant()
+    if ($certificateSha256 -ne $trustedThumbprint) {
+        throw "The Authenticode certificate does not match the embedded publisher thumbprint."
+    }
+}
+elseif ($trustedThumbprint.Length -eq 64) {
+    # The client verifies Authenticode whenever a pin is embedded, so an unsigned
+    # package would be rejected on every machine. Sign it or drop the pin.
+    throw "A publisher pin is embedded but no -CodeSigningCertificateSha1 was supplied; the client would reject this unsigned package."
 }
 
 $privateKey = [System.Security.Cryptography.ECDsa]::Create()
@@ -85,8 +103,20 @@ try {
         (Join-Path $updaterOutput "MuYingDrive.Updater.exe")
     )) {
         if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) { throw "A required WPF executable is missing from the publish output." }
-        & $SignToolPath sign /sha1 $signingCertificate.Thumbprint /fd SHA256 /tr $TimestampServer /td SHA256 $executable
-        if ($LASTEXITCODE -ne 0) { throw "Authenticode signing failed for a WPF executable." }
+        if ($signAuthenticode) {
+            & $SignToolPath sign /sha1 $signingCertificate.Thumbprint /fd SHA256 /tr $TimestampServer /td SHA256 $executable
+            if ($LASTEXITCODE -ne 0) { throw "Authenticode signing failed for a WPF executable." }
+        }
+
+        # The client reports AssemblyVersion, the updater parses ProductVersion and the
+        # health marker is compared as a string; all three require this exact version.
+        $publishedVersion = (Get-Item -LiteralPath $executable).VersionInfo.ProductVersion
+        if ($null -eq $publishedVersion -or $publishedVersion.Split('+')[0] -ne $Version) {
+            throw "Publish output version '$publishedVersion' does not match the requested version '$Version'."
+        }
+    }
+    if (-not $signAuthenticode) {
+        Write-Output "Authenticode signing skipped: no publisher pin is configured. The ECDSA manifest signature and the package SHA-256 remain the trust anchor."
     }
 
     $packageId = [guid]::NewGuid().ToString("N")

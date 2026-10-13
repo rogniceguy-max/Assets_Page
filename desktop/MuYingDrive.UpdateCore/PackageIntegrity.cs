@@ -177,8 +177,16 @@ public static class PackageIntegrity
         }
     }
 
+    /// <summary>
+    /// Verifies that the executable carries an Authenticode signature from the pinned
+    /// publisher. An empty <paramref name="expectedSha256Thumbprint"/> means no publisher
+    /// pin is configured, so Authenticode verification is skipped; the ECDSA manifest
+    /// signature and the whole-package SHA-256 remain the update trust anchor.
+    /// </summary>
     public static void VerifyAuthenticodePublisher(string filePath, string expectedSha256Thumbprint)
     {
+        if (string.IsNullOrEmpty(expectedSha256Thumbprint))
+            return;
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("更新包只能在 Windows 上验证 Authenticode 签名。");
         if (!File.Exists(filePath))
