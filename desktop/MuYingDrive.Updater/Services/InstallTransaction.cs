@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using MuYingDrive.UpdateCore;
@@ -37,6 +38,7 @@ public sealed class InstallTransaction
             throw new UnauthorizedAccessException("更新或安装路径不能包含重解析目录。");
 
         PreserveNasClientSettings(installRoot);
+        var fromVersion = ResolveFromVersion(request, installRoot);
 
         Directory.CreateDirectory(Path.GetDirectoryName(journal)!);
         Directory.CreateDirectory(Path.GetDirectoryName(healthMarker)!);
@@ -53,36 +55,65 @@ public sealed class InstallTransaction
             installedNew = true;
             WriteJournal(journal, new TransactionJournal(id, manifest.Version, "new-installed"));
 
-            progress.Report(new UpdateProgress("正在完成更新", "正在启动新版本并确认可以正常打开。", "等待启动健康确认", Cancellable: false));
+            progress.Report(new UpdateProgress("正在完成更新", "正在启动新版本并确认可以正常打开。旧版本会保留到确认完成。", "检查新版本启动", Cancellable: false));
             var start = new ProcessStartInfo(appExecutable) { UseShellExecute = false, WorkingDirectory = installRoot };
             start.ArgumentList.Add("--update-health-check");
             start.ArgumentList.Add(id);
-            using var process = Process.Start(start) ?? throw new IOException("无法启动已安装的新版本。");
-
-            var healthy = await WaitForHealthAsync(process, healthMarker, id, manifest.Version, cancellationToken).ConfigureAwait(false);
-            if (healthy)
+            Process process;
+            try
             {
-                WriteJournal(journal, new TransactionJournal(id, manifest.Version, "healthy"));
-                return new UpdateRunResult(true, "更新完成", $"已安装 {manifest.Version}，旧版本已保留以便恢复。", appExecutable);
+                process = Process.Start(start) ?? throw new InvalidOperationException("The update health-check process did not start.");
+            }
+            catch (Exception exception) when (exception is Win32Exception or IOException or InvalidOperationException or System.Security.SecurityException)
+            {
+                var report = CreateFailureReport(id, fromVersion, manifest.Version, "health_check", "HEALTH_CHECK_PROCESS_START_FAILED");
+                RollBackAfterHealthFailure(installRoot, backup, failed, movedOld, installedNew, journal, id, manifest.Version,
+                    fromVersion);
+                return new UpdateRunResult(false, "更新未完成", "新版本未能启动，旧版本已自动恢复，可以继续使用。",
+                    Path.Combine(installRoot, "MuYingDrive.NativeWpf.exe"), report);
             }
 
-            if (!process.HasExited)
+            using (process)
             {
-                progress.Report(new UpdateProgress("正在等待应用确认", "新版本尚未返回健康确认。更新器会等待应用安全退出后再恢复旧版本。", "等待应用关闭", Cancellable: false));
-                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                timeout.CancelAfter(TimeSpan.FromMinutes(5));
-                try { await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false); }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                string? healthFailureCode;
+                try
                 {
-                    WriteJournal(journal, new TransactionJournal(id, manifest.Version, "recovery-needed"));
-                    return new UpdateRunResult(false, "更新需要处理", "无法确认新版本是否正常。新旧版本文件均已保留；请关闭沐影盘后联系管理员恢复。");
+                    healthFailureCode = await WaitForHealthAsync(process, healthMarker, id, manifest.Version, cancellationToken).ConfigureAwait(false);
                 }
-            }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+                {
+                    healthFailureCode = "HEALTH_CHECK_MARKER_READ_FAILED";
+                }
 
-            RollBack(installRoot, backup, failed, movedOld, installedNew, journal, id, manifest.Version);
-            return new UpdateRunResult(false, "更新未完成", "新版本未能通过启动确认，旧版本已恢复，可以继续使用。",
-                Path.Combine(installRoot, "MuYingDrive.NativeWpf.exe"));
+                if (healthFailureCode is null)
+                {
+                    WriteJournal(journal, new TransactionJournal(id, manifest.Version, "healthy"));
+                    var failureContext = UpdateFailureReporter.IsValidVersion(fromVersion)
+                        ? new UpdateFailureContext(id, fromVersion!, manifest.Version)
+                        : null;
+                    return new UpdateRunResult(true, "更新完成", $"已安装 {manifest.Version}，旧版本已保留以便恢复。", appExecutable,
+                        FailureContext: failureContext);
+                }
+
+                if (!process.HasExited && !await StopHealthCheckProcessAsync(process).ConfigureAwait(false))
+                {
+                    var report = CreateFailureReport(id, fromVersion, manifest.Version, "health_check", "HEALTH_CHECK_PROCESS_STOP_FAILED");
+                    try { WriteJournal(journal, new TransactionJournal(id, manifest.Version, "recovery-needed")); }
+                    catch (Exception) { }
+                    throw new UpdateRecoveryRequiredException("新版本启动检查没有结束。新旧版本文件均已保留，沐影盘暂未切换到新版本。")
+                    {
+                        FailureReport = report
+                    };
+                }
+
+                var failureReport = CreateFailureReport(id, fromVersion, manifest.Version, "health_check", healthFailureCode);
+                RollBackAfterHealthFailure(installRoot, backup, failed, movedOld, installedNew, journal, id, manifest.Version,
+                    fromVersion);
+                return new UpdateRunResult(false, "更新未完成", "新版本未能通过启动确认，旧版本已自动恢复，可以继续使用。",
+                    Path.Combine(installRoot, "MuYingDrive.NativeWpf.exe"), failureReport);
+            }
         }
+        catch (UpdateRecoveryRequiredException) { throw; }
         catch
         {
             try { RollBack(installRoot, backup, failed, movedOld, installedNew, journal, id, manifest.Version); }
@@ -90,16 +121,21 @@ public sealed class InstallTransaction
             {
                 try { WriteJournal(journal, new TransactionJournal(id, manifest.Version, "recovery-needed")); }
                 catch (Exception) { }
-                throw new UpdateRecoveryRequiredException("自动恢复未完成，无法确认旧版本是否可用。请联系管理员处理。", rollbackException);
+                var report = CreateFailureReport(id, ResolveFromVersion(request, installRoot), manifest.Version,
+                    "rollback", "ROLLBACK_FAILED");
+                throw new UpdateRecoveryRequiredException("自动恢复未完成，无法确认旧版本是否可用。新旧版本文件均已保留，请联系管理员处理。", rollbackException)
+                {
+                    FailureReport = report
+                };
             }
             throw;
         }
     }
 
-    private static async Task<bool> WaitForHealthAsync(Process process, string markerPath, string id, string version,
+    private static async Task<string?> WaitForHealthAsync(Process process, string markerPath, string id, string version,
         CancellationToken cancellationToken)
     {
-        var deadline = DateTimeOffset.UtcNow.AddMinutes(2);
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(60);
         while (DateTimeOffset.UtcNow < deadline)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -107,17 +143,76 @@ public sealed class InstallTransaction
             {
                 var contents = await File.ReadAllLinesAsync(markerPath, cancellationToken).ConfigureAwait(false);
                 if (contents.Length < 2 || contents[0] != id || contents[1] != version)
-                    return false;
+                    return "HEALTH_CHECK_MARKER_MISMATCH";
                 using var exitTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                exitTimeout.CancelAfter(TimeSpan.FromSeconds(15));
+                exitTimeout.CancelAfter(TimeSpan.FromSeconds(10));
                 try { await process.WaitForExitAsync(exitTimeout.Token).ConfigureAwait(false); }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return false; }
-                return process.ExitCode == 0;
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return "HEALTH_CHECK_EXIT_TIMEOUT"; }
+                return process.ExitCode == 0 ? null : "HEALTH_CHECK_PROCESS_EXITED";
             }
-            if (process.HasExited) return false;
+            if (process.HasExited)
+                return process.ExitCode == 0 ? "HEALTH_CHECK_MARKER_MISSING" : "HEALTH_CHECK_PROCESS_EXITED";
             await Task.Delay(250, cancellationToken).ConfigureAwait(false);
         }
-        return false;
+        return "HEALTH_CHECK_TIMEOUT";
+    }
+
+    private static async Task<bool> StopHealthCheckProcessAsync(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+            return process.HasExited;
+        }
+        catch (Exception exception) when (exception is Win32Exception or IOException or UnauthorizedAccessException or InvalidOperationException or NotSupportedException or OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
+    private static void RollBackAfterHealthFailure(string installRoot, string backup, string failed, bool movedOld,
+        bool installedNew, string journal, string id, string version, string? fromVersion)
+    {
+        try
+        {
+            RollBack(installRoot, backup, failed, movedOld, installedNew, journal, id, version);
+        }
+        catch (Exception rollbackException) when (rollbackException is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            try { WriteJournal(journal, new TransactionJournal(id, version, "recovery-needed")); }
+            catch (Exception) { }
+            var rollbackReport = CreateFailureReport(id, fromVersion, version, "rollback", "ROLLBACK_FAILED");
+            throw new UpdateRecoveryRequiredException("自动恢复未完成，无法确认旧版本是否可用。新旧版本文件均已保留，请联系管理员处理。", rollbackException)
+            {
+                FailureReport = rollbackReport
+            };
+        }
+    }
+
+    private static UpdateFailureReport? CreateFailureReport(string updateId, string? fromVersion, string targetVersion,
+        string stage, string errorCode) => UpdateFailureReporter.IsValidVersion(fromVersion)
+        ? UpdateFailureReport.Create(updateId, fromVersion!, targetVersion, stage, errorCode)
+        : null;
+
+    private static string? ResolveFromVersion(UpdateHandoffRequest request, string installRoot)
+    {
+        if (UpdateFailureReporter.IsValidVersion(request.CurrentVersion)) return request.CurrentVersion!;
+        try
+        {
+            var filePath = Path.Combine(installRoot, "MuYingDrive.NativeWpf.exe");
+            var value = FileVersionInfo.GetVersionInfo(filePath).ProductVersion ?? FileVersionInfo.GetVersionInfo(filePath).FileVersion;
+            if (value is not null)
+            {
+                var parts = value.Split('.', StringSplitOptions.RemoveEmptyEntries).Take(3).ToArray();
+                var normalized = parts.Length == 3 ? string.Join('.', parts) : string.Empty;
+                if (UpdateFailureReporter.IsValidVersion(normalized)) return normalized;
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException) { }
+        return null;
     }
 
     private static void RollBack(string installRoot, string backup, string failed, bool movedOld, bool installedNew,

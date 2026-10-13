@@ -7,7 +7,8 @@ namespace MuYingDrive.Updater.Services;
 
 public sealed record UpdateProgress(string Title, string Explanation, string Status, long? Completed = null,
     long? Total = null, bool Cancellable = true);
-public sealed record UpdateRunResult(bool Succeeded, string Title, string Explanation, string? LaunchPath = null);
+public sealed record UpdateRunResult(bool Succeeded, string Title, string Explanation, string? LaunchPath = null,
+    UpdateFailureReport? FailureReport = null, UpdateFailureContext? FailureContext = null);
 
 public sealed class UpdateRunner
 {
@@ -27,12 +28,14 @@ public sealed class UpdateRunner
             try
             {
                 if (InstallTransaction.RecoverInterruptedTransactions())
-                    throw new UpdateRecoveryRequiredException("上一次更新仍需要处理，当前版本是否可用尚未确认。请联系管理员恢复后再重试。");
+                    throw CreateRecoveryRequired(request,
+                        "上一次更新仍需要处理，当前版本是否可用尚未确认。请联系管理员恢复后再重试。");
             }
             catch (UpdateRecoveryRequiredException) { throw; }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                throw new UpdateRecoveryRequiredException("无法安全恢复上一次更新。当前版本是否可用尚未确认，请联系管理员处理。", exception);
+                throw CreateRecoveryRequired(request,
+                    "无法安全恢复上一次更新。当前版本是否可用尚未确认，请联系管理员处理。", exception);
             }
 
             progress.Report(new UpdateProgress("正在验证更新文件", "正在检查发布签名、文件完整性和可信发布者。", "验证签名清单与安装包"));
@@ -82,7 +85,7 @@ public sealed class UpdateRunner
         }
         catch (UpdateRecoveryRequiredException exception)
         {
-            return new UpdateRunResult(false, "更新需要处理", exception.Message);
+            return new UpdateRunResult(false, "更新需要处理", exception.Message, FailureReport: exception.FailureReport);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
             System.Security.Cryptography.CryptographicException or InvalidOperationException or ArgumentException)
@@ -174,6 +177,31 @@ public sealed class UpdateRunner
     {
         var path = Path.Combine(UpdatePathPolicy.InstallRoot, "MuYingDrive.NativeWpf.exe");
         return File.Exists(path) ? path : null;
+    }
+
+    private static UpdateRecoveryRequiredException CreateRecoveryRequired(UpdateHandoffRequest request, string message,
+        Exception? innerException = null)
+    {
+        try
+        {
+            var manifestBytes = File.ReadAllBytes(request.ManifestPath);
+            var targetVersion = UpdateManifestVerifier.Verify(manifestBytes).Value.Version;
+            var fromVersion = UpdateFailureReporter.IsValidVersion(request.CurrentVersion) ? request.CurrentVersion : null;
+            if (fromVersion is null)
+            {
+                try { fromVersion = GetInstalledVersion(request.InstallRoot); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException) { }
+            }
+            return new UpdateRecoveryRequiredException(message, innerException)
+            {
+                FailureReport = fromVersion is null ? null : UpdateFailureReport.Create(request.UpdateId, fromVersion,
+                    targetVersion, "recovery", "INTERRUPTED_RECOVERY_REQUIRED")
+            };
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or CryptographicException)
+        {
+            return new UpdateRecoveryRequiredException(message, innerException);
+        }
     }
 
     private static void DeleteStagingDirectoryIfSafe(string path, string updateId)

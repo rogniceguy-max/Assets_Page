@@ -4,13 +4,17 @@ using System.Text.Json.Serialization;
 namespace MuYingDrive.UpdateCore;
 
 public sealed class UpdateRecoveryRequiredException(string message, Exception? innerException = null)
-    : Exception(message, innerException);
+    : Exception(message, innerException)
+{
+    public UpdateFailureReport? FailureReport { get; init; }
+}
 
 public sealed record UpdateHandoffRequest
 {
     public required string UpdateId { get; init; }
     public int ClientProcessId { get; init; }
     public long ClientProcessStartUtcTicks { get; init; }
+    public string? CurrentVersion { get; init; }
     public required string ManifestPath { get; init; }
     public required string PackagePath { get; init; }
     public required string InstallRoot { get; init; }

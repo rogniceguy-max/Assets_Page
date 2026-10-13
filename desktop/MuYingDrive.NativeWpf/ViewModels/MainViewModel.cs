@@ -26,7 +26,6 @@ public sealed class MainViewModel : ObservableObject
     {
         ThemeService = new ThemeService();
         InstallUpdateNowCommand = new AsyncRelayCommand(async _ => await InstallUpdateNowAsync(), _ => IsUpdateReady);
-        InstallAfterExitCommand = new RelayCommand(_ => QueueUpdateForExit(), _ => IsUpdateReady);
         var login = new LoginViewModel(this);
         _currentPage = login;
         try
@@ -42,6 +41,7 @@ public sealed class MainViewModel : ObservableObject
             _sessionService = new V2SessionService(api, vault, smb);
             if (!App.IsUpdateHealthCheck)
             {
+                _ = UpdateFailureReporter.SendPendingAsync(settings.ApiBaseUri, settings.CertificateSha256);
                 _updateCoordinator = new UpdateCoordinator(apiOptions, UpdateCoordinator.GetCurrentVersion());
                 _updateCoordinator.Changed += HandleUpdateChanged;
                 _updateCoordinator.Start();
@@ -57,11 +57,8 @@ public sealed class MainViewModel : ObservableObject
     public ThemeService ThemeService { get; }
 
     public AsyncRelayCommand InstallUpdateNowCommand { get; }
-    public RelayCommand InstallAfterExitCommand { get; }
     public bool IsUpdateReady => _updateCoordinator?.ReadyUpdate is not null;
     public bool HasPreparedUpdateHandoff => _preparedHandoffPath is not null && _preparedUpdaterPath is not null;
-    public bool IsUpdateScheduled => _installUpdateOnExit;
-    public string UpdateScheduleText => _installUpdateOnExit ? "已安排退出后更新" : "退出后更新";
     public void EnsureClientConfigurationValid()
     {
         if (_sessionService is null || _configurationError is not null)
@@ -244,17 +241,6 @@ public sealed class MainViewModel : ObservableObject
         CloseRequested?.Invoke(this, EventArgs.Empty);
     }
 
-    private void QueueUpdateForExit()
-    {
-        if (!IsUpdateReady) return;
-        _installUpdateOnExit = true;
-        OnPropertyChanged(nameof(IsUpdateReady));
-        OnPropertyChanged(nameof(IsUpdateScheduled));
-        OnPropertyChanged(nameof(UpdateScheduleText));
-        InstallUpdateNowCommand.RaiseCanExecuteChanged();
-        InstallAfterExitCommand.RaiseCanExecuteChanged();
-    }
-
     private async Task PrepareHandoffAsync()
     {
         var prepared = _updateCoordinator?.ReadyUpdate ?? throw new InvalidOperationException("The update is no longer ready.");
@@ -287,6 +273,7 @@ public sealed class MainViewModel : ObservableObject
             UpdateId = updateId,
             ClientProcessId = Environment.ProcessId,
             ClientProcessStartUtcTicks = currentProcess.StartTime.ToUniversalTime().Ticks,
+            CurrentVersion = UpdateCoordinator.GetCurrentVersion(),
             ManifestPath = prepared.ManifestPath,
             PackagePath = prepared.PackagePath,
             InstallRoot = UpdatePathPolicy.InstallRoot
@@ -311,10 +298,7 @@ public sealed class MainViewModel : ObservableObject
         {
             OnPropertyChanged(nameof(IsUpdateReady));
             OnPropertyChanged(nameof(UpdateReadyVersion));
-            OnPropertyChanged(nameof(IsUpdateScheduled));
-            OnPropertyChanged(nameof(UpdateScheduleText));
             InstallUpdateNowCommand.RaiseCanExecuteChanged();
-            InstallAfterExitCommand.RaiseCanExecuteChanged();
             if (CurrentPage is WorkspaceViewModel workspace)
                 workspace.RefreshUpdateState();
         });

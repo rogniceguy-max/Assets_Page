@@ -2,6 +2,7 @@ using System.Windows.Input;
 using System.Windows;
 using MuYingDrive.Updater.Infrastructure;
 using MuYingDrive.Updater.Services;
+using MuYingDrive.UpdateCore;
 
 namespace MuYingDrive.Updater.ViewModels;
 
@@ -17,6 +18,7 @@ public sealed class UpdaterViewModel : ObservableObject
     private bool _hasFailed;
     private bool _canCancel = true;
     private string? _launchPath;
+    private UpdateFailureContext? _launchFailureContext;
     private CancellationTokenSource? _cancellationTokenSource;
     private readonly UpdateRunner _runner = new();
 
@@ -49,7 +51,7 @@ public sealed class UpdaterViewModel : ObservableObject
         {
             if (arguments.Length != 2 || arguments[0] != "--request")
             {
-                SetFailure("更新请求无效。请从沐影盘重新发起更新。");
+                SetFailure("更新请求无效。请从沐影盘重新发起更新。", "未开始安装");
                 return;
             }
 
@@ -63,17 +65,28 @@ public sealed class UpdaterViewModel : ObservableObject
             IsSucceeded = result.Succeeded;
             HasFailed = !result.Succeeded;
             _launchPath = result.LaunchPath;
+            _launchFailureContext = result.FailureContext;
+            if (result.FailureReport is not null)
+            {
+                UpdateFailureReporter.Queue(result.FailureReport);
+                _ = UpdateFailureReporter.SendPendingAsync();
+            }
             OnPropertyChanged(nameof(ActionText));
             OnPropertyChanged(nameof(HasLaunchPath));
             OnPropertyChanged(nameof(LaunchActionText));
+            if (result.Succeeded)
+                LaunchAfterSuccessfulUpdate();
         }
         catch (Exception)
         {
-            SetFailure("更新过程遇到问题。当前版本仍保留；可关闭更新程序后重试或联系管理员。");
+            SetFailure("更新程序无法确认当前安装状态。请保留本机更新文件，联系管理员检查后再启动沐影盘。", "状态需要确认");
         }
         finally
         {
             IsBusy = false;
+            CanCancel = false;
+            IsProgressIndeterminate = false;
+            Progress = 0;
             _cancellationTokenSource?.Dispose();
             _cancellationTokenSource = null;
             OnPropertyChanged(nameof(ActionText));
@@ -92,14 +105,16 @@ public sealed class UpdaterViewModel : ObservableObject
             Progress = Math.Clamp(progress.Completed!.Value * 100d / progress.Total!.Value, 0, 100);
     }
 
-    private void SetFailure(string message)
+    private void SetFailure(string message, string status)
     {
         IsBusy = false;
         HasFailed = true;
         IsSucceeded = false;
+        IsProgressIndeterminate = false;
+        Progress = 0;
         Title = "更新未完成";
         Explanation = message;
-        Status = "旧版本仍保留";
+        Status = status;
         OnPropertyChanged(nameof(ActionText));
         RaiseCommands();
     }
@@ -118,9 +133,54 @@ public sealed class UpdaterViewModel : ObservableObject
     private void LaunchAndClose(Action closeWindow)
     {
         if (_launchPath is null) return;
-        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_launchPath) { UseShellExecute = true }); }
-        catch { return; }
+        if (!TryStartClient())
+        {
+            ShowLaunchFailure();
+            return;
+        }
         closeWindow();
+    }
+
+    private void LaunchAfterSuccessfulUpdate()
+    {
+        if (_launchPath is null) return;
+        if (!TryStartClient())
+        {
+            ShowLaunchFailure();
+            return;
+        }
+        _launchPath = null;
+        OnPropertyChanged(nameof(HasLaunchPath));
+        RaiseCommands();
+    }
+
+    private bool TryStartClient()
+    {
+        if (_launchPath is null) return false;
+        try
+        {
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_launchPath) { UseShellExecute = true });
+            return process is not null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return false;
+        }
+    }
+
+    private void ShowLaunchFailure()
+    {
+        if (_launchFailureContext is not null)
+        {
+            UpdateFailureReporter.Queue(_launchFailureContext.CreateReport("launch", "CLIENT_LAUNCH_FAILED"));
+            _ = UpdateFailureReporter.SendPendingAsync();
+        }
+        Title = "沐影盘无法启动";
+        Explanation = "更新已完成，但沐影盘未能启动。原版本备份仍保留；可以重试启动，或联系管理员恢复。";
+        Status = "更新完成，启动失败";
+        HasFailed = true;
+        OnPropertyChanged(nameof(ActionText));
+        RaiseCommands();
     }
 
     private void RaiseCommands()

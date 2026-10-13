@@ -1,7 +1,6 @@
 using MuYingDrive.NativeWpf.Infrastructure;
 using MuYingDrive.NativeWpf.Models;
 using MuYingDrive.NativeWpf.Services;
-using System.Windows.Threading;
 
 namespace MuYingDrive.NativeWpf.ViewModels;
 
@@ -12,9 +11,6 @@ public sealed class WorkspaceViewModel : ObservableObject
     private string _selectedSpace = "本部门";
     private object _currentContent;
     private bool _isSidebarExpanded = true;
-    private readonly DispatcherTimer _updateNoticeTimer;
-    private bool _wasUpdateReady;
-    private bool _showUpdateNotice;
 
     public WorkspaceViewModel(MainViewModel main, DriveSession session, NasClientSettings settings)
     {
@@ -29,11 +25,6 @@ public sealed class WorkspaceViewModel : ObservableObject
         SelectSpaceCommand = new RelayCommand(parameter => SelectSpace(parameter as string ?? "本部门"));
         SignOutCommand = new AsyncRelayCommand(async _ => await _main.SignOutAsync(Session));
         ThemeChangedCommand = new RelayCommand(parameter => _main.ThemeService.SetPreference(parameter as string ?? "跟随系统"));
-        _updateNoticeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
-        _updateNoticeTimer.Tick += HideUpdateNotice;
-        _wasUpdateReady = _main.IsUpdateReady;
-        _showUpdateNotice = _wasUpdateReady;
-        if (_showUpdateNotice) _updateNoticeTimer.Start();
         _main.PropertyChanged += HandleMainPropertyChanged;
     }
 
@@ -95,10 +86,12 @@ public sealed class WorkspaceViewModel : ObservableObject
     public AsyncRelayCommand SignOutCommand { get; }
     public RelayCommand ThemeChangedCommand { get; }
     public AsyncRelayCommand InstallUpdateNowCommand => _main.InstallUpdateNowCommand;
-    public RelayCommand InstallAfterExitCommand => _main.InstallAfterExitCommand;
-    public bool IsUpdateReady => _main.IsUpdateReady && _showUpdateNotice;
+    public bool IsUpdateReady => _main.IsUpdateReady;
     public string UpdateReadyVersion => _main.UpdateReadyVersion;
-    public string UpdateScheduleText => _main.UpdateScheduleText;
+    public string UpdateButtonToolTip => IsUpdateReady
+        ? $"点击立即更新到版本 {UpdateReadyVersion}"
+        : "后台自动检查更新；有新版本时此处会显示红点";
+    public string UpdateButtonName => IsUpdateReady ? $"有新版本 {UpdateReadyVersion} 可用，立即更新" : "沐影盘更新，后台自动检查";
 
     public async Task InitializeAsync()
     {
@@ -108,38 +101,16 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     public ValueTask DisposeAsync()
     {
-        _updateNoticeTimer.Stop();
-        _updateNoticeTimer.Tick -= HideUpdateNotice;
         _main.PropertyChanged -= HandleMainPropertyChanged;
         return Transfers.DisposeAsync();
     }
 
     public void RefreshUpdateState()
     {
-        if (_main.IsUpdateReady && !_wasUpdateReady)
-        {
-            _wasUpdateReady = true;
-            _showUpdateNotice = true;
-            _updateNoticeTimer.Stop();
-            _updateNoticeTimer.Start();
-        }
-        else if (!_main.IsUpdateReady)
-        {
-            _wasUpdateReady = false;
-            _showUpdateNotice = false;
-            _updateNoticeTimer.Stop();
-        }
         OnPropertyChanged(nameof(IsUpdateReady));
         OnPropertyChanged(nameof(UpdateReadyVersion));
-        OnPropertyChanged(nameof(UpdateScheduleText));
-    }
-
-    private void HideUpdateNotice(object? sender, EventArgs args)
-    {
-        _updateNoticeTimer.Stop();
-        if (!_showUpdateNotice) return;
-        _showUpdateNotice = false;
-        OnPropertyChanged(nameof(IsUpdateReady));
+        OnPropertyChanged(nameof(UpdateButtonToolTip));
+        OnPropertyChanged(nameof(UpdateButtonName));
     }
 
     private void Navigate(string destination)
@@ -159,7 +130,7 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     private void HandleMainPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
     {
-        if (args.PropertyName is nameof(MainViewModel.IsUpdateReady) or nameof(MainViewModel.UpdateReadyVersion) or nameof(MainViewModel.UpdateScheduleText))
+        if (args.PropertyName is nameof(MainViewModel.IsUpdateReady) or nameof(MainViewModel.UpdateReadyVersion))
             RefreshUpdateState();
     }
 }

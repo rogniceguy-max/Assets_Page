@@ -131,7 +131,6 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="52" />
                 <RowDefinition Height="1" />
-                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
@@ -139,6 +138,7 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
@@ -151,7 +151,20 @@
                 <ComboBox Grid.Column="2" Width="112" Height="32" MinHeight="32" Margin="0,0,14,0"
                           ItemsSource="{Binding ThemeChoices}" SelectedItem="{Binding CurrentTheme, UpdateSourceTrigger=PropertyChanged}"
                           AutomationProperties.Name="主题" />
-                <Button x:Name="AccountButton" Grid.Column="3" Style="{StaticResource Button.Ghost}" Height="36" MinWidth="0"
+                <Button Grid.Column="3" Style="{StaticResource Button.Ghost}" Width="36" MinWidth="36" Height="36"
+                        Padding="0" Margin="0,0,8,0" Command="{Binding InstallUpdateNowCommand}"
+                        ToolTip="{Binding UpdateButtonToolTip}" AutomationProperties.Name="{Binding UpdateButtonName}">
+                    <Grid Width="36" Height="36">
+                        <controls:LucideIcon Icon="RefreshCw" Width="18" Height="18"
+                                              Stroke="{DynamicResource Brush.Text.Secondary}"
+                                              HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <Ellipse Width="8" Height="8" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                 Margin="0,4,4,0" Fill="#E5484D" Stroke="{DynamicResource Brush.Surface.Panel}"
+                                 StrokeThickness="1" Visibility="{Binding IsUpdateReady, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                 AutomationProperties.Name="有可用更新" />
+                    </Grid>
+                </Button>
+                <Button x:Name="AccountButton" Grid.Column="4" Style="{StaticResource Button.Ghost}" Height="36" MinWidth="0"
                         Padding="8,0" Margin="0,0,0,0" ContextMenu="{StaticResource AccountMenu}"
                         Click="AccountButton_Click" ToolTip="账户菜单" AutomationProperties.Name="账户菜单">
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
@@ -166,30 +179,7 @@
                 </Button>
             </Grid>
             <Border Grid.Row="1" Background="{DynamicResource Brush.Border.Subtle}" />
-            <Border Grid.Row="2" Margin="16,12,20,0" Padding="12,10"
-                    Background="{DynamicResource Brush.Accent.Subtle}"
-                    BorderBrush="{DynamicResource Brush.Selection.Border}" BorderThickness="1"
-                    CornerRadius="{StaticResource CornerRadius.Control}"
-                    Visibility="{Binding IsUpdateReady, Converter={StaticResource BooleanToVisibilityConverter}}">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,16,0">
-                        <TextBlock Text="新版本已准备就绪" FontWeight="SemiBold" />
-                        <TextBlock Foreground="{DynamicResource Brush.Text.Secondary}" FontSize="12" TextWrapping="Wrap" Margin="0,3,0,0">
-                            <Run Text="版本 " /><Run Text="{Binding UpdateReadyVersion}" /><Run Text=" 已完成验证。继续前请先保存其他应用中的文件。" />
-                        </TextBlock>
-                    </StackPanel>
-                    <Button Grid.Column="1" Style="{StaticResource Button.Primary}" Height="32" MinWidth="90"
-                            Margin="0,0,8,0" Content="立即更新" Command="{Binding InstallUpdateNowCommand}" />
-                    <Button Grid.Column="2" Style="{StaticResource Button.Secondary}" Height="32" MinWidth="100"
-                            Content="{Binding UpdateScheduleText}" Command="{Binding InstallAfterExitCommand}" />
-                </Grid>
-            </Border>
-            <ContentControl Grid.Row="3" Content="{Binding CurrentContent}" />
+            <ContentControl Grid.Row="2" Content="{Binding CurrentContent}" />
         </Grid>
     </Grid>
 </UserControl>

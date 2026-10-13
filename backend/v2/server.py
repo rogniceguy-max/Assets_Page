@@ -6,9 +6,12 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import ssl
 import sys
 import threading
+import time
+from collections import deque
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -18,10 +21,13 @@ from .config import Settings, load_settings
 from .provisioner import AccountProvisioner
 from .release_store import ReleaseNotFound, ReleaseStore, ReleaseUnavailable
 from .service import ApiError, V2Application
+from .update_failure_reports import InvalidUpdateFailureReport, UpdateFailureReportStore, validate_report
 
 
 API_ROOT = "/api/v2"
 MAX_BODY_BYTES = 64 * 1024
+MAX_UPDATE_FAILURE_REPORT_BYTES = 2048
+UPDATE_FAILURE_REPORT_PATH = f"{API_ROOT}/diagnostics/update-failures"
 PACKAGE_PATH_RE = re.compile(rf"^{API_ROOT}/updates/packages/([a-f0-9]{{32}})$")
 RELEASE_CHUNK_BYTES = 256 * 1024
 
@@ -34,8 +40,46 @@ def _bearer_token(headers) -> str | None:
     return token if token and len(token) <= 256 else None
 
 
-def create_handler(app: V2Application, update_releases_dir: Path | None = None):
+def create_handler(app: V2Application, update_releases_dir: Path | None = None,
+                   update_failure_db_path: Path | None = None):
     release_store = ReleaseStore(update_releases_dir)
+    failure_store = None
+    db_path = update_failure_db_path or getattr(app, "db_path", None)
+    if db_path is not None:
+        try:
+            failure_store = UpdateFailureReportStore(Path(db_path))
+        except (OSError, sqlite3.Error):
+            failure_store = None
+    report_rate_lock = threading.Lock()
+    report_global_requests: deque[float] = deque()
+    report_source_requests: dict[str, deque[float]] = {}
+
+    def allow_failure_report(source: str) -> bool:
+        now = time.monotonic()
+        one_hour_ago = now - 3600
+        with report_rate_lock:
+            while report_global_requests and report_global_requests[0] < one_hour_ago:
+                report_global_requests.popleft()
+            if len(report_global_requests) >= 1000:
+                return False
+            for key, entries in list(report_source_requests.items()):
+                while entries and entries[0] < one_hour_ago:
+                    entries.popleft()
+                if not entries:
+                    report_source_requests.pop(key, None)
+            source_requests = report_source_requests.get(source)
+            if source_requests is None:
+                if len(report_source_requests) >= 1024:
+                    return False
+                source_requests = deque()
+                report_source_requests[source] = source_requests
+            while source_requests and source_requests[0] < one_hour_ago:
+                source_requests.popleft()
+            if len(source_requests) >= 20:
+                return False
+            report_global_requests.append(now)
+            source_requests.append(now)
+            return True
 
     class V2RequestHandler(BaseHTTPRequestHandler):
         server_version = "MuYingHubV2"
@@ -72,7 +116,36 @@ def create_handler(app: V2Application, update_releases_dir: Path | None = None):
             self._send_error(ApiError(404, "NOT_FOUND", "接口不存在。"))
 
         def do_POST(self) -> None:  # noqa: N802
-            path = urlsplit(self.path).path
+            parsed_path = urlsplit(self.path)
+            path = parsed_path.path
+            if path == UPDATE_FAILURE_REPORT_PATH:
+                if not allow_failure_report(self.client_address[0]):
+                    self.close_connection = True
+                    self._send_rate_limited(3600)
+                    return
+                if parsed_path.query or self.headers.get("Authorization"):
+                    self.close_connection = True
+                    self._send_error(ApiError(400, "UPDATE_REPORT_ANONYMOUS_ONLY", "诊断报告请求格式无效。"))
+                    return
+                payload = self._read_json(MAX_UPDATE_FAILURE_REPORT_BYTES, reject_duplicate_fields=True)
+                if payload is None:
+                    return
+                try:
+                    report = validate_report(payload)
+                except InvalidUpdateFailureReport:
+                    self._send_error(ApiError(400, "UPDATE_REPORT_INVALID", "诊断报告内容无效。"))
+                    return
+                if failure_store is None:
+                    self._send_json(503, {"success": False, "code": "UPDATE_REPORT_STORAGE_UNAVAILABLE", "error": "诊断报告服务暂不可用。"})
+                    return
+                try:
+                    failure_store.record(report)
+                except (OSError, sqlite3.Error):
+                    self._send_json(503, {"success": False, "code": "UPDATE_REPORT_STORAGE_UNAVAILABLE", "error": "诊断报告服务暂不可用。"})
+                    return
+                self._send_json(202, {"success": True, "received": True})
+                return
+
             payload = self._read_json()
             if payload is None:
                 return
@@ -98,7 +171,7 @@ def create_handler(app: V2Application, update_releases_dir: Path | None = None):
                 return
             self._send_error(ApiError(404, "NOT_FOUND", "接口不存在。"))
 
-        def _read_json(self) -> dict[str, Any] | None:
+        def _read_json(self, maximum_bytes: int = MAX_BODY_BYTES, reject_duplicate_fields: bool = False) -> dict[str, Any] | None:
             if self.headers.get("Transfer-Encoding"):
                 self.close_connection = True
                 self._send_error(ApiError(411, "CONTENT_LENGTH_REQUIRED", "请求格式无效。"))
@@ -108,9 +181,9 @@ def create_handler(app: V2Application, update_releases_dir: Path | None = None):
                 length = int(raw_length or "")
             except ValueError:
                 length = -1
-            if length < 0 or length > MAX_BODY_BYTES:
+            if length < 0 or length > maximum_bytes:
                 self.close_connection = True
-                self._send_error(ApiError(413 if length > MAX_BODY_BYTES else 411, "BODY_SIZE_INVALID", "请求长度无效。"))
+                self._send_error(ApiError(413 if length > maximum_bytes else 411, "BODY_SIZE_INVALID", "请求长度无效。"))
                 return None
             content_type = self.headers.get_content_type()
             if content_type != "application/json":
@@ -119,8 +192,11 @@ def create_handler(app: V2Application, update_releases_dir: Path | None = None):
                 return None
             try:
                 body = self.rfile.read(length)
-                value = json.loads(body.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError):
+                if reject_duplicate_fields:
+                    value = json.loads(body.decode("utf-8"), object_pairs_hook=self._unique_json_object)
+                else:
+                    value = json.loads(body.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
                 self._send_error(ApiError(400, "JSON_INVALID", "请求内容无效。"))
                 return None
             if not isinstance(value, dict):
@@ -266,6 +342,27 @@ def create_handler(app: V2Application, update_releases_dir: Path | None = None):
             self.end_headers()
             self.wfile.write(body)
 
+        @staticmethod
+        def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            result: dict[str, object] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate JSON field")
+                result[key] = value
+            return result
+
+        def _send_rate_limited(self, seconds: int) -> None:
+            body = json.dumps({"success": False, "code": "RATE_LIMITED", "error": "请求过于频繁，请稍后重试。"},
+                              ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            self.send_response(429)
+            self.send_header("Retry-After", str(seconds))
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(body)
+
     return V2RequestHandler
 
 
@@ -297,7 +394,8 @@ def make_server(settings: Settings, app: V2Application) -> ThreadingHTTPServer:
             request.settimeout(20)
             return request, address
 
-    server = V2HTTPServer((settings.bind_host, settings.port), create_handler(app, settings.update_releases_dir))
+    server = V2HTTPServer((settings.bind_host, settings.port),
+                          create_handler(app, settings.update_releases_dir, settings.database_path))
     server.daemon_threads = True
     server.request_queue_size = 64
 
