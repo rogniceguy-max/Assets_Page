@@ -1,2 +1,3 @@
-# Replace with the SHA-256 thumbprint of the Authenticode publisher before distribution.
-# An empty trust anchor disables package installation safely.
+# Optional. SHA-256 thumbprint of the Authenticode publisher certificate.
+# Leave empty to skip Authenticode verification: the update trust anchor is then
+# the ECDSA manifest signature plus the whole-package SHA-256.

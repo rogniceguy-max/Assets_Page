@@ -10,24 +10,67 @@ public static class UpdateTrustAnchor
     private const string PublicKeyResource = "MuYingDrive.UpdateCore.Trust.trusted-update-publisher.pem";
     private const string PublisherThumbprintResource = "MuYingDrive.UpdateCore.Trust.trusted-code-signing-thumbprint.txt";
 
-    public static ECDsa LoadManifestPublicKey()
+    /// <summary>
+    /// Returns every release public key embedded in the trust anchor, in file order.
+    /// </summary>
+    /// <remarks>
+    /// More than one key is supported so a release key can be rotated without
+    /// reinstalling every client: embed the next public key, ship a release signed by
+    /// the current key, wait for clients to take it, then start signing with the new
+    /// key. Verifying against a single key would make rotation and recovery from key
+    /// loss impossible in the field. The caller owns the returned keys and must
+    /// dispose them.
+    /// </remarks>
+    public static IReadOnlyList<ECDsa> LoadManifestPublicKeys()
     {
-        var pem = ReadResource(PublicKeyResource).Trim();
-        if (!pem.Contains("-----BEGIN PUBLIC KEY-----", StringComparison.Ordinal))
-            throw new CryptographicException("更新发布公钥尚未配置；已安全停用更新功能。");
-
-        var key = ECDsa.Create();
+        var pem = ReadResource(PublicKeyResource);
+        var keys = new List<ECDsa>();
         try
         {
-            key.ImportFromPem(pem);
-            if (key.KeySize != 256)
-                throw new CryptographicException("更新发布公钥必须使用 ECDSA P-256。");
-            return key;
+            foreach (var block in ExtractPemBlocks(pem, "-----BEGIN PUBLIC KEY-----", "-----END PUBLIC KEY-----"))
+            {
+                var key = ECDsa.Create();
+                try
+                {
+                    key.ImportFromPem(block);
+                    if (key.KeySize != 256)
+                        throw new CryptographicException("更新发布公钥必须使用 ECDSA P-256。");
+                    keys.Add(key);
+                }
+                catch
+                {
+                    key.Dispose();
+                    throw;
+                }
+            }
+
+            if (keys.Count == 0)
+                throw new CryptographicException("更新发布公钥尚未配置；已安全停用更新功能。");
+
+            return keys;
         }
         catch
         {
-            key.Dispose();
+            foreach (var key in keys)
+                key.Dispose();
             throw;
+        }
+    }
+
+    private static IEnumerable<string> ExtractPemBlocks(string pem, string begin, string end)
+    {
+        var index = 0;
+        while (true)
+        {
+            var start = pem.IndexOf(begin, index, StringComparison.Ordinal);
+            if (start < 0)
+                yield break;
+            var stop = pem.IndexOf(end, start, StringComparison.Ordinal);
+            if (stop < 0)
+                yield break;
+            var finish = stop + end.Length;
+            yield return pem[start..finish];
+            index = finish;
         }
     }
 

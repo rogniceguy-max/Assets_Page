@@ -95,9 +95,21 @@ public static class UpdateManifestVerifier
         if (payload.Length is 0 or > 32 * 1024 || signature.Length is 0 or > 256)
             throw new InvalidDataException("更新清单签名大小无效。");
 
-        using var verifier = UpdateTrustAnchor.LoadManifestPublicKey();
-        if (!verifier.VerifyData(payload, signature, HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence))
-            throw new CryptographicException("更新清单签名验证失败。");
+        // Try every embedded release key so a rotated key can coexist with the current
+        // one during the overlap window.
+        var verifiers = UpdateTrustAnchor.LoadManifestPublicKeys();
+        try
+        {
+            var verified = verifiers.Any(verifier => verifier.VerifyData(
+                payload, signature, HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence));
+            if (!verified)
+                throw new CryptographicException("更新清单签名验证失败。");
+        }
+        finally
+        {
+            foreach (var verifier in verifiers)
+                verifier.Dispose();
+        }
 
         UpdateManifest manifest;
         try
