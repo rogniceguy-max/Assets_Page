@@ -48,7 +48,10 @@
                         </Style.Triggers>
                         </Style>
                     </TextBlock.Style>
-                    <Run Text="{Binding Progress, StringFormat={}{0:F0}%}" />
+                    <!-- Run.Text also binds TwoWay by default (confirmed by reflection:
+                         BindsTwoWayByDefault = True), so it hit the same read-only
+                         Progress property as the ProgressBar above. -->
+                    <Run Text="{Binding Progress, Mode=OneWay, StringFormat={}{0:F0}%}" />
                 </TextBlock>
             </DockPanel>
             <StackPanel Grid.Row="8" Orientation="Horizontal" HorizontalAlignment="Right">
