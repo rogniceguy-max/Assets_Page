@@ -3,13 +3,11 @@
     Builds the first-install setup executable (MuYingDrive.Setup-<version>.exe).
 
 .DESCRIPTION
-    Publishes the same self-contained client bundle that publish-update.ps1 packages,
-    embeds it into desktop/MuYingDrive.Bootstrap, renders the NAS client configuration
-    the bootstrap seeds on first install, and produces a single per-user, no-UAC
-    setup executable.
-
-    The payload (desktop/MuYingDrive.Bootstrap/Payload) is gitignored: it is roughly
-    150 MB and must never be committed.
+    Publishes desktop/MuYingDrive.Bootstrap with the NAS client configuration baked in.
+    The client bundle is NOT packaged here: the setup executable fetches the current
+    release from the NAS and verifies it against the signed manifest before installing.
+    That keeps the setup small and means the installed payload is authenticated, which
+    an embedded archive could not be.
 
 .PARAMETER NasClientConfigTemplate
     A JSON file with ApiBaseUri, CertificateSha256, ShareRoot and (optionally)
@@ -18,6 +16,9 @@
 .PARAMETER TlsCertificatePath
     Optional. When supplied, CertificateSha256 is recomputed from this certificate so
     the shipped pin cannot drift from what the NAS actually serves.
+
+.PARAMETER OutputDirectory
+    Where the setup executable is copied.
 
 .EXAMPLE
     ./publish-installer.ps1 -Version 1.0.0 -NasClientConfigTemplate D:\release\nas-client.template.json `
@@ -44,7 +45,6 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
 
 $bootstrapProject = Join-Path $PSScriptRoot "MuYingDrive.Bootstrap\MuYingDrive.Bootstrap.csproj"
 $payloadDirectory = Join-Path $PSScriptRoot "MuYingDrive.Bootstrap\Payload"
-$payloadZip = Join-Path $payloadDirectory "client-payload.zip"
 $payloadSettings = Join-Path $payloadDirectory "nas-client.json"
 $outputRoot = [System.IO.Path]::GetFullPath($OutputDirectory)
 
@@ -58,13 +58,11 @@ $signingCertificate = Resolve-ReleaseSigningCertificate `
     -TrustedThumbprint $trust.PublisherThumbprint
 
 $stagingRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("MuYingSetup-" + [guid]::NewGuid().ToString("N"))
-$clientPublish = Join-Path $stagingRoot "client"
 $setupPublish = Join-Path $stagingRoot "setup"
 try {
-    Publish-ClientBundle -DesktopDirectory $PSScriptRoot -Version $Version -Destination $clientPublish `
-        -SigningCertificate $signingCertificate -TimestampServer $TimestampServer -SignToolPath $SignToolPath
+    New-Item -ItemType Directory -Path $setupPublish -Force | Out-Null
 
-    # --- Render the configuration the bootstrap will seed -------------------------
+    # --- Render the configuration the setup executable carries and seeds -------------
     $configuration = [System.IO.File]::ReadAllText($NasClientConfigTemplate) | ConvertFrom-Json
     if (-not [string]::IsNullOrWhiteSpace($TlsCertificatePath)) {
         $configuration.CertificateSha256 = Get-TlsCertificatePin -CertificatePath $TlsCertificatePath
@@ -81,21 +79,14 @@ try {
         throw "ApiBaseUri must be HTTPS; the client refuses any other scheme."
     }
 
-    # --- Build the embedded payload ----------------------------------------------
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
     New-Item -ItemType Directory -Path $payloadDirectory -Force | Out-Null
-    if (Test-Path -LiteralPath $payloadZip -PathType Leaf) { Remove-Item -LiteralPath $payloadZip -Force }
-    [System.IO.Compression.ZipFile]::CreateFromDirectory(
-        $clientPublish, $payloadZip, [System.IO.Compression.CompressionLevel]::Optimal, $false)
     [System.IO.File]::WriteAllText(
         $payloadSettings,
         ($configuration | ConvertTo-Json -Depth 4),
         (New-Object System.Text.UTF8Encoding($false)))
 
-    # --- Build the setup executable ----------------------------------------------
-    # The payload resources are picked up by the Exists() conditions in the csproj, so
-    # this publish must run after the files above are written.
-    New-Item -ItemType Directory -Path $setupPublish -Force | Out-Null
+    # The payload resource is picked up by the Exists() condition in the csproj, so this
+    # publish must run after the file above is written.
     & dotnet publish $bootstrapProject -c Release -r win-x64 --self-contained true -p:Version=$Version -o $setupPublish
     if ($LASTEXITCODE -ne 0) { throw "The setup executable publish failed." }
 
@@ -115,14 +106,16 @@ try {
     New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
     $destination = Join-Path $outputRoot ("MuYingDrive.Setup-" + $Version + ".exe")
     Copy-Item -LiteralPath $setupExecutable -Destination $destination -Force
+    $sizeMb = [math]::Round((Get-Item -LiteralPath $destination).Length / 1MB, 1)
     $hash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
 
     Write-Output "Created first-install setup executable for version $Version."
-    Write-Output "  File:    $destination"
+    Write-Output "  File:    $destination  ($sizeMb MB)"
     Write-Output "  SHA-256: $hash"
     Write-Output ""
-    Write-Output "The setup executable is not Authenticode-signed unless a certificate was supplied."
-    Write-Output "Publish that SHA-256 alongside the download so employees can verify it."
+    Write-Output "It fetches the current release from $($configuration.ApiBaseUri) and verifies it"
+    Write-Output "against the signed manifest before installing. The setup executable is not"
+    Write-Output "Authenticode-signed unless a certificate was supplied; publish the SHA-256 above."
 }
 finally {
     $resolvedStaging = [System.IO.Path]::GetFullPath($stagingRoot)

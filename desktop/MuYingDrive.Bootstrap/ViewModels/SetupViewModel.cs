@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Windows.Input;
 using MuYingDrive.Bootstrap.Infrastructure;
 using MuYingDrive.Bootstrap.Services;
+using MuYingDrive.UpdateCore;
 
 namespace MuYingDrive.Bootstrap.ViewModels;
 
@@ -41,6 +42,7 @@ public sealed class SetupViewModel : ObservableObject
 
     public async Task RunAsync(string[] arguments)
     {
+        Trace($"start: args=[{string.Join(' ', arguments)}] installRoot={InstallEngine.InstallRoot}");
         try
         {
             var uninstall = arguments.Contains("--uninstall");
@@ -60,6 +62,8 @@ public sealed class SetupViewModel : ObservableObject
                         arguments.Contains("--desktop-shortcut"),
                         ReadOption(arguments, "--config"),
                         arguments.Contains("--force-config"),
+                        ReadOption(arguments, "--package"),
+                        ReadOption(arguments, "--manifest"),
                         _cancellation.Token)
                     .ConfigureAwait(true);
 
@@ -86,7 +90,10 @@ public sealed class SetupViewModel : ObservableObject
         Title = progress.Title;
         Explanation = progress.Explanation;
         Status = progress.Status;
+        Trace($"{progress.Status}: {progress.Explanation}");
     }
+
+    private static void Trace(string message) => InstallTrace.Write(message);
 
     private void ApplyResult(InstallResult result)
     {
@@ -102,6 +109,7 @@ public sealed class SetupViewModel : ObservableObject
 
     private void SetFailure(string message)
     {
+        Trace("FAILED: " + message);
         Title = "安装未完成";
         Explanation = message;
         Status = "未完成";

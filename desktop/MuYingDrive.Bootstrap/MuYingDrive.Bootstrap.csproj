@@ -24,13 +24,12 @@
   </ItemGroup>
 
   <!--
-    The payload is produced by desktop/publish-installer.ps1 and is gitignored: the
-    self-contained client bundle is ~150 MB and must never be committed. A build
-    without it succeeds but the setup executable reports that it has no payload.
+    Only the ~300 byte NAS configuration is embedded. The client bundle is fetched from
+    the NAS and verified against the signed release manifest at install time: embedding
+    it produced a ~300 MB single-file executable that hung during host startup and could
+    not be authenticated. Payload/ is gitignored; a build without it still succeeds but
+    the setup executable reports that it has no baked-in configuration.
   -->
-  <ItemGroup Condition="Exists('Payload\client-payload.zip')">
-    <EmbeddedResource Include="Payload\client-payload.zip" LogicalName="MuYingDrive.Bootstrap.Payload.client-payload.zip" />
-  </ItemGroup>
   <ItemGroup Condition="Exists('Payload\nas-client.json')">
     <EmbeddedResource Include="Payload\nas-client.json" LogicalName="MuYingDrive.Bootstrap.Payload.nas-client.json" />
   </ItemGroup>

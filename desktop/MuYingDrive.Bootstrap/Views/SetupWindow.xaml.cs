@@ -10,6 +10,8 @@ public partial class SetupWindow : Window
     private readonly SetupViewModel _viewModel;
     private bool _completed;
 
+    public SetupViewModel ViewModel => _viewModel;
+
     public SetupWindow(string[] arguments)
     {
         InitializeComponent();

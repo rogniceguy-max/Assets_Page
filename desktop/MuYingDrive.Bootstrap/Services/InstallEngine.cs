@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.IO.Compression;
 using System.Reflection;
 using System.Text.Json;
 using Microsoft.Win32;
@@ -14,23 +13,20 @@ public sealed record InstallProgress(string Title, string Explanation, string St
 public sealed record InstallResult(bool Succeeded, string Title, string Explanation, string? LaunchPath = null);
 
 /// <summary>
-/// First-install bootstrap for the native client. Deploys the embedded self-contained
-/// payload into the per-user install root the updater is gated on, seeds the NAS
-/// configuration, and registers an uninstaller.
+/// First-install bootstrap for the native client.
 /// </summary>
 /// <remarks>
-/// Every path is written under %LOCALAPPDATA% or HKCU, and the manifest requests
-/// asInvoker, so installation never prompts for elevation. User data that must survive
-/// an update — the Credential Manager entries and
-/// <c>%LOCALAPPDATA%\MuYingDrive\Settings\nas-client.json</c> — lives outside the
-/// install root and is never rewritten here.
+/// The client bundle is NOT embedded in this executable. It is fetched from the NAS and
+/// verified against the signed release manifest before anything is written, using the
+/// same trust path the updater uses. Embedding the payload made the setup a ~300 MB
+/// single-file executable that hung during host startup, and it shipped an artifact
+/// nothing could authenticate. Every path here is written under %LOCALAPPDATA% or HKCU
+/// and the manifest requests asInvoker, so installation never prompts for elevation.
 /// </remarks>
 public sealed class InstallEngine
 {
-    private const string PayloadResource = "MuYingDrive.Bootstrap.Payload.client-payload.zip";
-    private const string SettingsResource = "MuYingDrive.Bootstrap.Payload.nas-client.json";
+    private const string DefaultConfigResource = "MuYingDrive.Bootstrap.Payload.nas-client.json";
     private const string ClientExecutableName = "MuYingDrive.NativeWpf.exe";
-    private const string ClientProcessName = "MuYingDrive.NativeWpf";
     private const string UpdaterExecutableRelativePath = "Updater/MuYingDrive.Updater.exe";
     private const string UninstallRegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\MuYingDrive";
     private const string ShortcutFileName = "沐影盘.lnk";
@@ -57,21 +53,20 @@ public sealed class InstallEngine
         bool createDesktopShortcut,
         string? configOverridePath,
         bool forceConfig,
+        string? localPackagePath,
+        string? localManifestPath,
         CancellationToken cancellationToken)
     {
-        var payload = ReadResource(PayloadResource)
-            ?? throw new InvalidOperationException("此安装程序不包含安装载荷，请从官方分发包重新获取。");
+        var configuration = LoadConfiguration(configOverridePath);
 
-        string? stage = null;
+        string? workDirectory = null;
         IDisposable? guard = null;
         try
         {
             progress.Report(new InstallProgress("正在安装沐影盘", "正在准备安装，请稍候。", "准备中"));
 
-            // Take the same exclusive locks the updater uses so a running client blocks
-            // the install instead of being replaced underneath itself. The locks are per
-            // Windows user rather than per install directory, so any running client
-            // blocks this; report the wait instead of appearing to hang.
+            // The locks are per Windows user rather than per install directory, so any
+            // running client blocks this; report the wait instead of appearing to hang.
             var waitingReported = false;
             guard = await UpdateExecutionGuard.AcquireUpdaterLockAsync(cancellationToken, () =>
             {
@@ -83,18 +78,27 @@ public sealed class InstallEngine
             await UpdateExecutionGuard.WaitForClientProcessesExitAsync(InstallRoot, cancellationToken)
                 .ConfigureAwait(false);
 
+            workDirectory = Path.Combine(StageRoot, Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(workDirectory);
+            UpdatePathPolicy.EnsureNoReparsePointComponents(workDirectory);
+
+            var (packagePath, manifest) = await ObtainPackageAsync(
+                configuration, workDirectory, localPackagePath, localManifestPath, progress, cancellationToken)
+                .ConfigureAwait(false);
+
+            // Verifies the package SHA-256 against the signed manifest, rejects unsafe ZIP
+            // entries, and asserts the executables report the manifest version.
+            progress.Report(new InstallProgress("正在安装沐影盘", "正在校验并解压客户端。", "正在校验"));
+            var extracted = Path.Combine(workDirectory, "client");
+            await PackageIntegrity.ExtractVerifiedPackageAsync(packagePath, extracted, manifest, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+
+            VerifyStagedClient(extracted);
+
             var installParent = Path.GetDirectoryName(InstallRoot)
                 ?? throw new InvalidOperationException("无法确定安装目录。");
             Directory.CreateDirectory(installParent);
             UpdatePathPolicy.EnsureNoReparsePointComponents(installParent);
-
-            progress.Report(new InstallProgress("正在安装沐影盘", "正在解压程序文件。", "正在准备文件"));
-            stage = Path.Combine(StageRoot, Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(stage);
-            ExtractPayload(payload, stage);
-
-            progress.Report(new InstallProgress("正在安装沐影盘", "正在校验程序文件。", "正在校验"));
-            VerifyStagedClient(stage);
 
             var replaced = false;
             if (Directory.Exists(InstallRoot))
@@ -116,8 +120,7 @@ public sealed class InstallEngine
 
             try
             {
-                Directory.Move(stage, InstallRoot);
-                stage = null;
+                Directory.Move(extracted, InstallRoot);
             }
             catch
             {
@@ -132,24 +135,28 @@ public sealed class InstallEngine
             }
 
             progress.Report(new InstallProgress("正在安装沐影盘", "正在写入客户端配置。", "正在配置"));
-            SeedConfiguration(payload, configOverridePath, forceConfig);
+            SeedConfiguration(configuration, configOverridePath, forceConfig);
 
             progress.Report(new InstallProgress("正在安装沐影盘", "正在创建快捷方式。", "正在创建快捷方式"));
-            CreateStartMenuShortcut();
-            if (createDesktopShortcut) CreateDesktopShortcut();
+            CreateShortcut(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs", ShortcutFileName));
+            if (createDesktopShortcut)
+            {
+                CreateShortcut(Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), ShortcutFileName));
+            }
 
             CopyBootstrapper();
+            WriteUninstallEntry(manifest.Version);
 
-            var version = CurrentVersion();
-            WriteUninstallEntry(version);
-
-            return new InstallResult(true, "安装完成", "沐影盘已安装完成，可以开始使用。",
+            return new InstallResult(true, "安装完成",
+                $"沐影盘 {manifest.Version} 已安装完成，可以开始使用。",
                 Path.Combine(InstallRoot, ClientExecutableName));
         }
         finally
         {
             guard?.Dispose();
-            TryDeleteDirectory(stage);
+            TryDeleteDirectory(workDirectory);
         }
     }
 
@@ -163,7 +170,7 @@ public sealed class InstallEngine
                 .ConfigureAwait(false);
 
             TryDeleteDirectory(InstallRoot);
-            // The cached update packages are program data, not user data.
+            // Cached update packages are program data, not user data.
             TryDeleteDirectory(UpdatePathPolicy.UpdateRoot);
             if (purge) TryDeleteDirectory(UpdatePathPolicy.UserDataRoot);
 
@@ -184,60 +191,61 @@ public sealed class InstallEngine
     }
 
     /// <summary>
-    /// Extracts the embedded payload, applying the same hostile-archive defenses the
-    /// updater uses: <see cref="PackageIntegrity.ValidateEntryName"/> rejects traversal,
-    /// absolute paths, links and reserved names, and each expanded path is re-checked
-    /// to stay under the stage directory.
+    /// Returns a verified package plus its signed manifest, either from local files (for
+    /// an offline install) or fetched from the NAS over the pinned channel.
     /// </summary>
-    private static void ExtractPayload(byte[] payload, string stageDirectory)
+    private static async Task<(string PackagePath, UpdateManifest Manifest)> ObtainPackageAsync(
+        ClientConfiguration configuration,
+        string workDirectory,
+        string? localPackagePath,
+        string? localManifestPath,
+        IProgress<InstallProgress> progress,
+        CancellationToken cancellationToken)
     {
-        using var archive = new ZipArchive(new MemoryStream(payload, writable: false), ZipArchiveMode.Read);
-        var root = Path.GetFullPath(stageDirectory).TrimEnd(Path.DirectorySeparatorChar);
-        long totalExpanded = 0;
-
-        foreach (var entry in archive.Entries)
+        if (!string.IsNullOrWhiteSpace(localPackagePath) || !string.IsNullOrWhiteSpace(localManifestPath))
         {
-            var relative = PackageIntegrity.ValidateEntryName(entry);
-            totalExpanded = checked(totalExpanded + entry.Length);
-            if (totalExpanded > 4L * 1024 * 1024 * 1024)
-                throw new InvalidDataException("安装载荷展开后超出允许大小。");
+            if (string.IsNullOrWhiteSpace(localPackagePath) || string.IsNullOrWhiteSpace(localManifestPath))
+                throw new InvalidOperationException("离线安装必须同时提供 --package 与 --manifest。");
+            if (!File.Exists(localPackagePath!))
+                throw new FileNotFoundException("指定的安装包不存在。", localPackagePath);
+            if (!File.Exists(localManifestPath!))
+                throw new FileNotFoundException("指定的签名清单不存在。", localManifestPath);
 
-            var target = Path.GetFullPath(Path.Combine(root, relative));
-            if (!target.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException("安装载荷包含越界路径。");
-
-            if (entry.FullName.EndsWith('/') || entry.FullName.EndsWith('\\'))
-            {
-                Directory.CreateDirectory(target);
-                continue;
-            }
-
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            using var input = entry.Open();
-            using var output = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-            input.CopyTo(output);
+            // The local manifest still has to carry a valid signature: an unsigned file on
+            // disk must never become a way to install an unverified build.
+            var verifiedLocal = UpdateManifestVerifier.Verify(File.ReadAllBytes(localManifestPath!));
+            return (localPackagePath!, verifiedLocal.Value);
         }
+
+        using var downloader = new ReleaseDownloader(configuration.ApiBaseUri, configuration.CertificateSha256);
+        progress.Report(new InstallProgress("正在安装沐影盘", "正在获取最新版本信息。", "正在检查更新"));
+
+        VerifiedUpdateManifest verified;
+        try
+        {
+            verified = await downloader.GetStableManifestAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is ReleaseDownloadException or System.Security.Cryptography.CryptographicException
+            or InvalidDataException)
+        {
+            throw new InvalidOperationException($"无法获取客户端安装包：{exception.Message}", exception);
+        }
+
+        progress.Report(new InstallProgress("正在安装沐影盘",
+            $"正在下载沐影盘 {verified.Value.Version}。", "正在下载"));
+
+        var partialPath = Path.Combine(workDirectory, "package.partial");
+        var packagePath = await downloader.DownloadPackageAsync(verified, partialPath, null, cancellationToken)
+            .ConfigureAwait(false);
+        return (packagePath, verified.Value);
     }
 
-    private static void VerifyStagedClient(string stageDirectory)
+    private static void VerifyStagedClient(string extracted)
     {
-        var client = Path.Combine(stageDirectory, ClientExecutableName);
-        var updater = Path.Combine(stageDirectory, UpdaterExecutableRelativePath.Replace('/', Path.DirectorySeparatorChar));
-        if (!File.Exists(client)) throw new InvalidDataException("安装载荷缺少主程序。");
-        if (!File.Exists(updater)) throw new InvalidDataException("安装载荷缺少更新程序。");
-
-        // The installer and the client are published together, so a mismatch means the
-        // payload was assembled from a different build. The updater compares versions
-        // strictly, and the health marker is matched as a string.
-        var expected = CurrentVersion();
-        foreach (var executable in new[] { client, updater })
-        {
-            var actual = VersionStamp.NormalizeProductVersion(
-                FileVersionInfo.GetVersionInfo(executable).ProductVersion);
-            if (!string.Equals(actual, expected, StringComparison.Ordinal))
-                throw new InvalidDataException(
-                    $"安装载荷版本不一致：期望 {expected}，实际 {actual ?? "(无法读取)"}。");
-        }
+        var client = Path.Combine(extracted, ClientExecutableName);
+        var updater = Path.Combine(extracted, UpdaterExecutableRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(client)) throw new InvalidDataException("客户端安装包缺少主程序。");
+        if (!File.Exists(updater)) throw new InvalidDataException("客户端安装包缺少更新程序。");
     }
 
     /// <summary>
@@ -250,11 +258,25 @@ public sealed class InstallEngine
     /// silently drop the user's stored login, forcing them to sign in again. It is
     /// therefore written only when missing, unless the operator forces it.
     /// </remarks>
-    private static void SeedConfiguration(byte[] payloadArchive, string? configOverridePath, bool forceConfig)
+    private static void SeedConfiguration(ClientConfiguration configuration, string? configOverridePath, bool forceConfig)
     {
         var destination = UpdatePathPolicy.ClientSettingsPath;
         if (File.Exists(destination) && !forceConfig) return;
 
+        var content = !string.IsNullOrWhiteSpace(configOverridePath)
+            ? File.ReadAllBytes(configOverridePath)
+            : ReadResource(DefaultConfigResource);
+        if (content is null) return;
+
+        Directory.CreateDirectory(UpdatePathPolicy.SettingsDirectory);
+        UpdatePathPolicy.EnsureNoReparsePointComponents(UpdatePathPolicy.SettingsDirectory);
+        var temporary = destination + ".tmp";
+        File.WriteAllBytes(temporary, content);
+        File.Move(temporary, destination, overwrite: true);
+    }
+
+    private static ClientConfiguration LoadConfiguration(string? configOverridePath)
+    {
         byte[]? content = null;
         if (!string.IsNullOrWhiteSpace(configOverridePath))
         {
@@ -264,36 +286,40 @@ public sealed class InstallEngine
         }
         else
         {
-            content = ReadResource(SettingsResource);
+            content = ReadResource(DefaultConfigResource);
         }
 
         if (content is null)
         {
-            // No baked configuration and no override: leave the machine unconfigured so
-            // the client shows its "contact your administrator" message instead of
-            // starting with placeholder values that would fail at every request.
-            return;
+            throw new InvalidOperationException(
+                "此安装程序未内置 NAS 配置。请使用 --config 指定 nas-client.json，或从官方分发包重新获取。");
         }
 
-        // Fail here rather than shipping a file the client will reject at startup.
-        using (JsonDocument.Parse(content))
+        ClientConfigurationDto? dto;
+        try
         {
+            dto = JsonSerializer.Deserialize<ClientConfigurationDto>(content,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidOperationException("客户端配置格式无效。", exception);
         }
 
-        Directory.CreateDirectory(UpdatePathPolicy.SettingsDirectory);
-        UpdatePathPolicy.EnsureNoReparsePointComponents(UpdatePathPolicy.SettingsDirectory);
-        var temporary = destination + ".tmp";
-        File.WriteAllBytes(temporary, content);
-        File.Move(temporary, destination, overwrite: true);
+        if (dto is null || string.IsNullOrWhiteSpace(dto.ApiBaseUri) ||
+            !Uri.TryCreate(dto.ApiBaseUri, UriKind.Absolute, out var api) ||
+            api.Scheme != Uri.UriSchemeHttps ||
+            string.IsNullOrWhiteSpace(dto.CertificateSha256) ||
+            string.IsNullOrWhiteSpace(dto.ShareRoot))
+        {
+            throw new InvalidOperationException("客户端配置缺少必要的 NAS 参数。");
+        }
+
+        // Validated here so a malformed pin cannot ship inside an installer.
+        _ = CertificatePin.ParseSha256Pin(dto.CertificateSha256);
+        return new ClientConfiguration(api, dto.CertificateSha256, dto.ShareRoot,
+            string.IsNullOrWhiteSpace(dto.CredentialProfile) ? "default" : dto.CredentialProfile);
     }
-
-    private static void CreateStartMenuShortcut() =>
-        CreateShortcut(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs", ShortcutFileName));
-
-    private static void CreateDesktopShortcut() =>
-        CreateShortcut(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), ShortcutFileName));
 
     private static void CreateShortcut(string shortcutPath)
     {
@@ -332,9 +358,7 @@ public sealed class InstallEngine
     private static void WriteUninstallEntry(string version)
     {
         var setupPath = Path.Combine(BootstrapperDirectory, "MuYingDrive.Setup.exe");
-        var uninstallExecutable = File.Exists(setupPath)
-            ? setupPath
-            : Environment.ProcessPath ?? setupPath;
+        var uninstallExecutable = File.Exists(setupPath) ? setupPath : Environment.ProcessPath ?? setupPath;
 
         // HKCU only: a per-user install must not need administrator rights to remove.
         using var key = Registry.CurrentUser.CreateSubKey(UninstallRegistryPath, writable: true);
@@ -378,19 +402,16 @@ public sealed class InstallEngine
         }
     }
 
-    private static string CurrentVersion() =>
-        Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
-
     private static void PruneBackups()
     {
         try
         {
             // Keep the newest backup so a failed upgrade still has something to restore.
-            var backups = Directory.EnumerateDirectories(BackupRoot)
-                .OrderByDescending(path => path, StringComparer.OrdinalIgnoreCase)
-                .Skip(1)
-                .ToArray();
-            foreach (var directory in backups) TryDeleteDirectory(directory);
+            foreach (var directory in Directory.EnumerateDirectories(BackupRoot)
+                .OrderByDescending(path => path, StringComparer.OrdinalIgnoreCase).Skip(1))
+            {
+                TryDeleteDirectory(directory);
+            }
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
@@ -443,4 +464,17 @@ public sealed class InstallEngine
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
     }
+
+    /// <summary>Shape of the client's nas-client.json, validated before use.</summary>
+    private sealed record ClientConfigurationDto
+    {
+        public string? ApiBaseUri { get; init; }
+        public string? CertificateSha256 { get; init; }
+        public string? ShareRoot { get; init; }
+        public string? CredentialProfile { get; init; }
+    }
+
+    /// <summary>The validated configuration the installer downloads with and seeds.</summary>
+    private sealed record ClientConfiguration(
+        Uri ApiBaseUri, string CertificateSha256, string ShareRoot, string CredentialProfile);
 }

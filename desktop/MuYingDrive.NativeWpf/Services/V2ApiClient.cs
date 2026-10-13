@@ -6,6 +6,7 @@ using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 using MuYingDrive.NativeWpf.Models;
+using MuYingDrive.UpdateCore;
 
 namespace MuYingDrive.NativeWpf.Services;
 
@@ -51,7 +52,7 @@ public sealed partial class V2ApiClient : IDisposable
             throw new ArgumentException("The V2 API base URI must be an absolute HTTPS URI without query or fragment.", nameof(options));
 
         _baseUri = new Uri(options.BaseUri.AbsoluteUri.TrimEnd('/') + "/", UriKind.Absolute);
-        _certificatePin = ParseSha256Pin(options.LeafCertificateSha256);
+        _certificatePin = CertificatePin.ParseSha256Pin(options.LeafCertificateSha256);
         var handler = new HttpClientHandler
         {
             AllowAutoRedirect = false,
@@ -334,51 +335,10 @@ public sealed partial class V2ApiClient : IDisposable
         return new V2ApiException(message, statusCode, code);
     }
 
-    private bool ValidateServerCertificate(HttpRequestMessage _, X509Certificate2? certificate, X509Chain? chain, System.Net.Security.SslPolicyErrors errors)
-    {
-        if (certificate is null ||
-            (errors & (System.Net.Security.SslPolicyErrors.RemoteCertificateNotAvailable |
-                       System.Net.Security.SslPolicyErrors.RemoteCertificateNameMismatch)) != 0)
-            return false;
-
-        try
-        {
-            var now = DateTime.UtcNow;
-            if (now < certificate.NotBefore.ToUniversalTime() || now > certificate.NotAfter.ToUniversalTime())
-                return false;
-
-            var chainErrors = System.Net.Security.SslPolicyErrors.RemoteCertificateChainErrors;
-            if ((errors & ~chainErrors) != System.Net.Security.SslPolicyErrors.None)
-                return false;
-            if ((errors & chainErrors) != 0 &&
-                (chain is null || chain.ChainStatus.Any(status =>
-                    (status.Status & ~X509ChainStatusFlags.UntrustedRoot) != X509ChainStatusFlags.NoError)))
-                return false;
-
-            var actualPin = certificate.GetCertHash(HashAlgorithmName.SHA256);
-            return CryptographicOperations.FixedTimeEquals(actualPin, _certificatePin);
-        }
-        catch (CryptographicException)
-        {
-            return false;
-        }
-    }
-
-    private static byte[] ParseSha256Pin(string fingerprint)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(fingerprint);
-        var normalized = new string(fingerprint.Where(Uri.IsHexDigit).ToArray());
-        if (normalized.Length != 64 || fingerprint.Any(c => !Uri.IsHexDigit(c) && c != ':' && c != '-' && !char.IsWhiteSpace(c)))
-            throw new ArgumentException("The certificate fingerprint must contain exactly 32 SHA-256 bytes in hexadecimal form.", nameof(fingerprint));
-        try
-        {
-            return Convert.FromHexString(normalized);
-        }
-        catch (FormatException ex)
-        {
-            throw new ArgumentException("The certificate fingerprint is invalid.", nameof(fingerprint), ex);
-        }
-    }
+    // The rule lives in UpdateCore so the first-install bootstrap accepts exactly the
+    // same certificates. A second copy here could drift into a silent security gap.
+    private bool ValidateServerCertificate(HttpRequestMessage _, X509Certificate2? certificate, X509Chain? chain, System.Net.Security.SslPolicyErrors errors) =>
+        CertificatePin.IsTrusted(certificate, chain, errors, _certificatePin);
 
     private static string? Sanitize(string? value, int maximumLength)
     {
