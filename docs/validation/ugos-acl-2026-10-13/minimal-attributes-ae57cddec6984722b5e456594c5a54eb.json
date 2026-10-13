@@ -1,0 +1,202 @@
+{
+  "mode": "attributes",
+  "runId": "ae57cddec6984722b5e456594c5a54eb",
+  "before": {
+    "utc": "2026-10-13T02:47:41.897200+00:00",
+    "log_size": 40596,
+    "log_tail": "",
+    "service": "MainPID=10118\nNRestarts=0\nActiveState=active\nSubState=running\n"
+  },
+  "exit": 1,
+  "probe": {
+    "kind": "Single-identity Windows SMB diagnostic; no vault persistence; not UI acceptance",
+    "mode": "attributes",
+    "runId": "ae57cddec6984722b5e456594c5a54eb",
+    "allMatched": false,
+    "events": [
+      {
+        "utc": "2026-10-13T02:47:41.9068409+00:00",
+        "monotonicMs": 26.2955,
+        "stage": "validated",
+        "phase": "success",
+        "relativePath": null,
+        "expectedDenied": null,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:47:41.9072883+00:00",
+        "monotonicMs": 26.3706,
+        "stage": "LogonUser",
+        "phase": "begin",
+        "relativePath": null,
+        "expectedDenied": null,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:47:41.9171952+00:00",
+        "monotonicMs": 36.2833,
+        "stage": "LogonUser",
+        "phase": "success",
+        "relativePath": null,
+        "expectedDenied": null,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:47:41.9188912+00:00",
+        "monotonicMs": 37.9734,
+        "stage": "WNet-connect",
+        "phase": "begin",
+        "relativePath": null,
+        "expectedDenied": null,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:47:42.0269975+00:00",
+        "monotonicMs": 146.0839,
+        "stage": "WNet-connect",
+        "phase": "success",
+        "relativePath": null,
+        "expectedDenied": false,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:47:42.0270123+00:00",
+        "monotonicMs": 146.0926,
+        "stage": "directory-attributes",
+        "phase": "begin",
+        "relativePath": "personal_writing",
+        "expectedDenied": null,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:47:42.0517886+00:00",
+        "monotonicMs": 170.8765,
+        "stage": "directory-attributes",
+        "phase": "success",
+        "relativePath": "personal_writing",
+        "expectedDenied": true,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:47:42.0518002+00:00",
+        "monotonicMs": 170.8808,
+        "stage": "file-attributes",
+        "phase": "begin",
+        "relativePath": "personal_writing/existing.txt",
+        "expectedDenied": null,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:47:42.0690517+00:00",
+        "monotonicMs": 188.1364,
+        "stage": "file-attributes",
+        "phase": "error",
+        "relativePath": "personal_writing/existing.txt",
+        "expectedDenied": true,
+        "exception": "IOException",
+        "hresult": -2147024837,
+        "win32": 59
+      },
+      {
+        "utc": "2026-10-13T02:47:42.0690853+00:00",
+        "monotonicMs": 188.1656,
+        "stage": "direct-open-read",
+        "phase": "begin",
+        "relativePath": "personal_writing/existing.txt",
+        "expectedDenied": null,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:47:42.1275732+00:00",
+        "monotonicMs": 246.6602,
+        "stage": "direct-open-read",
+        "phase": "error",
+        "relativePath": "personal_writing/existing.txt",
+        "expectedDenied": true,
+        "exception": "UnauthorizedAccessException",
+        "hresult": -2147024891,
+        "win32": 5
+      },
+      {
+        "utc": "2026-10-13T02:47:42.1275951+00:00",
+        "monotonicMs": 246.6753,
+        "stage": "observe-12s",
+        "phase": "begin",
+        "relativePath": null,
+        "expectedDenied": null,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:47:54.1314668+00:00",
+        "monotonicMs": 12250.5628,
+        "stage": "observe-12s",
+        "phase": "success",
+        "relativePath": null,
+        "expectedDenied": false,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:47:54.1314925+00:00",
+        "monotonicMs": 12250.5728,
+        "stage": "connection-alive-read",
+        "phase": "begin",
+        "relativePath": "film/existing.txt",
+        "expectedDenied": null,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:47:54.2242948+00:00",
+        "monotonicMs": 12343.3873,
+        "stage": "connection-alive-read",
+        "phase": "success",
+        "relativePath": "film/existing.txt",
+        "expectedDenied": false,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:47:54.2243781+00:00",
+        "monotonicMs": 12343.4585,
+        "stage": "process-complete",
+        "phase": "end",
+        "relativePath": null,
+        "expectedDenied": null,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      }
+    ]
+  },
+  "after": {
+    "utc": "2026-10-13T02:47:54.701092+00:00",
+    "log_size": 41140,
+    "log_tail": "  smbd_vfs_init: smbd_vfs_initugacl_aget_acl: ERR_ACCESS_DENIE\n[2026/10/13 10:47:42.285458,  0, pid=344080] ../../source3/modules/vfs_ugacl.c:889(ugvfs_acl_fget_nt_acl)\n  ugvfs_acl_fget_nt_acl: fget_nt_acl(real_path:/volume1/MuYing_ACL_Test/personal_writing, stream:(null)) ugacl_agent_acl fail, ret:-1073741790\n[2026/10/13 10:47:42.285497,  0, pid=344080] ../../source3/smbd/open.c:3403(smbd_calculate_maximum_allowed_access_fsp)\n  smbd_calculate_maximum_allowed_access_fsp: Could not get acl on file personal_writing: NT_STATUS_ACCESS_DENIED\n",
+    "service": "MainPID=10118\nNRestarts=0\nActiveState=active\nSubState=running\n"
+  },
+  "new_panic": false
+}

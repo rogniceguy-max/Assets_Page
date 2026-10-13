@@ -1,0 +1,56 @@
+{
+  "沐影影视测试": {
+    "film": {
+      "exit": 0,
+      "stdout": "  .                                   D        0  Tue Oct 13 10:08:25 2026\n  ..                                  D        0  Tue Oct 13 10:08:16 2026\n  existing.txt                        N       19  Tue Oct 13 10:08:25 2026\n  delete-probe.txt                    N       14  Tue Oct 13 10:08:25 2026\n  new-1005.txt                        N       12  Tue Oct 13 10:08:25 2026\n\n\t\t7735264828 blocks of size 1024. 7627001240 blocks available\n",
+      "stderr": "getting file \\film\\existing.txt of size 19 as /dev/null (190000.0 KiloBytes/sec) (average inf KiloBytes/sec)\n"
+    },
+    "writing": {
+      "exit": 0,
+      "stdout": "  .                                   D        0  Tue Oct 13 10:08:25 2026\n  ..                                  D        0  Tue Oct 13 10:08:16 2026\n  existing.txt                        N       19  Tue Oct 13 10:08:25 2026\n  new-1006.txt                        N       12  Tue Oct 13 10:08:25 2026\n\n\t\t7735264828 blocks of size 1024. 7627001240 blocks available\n",
+      "stderr": "getting file \\writing\\existing.txt of size 19 as /dev/null (190000.0 KiloBytes/sec) (average inf KiloBytes/sec)\n"
+    },
+    "public": {
+      "exit": 0,
+      "stdout": "  .                                   D        0  Tue Oct 13 10:08:25 2026\n  ..                                  D        0  Tue Oct 13 10:08:16 2026\n  existing.txt                        N       19  Tue Oct 13 10:08:25 2026\n  new-1006.txt                        N       12  Tue Oct 13 10:08:25 2026\n  new-1005.txt                        N       12  Tue Oct 13 10:08:25 2026\n\n\t\t7735264828 blocks of size 1024. 7627001240 blocks available\n",
+      "stderr": "getting file \\public\\existing.txt of size 19 as /dev/null (190000.0 KiloBytes/sec) (average inf KiloBytes/sec)\n"
+    },
+    "personal_film": {
+      "exit": 0,
+      "stdout": "  .                                   D        0  Tue Oct 13 10:08:25 2026\n  ..                                  D        0  Tue Oct 13 10:08:16 2026\n  existing.txt                        N       19  Tue Oct 13 10:08:25 2026\n  delete-probe.txt                    N       14  Tue Oct 13 10:08:25 2026\n  new-1005.txt                        N       12  Tue Oct 13 10:08:25 2026\n\n\t\t7735264828 blocks of size 1024. 7627001240 blocks available\n",
+      "stderr": "getting file \\personal_film\\existing.txt of size 19 as /dev/null (190000.0 KiloBytes/sec) (average inf KiloBytes/sec)\n"
+    },
+    "personal_writing": {
+      "exit": 1,
+      "stdout": "NT_STATUS_ACCESS_DENIED listing \\personal_writing\\*\nNT_STATUS_ACCESS_DENIED opening remote file \\personal_writing\\existing.txt\n",
+      "stderr": ""
+    }
+  },
+  "沐影文学测试": {
+    "film": {
+      "exit": 0,
+      "stdout": "  .                                   D        0  Tue Oct 13 10:08:25 2026\n  ..                                  D        0  Tue Oct 13 10:08:16 2026\n  existing.txt                        N       19  Tue Oct 13 10:08:25 2026\n  delete-probe.txt                    N       14  Tue Oct 13 10:08:25 2026\n  new-1005.txt                        N       12  Tue Oct 13 10:08:25 2026\n\n\t\t7735264828 blocks of size 1024. 7627001240 blocks available\n",
+      "stderr": "getting file \\film\\existing.txt of size 19 as /dev/null (190000.0 KiloBytes/sec) (average inf KiloBytes/sec)\n"
+    },
+    "writing": {
+      "exit": 0,
+      "stdout": "  .                                   D        0  Tue Oct 13 10:08:25 2026\n  ..                                  D        0  Tue Oct 13 10:08:16 2026\n  existing.txt                        N       19  Tue Oct 13 10:08:25 2026\n  new-1006.txt                        N       12  Tue Oct 13 10:08:25 2026\n\n\t\t7735264828 blocks of size 1024. 7627001240 blocks available\n",
+      "stderr": "getting file \\writing\\existing.txt of size 19 as /dev/null (190000.0 KiloBytes/sec) (average inf KiloBytes/sec)\n"
+    },
+    "public": {
+      "exit": 0,
+      "stdout": "  .                                   D        0  Tue Oct 13 10:08:25 2026\n  ..                                  D        0  Tue Oct 13 10:08:16 2026\n  existing.txt                        N       19  Tue Oct 13 10:08:25 2026\n  new-1006.txt                        N       12  Tue Oct 13 10:08:25 2026\n  new-1005.txt                        N       12  Tue Oct 13 10:08:25 2026\n\n\t\t7735264828 blocks of size 1024. 7627001240 blocks available\n",
+      "stderr": "getting file \\public\\existing.txt of size 19 as /dev/null (190000.0 KiloBytes/sec) (average inf KiloBytes/sec)\n"
+    },
+    "personal_film": {
+      "exit": 1,
+      "stdout": "NT_STATUS_ACCESS_DENIED listing \\personal_film\\*\nNT_STATUS_ACCESS_DENIED opening remote file \\personal_film\\existing.txt\n",
+      "stderr": ""
+    },
+    "personal_writing": {
+      "exit": 0,
+      "stdout": "  .                                   D        0  Tue Oct 13 10:08:25 2026\n  ..                                  D        0  Tue Oct 13 10:08:16 2026\n  existing.txt                        N       19  Tue Oct 13 10:08:25 2026\n  new-1006.txt                        N       12  Tue Oct 13 10:08:25 2026\n\n\t\t7735264828 blocks of size 1024. 7627001240 blocks available\n",
+      "stderr": "getting file \\personal_writing\\existing.txt of size 19 as /dev/null (190000.0 KiloBytes/sec) (average inf KiloBytes/sec)\n"
+    }
+  }
+}

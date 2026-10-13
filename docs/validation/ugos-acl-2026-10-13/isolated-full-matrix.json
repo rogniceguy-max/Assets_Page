@@ -1,0 +1,1143 @@
+{
+  "unix": {
+    "沐影影视测试": {
+      "film": {
+        "list": {
+          "allowed": true
+        },
+        "read": {
+          "allowed": true
+        },
+        "overwrite": {
+          "allowed": true
+        },
+        "create": {
+          "allowed": true
+        },
+        "rename": {
+          "allowed": true
+        },
+        "delete": {
+          "allowed": true
+        },
+        "mkdir": {
+          "allowed": true
+        }
+      },
+      "writing": {
+        "list": {
+          "allowed": true
+        },
+        "read": {
+          "allowed": true
+        },
+        "overwrite": {
+          "allowed": false,
+          "errno": 13
+        },
+        "create": {
+          "allowed": false,
+          "errno": 13
+        },
+        "rename": {
+          "allowed": false,
+          "errno": 13
+        },
+        "delete": {
+          "allowed": false,
+          "errno": 13
+        },
+        "mkdir": {
+          "allowed": false,
+          "errno": 13
+        }
+      },
+      "public": {
+        "list": {
+          "allowed": true
+        },
+        "read": {
+          "allowed": true
+        },
+        "overwrite": {
+          "allowed": true
+        },
+        "create": {
+          "allowed": true
+        },
+        "rename": {
+          "allowed": true
+        },
+        "delete": {
+          "allowed": true
+        },
+        "mkdir": {
+          "allowed": true
+        }
+      },
+      "personal_film": {
+        "list": {
+          "allowed": true
+        },
+        "read": {
+          "allowed": true
+        },
+        "overwrite": {
+          "allowed": true
+        },
+        "create": {
+          "allowed": true
+        },
+        "rename": {
+          "allowed": true
+        },
+        "delete": {
+          "allowed": true
+        },
+        "mkdir": {
+          "allowed": true
+        }
+      },
+      "personal_writing": {
+        "list": {
+          "allowed": false,
+          "errno": 13
+        },
+        "read": {
+          "allowed": false,
+          "errno": 13
+        },
+        "overwrite": {
+          "allowed": false,
+          "errno": 13
+        },
+        "create": {
+          "allowed": false,
+          "errno": 13
+        },
+        "rename": {
+          "allowed": false,
+          "errno": 13
+        },
+        "delete": {
+          "allowed": false,
+          "errno": 13
+        },
+        "mkdir": {
+          "allowed": false,
+          "errno": 13
+        }
+      }
+    },
+    "沐影文学测试": {
+      "film": {
+        "list": {
+          "allowed": true
+        },
+        "read": {
+          "allowed": true
+        },
+        "overwrite": {
+          "allowed": false,
+          "errno": 13
+        },
+        "create": {
+          "allowed": false,
+          "errno": 13
+        },
+        "rename": {
+          "allowed": false,
+          "errno": 13
+        },
+        "delete": {
+          "allowed": false,
+          "errno": 13
+        },
+        "mkdir": {
+          "allowed": false,
+          "errno": 13
+        }
+      },
+      "writing": {
+        "list": {
+          "allowed": true
+        },
+        "read": {
+          "allowed": true
+        },
+        "overwrite": {
+          "allowed": true
+        },
+        "create": {
+          "allowed": true
+        },
+        "rename": {
+          "allowed": true
+        },
+        "delete": {
+          "allowed": true
+        },
+        "mkdir": {
+          "allowed": true
+        }
+      },
+      "public": {
+        "list": {
+          "allowed": true
+        },
+        "read": {
+          "allowed": true
+        },
+        "overwrite": {
+          "allowed": true
+        },
+        "create": {
+          "allowed": true
+        },
+        "rename": {
+          "allowed": true
+        },
+        "delete": {
+          "allowed": true
+        },
+        "mkdir": {
+          "allowed": true
+        }
+      },
+      "personal_film": {
+        "list": {
+          "allowed": false,
+          "errno": 13
+        },
+        "read": {
+          "allowed": false,
+          "errno": 13
+        },
+        "overwrite": {
+          "allowed": false,
+          "errno": 13
+        },
+        "create": {
+          "allowed": false,
+          "errno": 13
+        },
+        "rename": {
+          "allowed": false,
+          "errno": 13
+        },
+        "delete": {
+          "allowed": false,
+          "errno": 13
+        },
+        "mkdir": {
+          "allowed": false,
+          "errno": 13
+        }
+      },
+      "personal_writing": {
+        "list": {
+          "allowed": true
+        },
+        "read": {
+          "allowed": true
+        },
+        "overwrite": {
+          "allowed": true
+        },
+        "create": {
+          "allowed": true
+        },
+        "rename": {
+          "allowed": true
+        },
+        "delete": {
+          "allowed": true
+        },
+        "mkdir": {
+          "allowed": true
+        }
+      }
+    },
+    "沐影参观测试": {
+      "film": {
+        "list": {
+          "allowed": true
+        },
+        "read": {
+          "allowed": true
+        },
+        "overwrite": {
+          "allowed": false,
+          "errno": 13
+        },
+        "create": {
+          "allowed": false,
+          "errno": 13
+        },
+        "rename": {
+          "allowed": false,
+          "errno": 13
+        },
+        "delete": {
+          "allowed": false,
+          "errno": 13
+        },
+        "mkdir": {
+          "allowed": false,
+          "errno": 13
+        }
+      },
+      "writing": {
+        "list": {
+          "allowed": true
+        },
+        "read": {
+          "allowed": true
+        },
+        "overwrite": {
+          "allowed": false,
+          "errno": 13
+        },
+        "create": {
+          "allowed": false,
+          "errno": 13
+        },
+        "rename": {
+          "allowed": false,
+          "errno": 13
+        },
+        "delete": {
+          "allowed": false,
+          "errno": 13
+        },
+        "mkdir": {
+          "allowed": false,
+          "errno": 13
+        }
+      },
+      "public": {
+        "list": {
+          "allowed": true
+        },
+        "read": {
+          "allowed": true
+        },
+        "overwrite": {
+          "allowed": false,
+          "errno": 13
+        },
+        "create": {
+          "allowed": false,
+          "errno": 13
+        },
+        "rename": {
+          "allowed": false,
+          "errno": 13
+        },
+        "delete": {
+          "allowed": false,
+          "errno": 13
+        },
+        "mkdir": {
+          "allowed": false,
+          "errno": 13
+        }
+      },
+      "personal_film": {
+        "list": {
+          "allowed": false,
+          "errno": 13
+        },
+        "read": {
+          "allowed": false,
+          "errno": 13
+        },
+        "overwrite": {
+          "allowed": false,
+          "errno": 13
+        },
+        "create": {
+          "allowed": false,
+          "errno": 13
+        },
+        "rename": {
+          "allowed": false,
+          "errno": 13
+        },
+        "delete": {
+          "allowed": false,
+          "errno": 13
+        },
+        "mkdir": {
+          "allowed": false,
+          "errno": 13
+        }
+      },
+      "personal_writing": {
+        "list": {
+          "allowed": false,
+          "errno": 13
+        },
+        "read": {
+          "allowed": false,
+          "errno": 13
+        },
+        "overwrite": {
+          "allowed": false,
+          "errno": 13
+        },
+        "create": {
+          "allowed": false,
+          "errno": 13
+        },
+        "rename": {
+          "allowed": false,
+          "errno": 13
+        },
+        "delete": {
+          "allowed": false,
+          "errno": 13
+        },
+        "mkdir": {
+          "allowed": false,
+          "errno": 13
+        }
+      }
+    }
+  },
+  "smb": {
+    "沐影影视测试": {
+      "film": {
+        "list": {
+          "exit": 0,
+          "stdout": "  .                                   D        0  Tue Oct 13 10:09:57 2026\n  ..                                  D        0  Tue Oct 13 10:08:16 2026\n  unix-dir-1005                       D        0  Tue Oct 13 10:09:57 2026\n  existing.txt                        N       19  Tue Oct 13 10:08:25 2026\n  delete-probe.txt                    N       14  Tue Oct 13 10:08:25 2026\n  matrix-existing.txt                 N       16  Tue Oct 13 10:09:57 2026\n  matrix-delete.txt                   N       16  Tue Oct 13 10:09:57 2026\n  unix-created-1005.txt               N        8  Tue Oct 13 10:09:57 2026\n  matrix-rename.txt                   N       16  Tue Oct 13 10:09:57 2026\n  new-1005.txt                        N       12  Tue Oct 13 10:08:25 2026\n\n\t\t7735264828 blocks of size 1024. 7627001060 blocks available\n",
+          "stderr": "",
+          "allowed": true
+        },
+        "read": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "getting file \\film\\matrix-existing.txt of size 16 as /dev/null (160000.0 KiloBytes/sec) (average inf KiloBytes/sec)\n",
+          "allowed": true
+        },
+        "overwrite": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "putting file /run/muying-fixture-r69jeztm as \\film\\matrix-existing.txt (19.5 kb/s) (average 19.5 kb/s)\n",
+          "allowed": true
+        },
+        "create": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "putting file /run/muying-fixture-r69jeztm as \\film\\smb-created-0.txt (19.5 kb/s) (average 19.5 kb/s)\n",
+          "allowed": true
+        },
+        "rename": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "",
+          "allowed": true
+        },
+        "delete": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "",
+          "allowed": true
+        },
+        "mkdir": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "",
+          "allowed": true
+        }
+      },
+      "writing": {
+        "list": {
+          "exit": 0,
+          "stdout": "  .                                   D        0  Tue Oct 13 10:09:56 2026\n  ..                                  D        0  Tue Oct 13 10:08:16 2026\n  existing.txt                        N       19  Tue Oct 13 10:08:25 2026\n  matrix-existing.txt                 N       16  Tue Oct 13 10:09:57 2026\n  matrix-delete.txt                   N       16  Tue Oct 13 10:09:57 2026\n  matrix-rename.txt                   N       16  Tue Oct 13 10:09:57 2026\n  new-1006.txt                        N       12  Tue Oct 13 10:08:25 2026\n\n\t\t7735264828 blocks of size 1024. 7627001056 blocks available\n",
+          "stderr": "",
+          "allowed": true
+        },
+        "read": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "getting file \\writing\\matrix-existing.txt of size 16 as /dev/null (160000.0 KiloBytes/sec) (average inf KiloBytes/sec)\n",
+          "allowed": true
+        },
+        "overwrite": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED opening remote file \\writing\\matrix-existing.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "create": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED opening remote file \\writing\\smb-created-0.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "rename": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED renaming files \\writing\\matrix-rename.txt -> \\writing\\matrix-renamed.txt \n",
+          "stderr": "",
+          "allowed": false
+        },
+        "delete": {
+          "exit": 0,
+          "stdout": "NT_STATUS_ACCESS_DENIED deleting remote file \\writing\\matrix-delete.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "mkdir": {
+          "exit": 0,
+          "stdout": "NT_STATUS_ACCESS_DENIED making remote directory \\writing\\smb-dir-0\n",
+          "stderr": "",
+          "allowed": false
+        }
+      },
+      "public": {
+        "list": {
+          "exit": 0,
+          "stdout": "  .                                   D        0  Tue Oct 13 10:09:57 2026\n  ..                                  D        0  Tue Oct 13 10:08:16 2026\n  unix-dir-1005                       D        0  Tue Oct 13 10:09:57 2026\n  existing.txt                        N       19  Tue Oct 13 10:08:25 2026\n  matrix-existing.txt                 N       16  Tue Oct 13 10:09:57 2026\n  matrix-delete.txt                   N       16  Tue Oct 13 10:09:57 2026\n  unix-created-1005.txt               N        8  Tue Oct 13 10:09:57 2026\n  matrix-rename.txt                   N       16  Tue Oct 13 10:09:57 2026\n  new-1006.txt                        N       12  Tue Oct 13 10:08:25 2026\n  new-1005.txt                        N       12  Tue Oct 13 10:08:25 2026\n\n\t\t7735264828 blocks of size 1024. 7627000896 blocks available\n",
+          "stderr": "",
+          "allowed": true
+        },
+        "read": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "getting file \\public\\matrix-existing.txt of size 16 as /dev/null (160000.0 KiloBytes/sec) (average inf KiloBytes/sec)\n",
+          "allowed": true
+        },
+        "overwrite": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "putting file /run/muying-fixture-r69jeztm as \\public\\matrix-existing.txt (0.6 kb/s) (average 0.6 kb/s)\n",
+          "allowed": true
+        },
+        "create": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "putting file /run/muying-fixture-r69jeztm as \\public\\smb-created-0.txt (19.5 kb/s) (average 19.5 kb/s)\n",
+          "allowed": true
+        },
+        "rename": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "",
+          "allowed": true
+        },
+        "delete": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "",
+          "allowed": true
+        },
+        "mkdir": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "",
+          "allowed": true
+        }
+      },
+      "personal_film": {
+        "list": {
+          "exit": 0,
+          "stdout": "  .                                   D        0  Tue Oct 13 10:09:57 2026\n  ..                                  D        0  Tue Oct 13 10:08:16 2026\n  unix-dir-1005                       D        0  Tue Oct 13 10:09:57 2026\n  existing.txt                        N       19  Tue Oct 13 10:08:25 2026\n  delete-probe.txt                    N       14  Tue Oct 13 10:08:25 2026\n  matrix-existing.txt                 N       16  Tue Oct 13 10:09:57 2026\n  matrix-delete.txt                   N       16  Tue Oct 13 10:09:57 2026\n  unix-created-1005.txt               N        8  Tue Oct 13 10:09:57 2026\n  matrix-rename.txt                   N       16  Tue Oct 13 10:09:57 2026\n  new-1005.txt                        N       12  Tue Oct 13 10:08:25 2026\n\n\t\t7735264828 blocks of size 1024. 7627000892 blocks available\n",
+          "stderr": "",
+          "allowed": true
+        },
+        "read": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "getting file \\personal_film\\matrix-existing.txt of size 16 as /dev/null (15.6 KiloBytes/sec) (average 15.6 KiloBytes/sec)\n",
+          "allowed": true
+        },
+        "overwrite": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "putting file /run/muying-fixture-r69jeztm as \\personal_film\\matrix-existing.txt (0.8 kb/s) (average 0.8 kb/s)\n",
+          "allowed": true
+        },
+        "create": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "putting file /run/muying-fixture-r69jeztm as \\personal_film\\smb-created-0.txt (19.5 kb/s) (average 19.5 kb/s)\n",
+          "allowed": true
+        },
+        "rename": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "",
+          "allowed": true
+        },
+        "delete": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "",
+          "allowed": true
+        },
+        "mkdir": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "",
+          "allowed": true
+        }
+      },
+      "personal_writing": {
+        "list": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED listing \\personal_writing\\*\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "read": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED opening remote file \\personal_writing\\matrix-existing.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "overwrite": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED opening remote file \\personal_writing\\matrix-existing.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "create": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED opening remote file \\personal_writing\\smb-created-0.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "rename": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED renaming files \\personal_writing\\matrix-rename.txt -> \\personal_writing\\matrix-renamed.txt \n",
+          "stderr": "",
+          "allowed": false
+        },
+        "delete": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED listing \\personal_writing\\matrix-delete.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "mkdir": {
+          "exit": 0,
+          "stdout": "NT_STATUS_ACCESS_DENIED making remote directory \\personal_writing\\smb-dir-0\n",
+          "stderr": "",
+          "allowed": false
+        }
+      }
+    },
+    "沐影文学测试": {
+      "film": {
+        "list": {
+          "exit": 0,
+          "stdout": "  .                                   D        0  Tue Oct 13 10:09:59 2026\n  ..                                  D        0  Tue Oct 13 10:08:16 2026\n  unix-dir-1005                       D        0  Tue Oct 13 10:09:57 2026\n  existing.txt                        N       19  Tue Oct 13 10:08:25 2026\n  delete-probe.txt                    N       14  Tue Oct 13 10:08:25 2026\n  smb-dir-0                           D        0  Tue Oct 13 10:09:57 2026\n  matrix-existing.txt                 A       16  Tue Oct 13 10:09:59 2026\n  matrix-delete.txt                   N       16  Tue Oct 13 10:09:59 2026\n  unix-created-1005.txt               N        8  Tue Oct 13 10:09:57 2026\n  matrix-rename.txt                   N       16  Tue Oct 13 10:09:59 2026\n  smb-created-0.txt                   A       20  Tue Oct 13 10:09:57 2026\n  new-1005.txt                        N       12  Tue Oct 13 10:08:25 2026\n\n\t\t7735264828 blocks of size 1024. 7627000560 blocks available\n",
+          "stderr": "",
+          "allowed": true
+        },
+        "read": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "getting file \\film\\matrix-existing.txt of size 16 as /dev/null (15.6 KiloBytes/sec) (average 15.6 KiloBytes/sec)\n",
+          "allowed": true
+        },
+        "overwrite": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED opening remote file \\film\\matrix-existing.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "create": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED opening remote file \\film\\smb-created-1.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "rename": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED renaming files \\film\\matrix-rename.txt -> \\film\\matrix-renamed.txt \n",
+          "stderr": "",
+          "allowed": false
+        },
+        "delete": {
+          "exit": 0,
+          "stdout": "NT_STATUS_ACCESS_DENIED deleting remote file \\film\\matrix-delete.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "mkdir": {
+          "exit": 0,
+          "stdout": "NT_STATUS_ACCESS_DENIED making remote directory \\film\\smb-dir-1\n",
+          "stderr": "",
+          "allowed": false
+        }
+      },
+      "writing": {
+        "list": {
+          "exit": 0,
+          "stdout": "  .                                   D        0  Tue Oct 13 10:09:59 2026\n  ..                                  D        0  Tue Oct 13 10:08:16 2026\n  existing.txt                        N       19  Tue Oct 13 10:08:25 2026\n  matrix-existing.txt                 N       16  Tue Oct 13 10:09:59 2026\n  matrix-delete.txt                   N       16  Tue Oct 13 10:09:59 2026\n  unix-dir-1006                       D        0  Tue Oct 13 10:09:59 2026\n  matrix-rename.txt                   N       16  Tue Oct 13 10:09:59 2026\n  new-1006.txt                        N       12  Tue Oct 13 10:08:25 2026\n  unix-created-1006.txt               N        8  Tue Oct 13 10:09:59 2026\n\n\t\t7735264828 blocks of size 1024. 7627000560 blocks available\n",
+          "stderr": "",
+          "allowed": true
+        },
+        "read": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "getting file \\writing\\matrix-existing.txt of size 16 as /dev/null (160000.0 KiloBytes/sec) (average inf KiloBytes/sec)\n",
+          "allowed": true
+        },
+        "overwrite": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "putting file /run/muying-fixture-pccme3ir as \\writing\\matrix-existing.txt (19.5 kb/s) (average 19.5 kb/s)\n",
+          "allowed": true
+        },
+        "create": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "putting file /run/muying-fixture-pccme3ir as \\writing\\smb-created-1.txt (9.8 kb/s) (average 9.8 kb/s)\n",
+          "allowed": true
+        },
+        "rename": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "",
+          "allowed": true
+        },
+        "delete": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "",
+          "allowed": true
+        },
+        "mkdir": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "",
+          "allowed": true
+        }
+      },
+      "public": {
+        "list": {
+          "exit": 0,
+          "stdout": "  .                                   D        0  Tue Oct 13 10:09:59 2026\n  ..                                  D        0  Tue Oct 13 10:08:16 2026\n  unix-dir-1005                       D        0  Tue Oct 13 10:09:57 2026\n  existing.txt                        N       19  Tue Oct 13 10:08:25 2026\n  smb-dir-0                           D        0  Tue Oct 13 10:09:58 2026\n  matrix-existing.txt                 A       16  Tue Oct 13 10:09:59 2026\n  matrix-delete.txt                   N       16  Tue Oct 13 10:09:59 2026\n  unix-dir-1006                       D        0  Tue Oct 13 10:09:59 2026\n  unix-created-1005.txt               N        8  Tue Oct 13 10:09:57 2026\n  matrix-rename.txt                   N       16  Tue Oct 13 10:09:59 2026\n  new-1006.txt                        N       12  Tue Oct 13 10:08:25 2026\n  smb-created-0.txt                   A       20  Tue Oct 13 10:09:58 2026\n  new-1005.txt                        N       12  Tue Oct 13 10:08:25 2026\n  unix-created-1006.txt               N        8  Tue Oct 13 10:09:59 2026\n\n\t\t7735264828 blocks of size 1024. 7627000984 blocks available\n",
+          "stderr": "",
+          "allowed": true
+        },
+        "read": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "getting file \\public\\matrix-existing.txt of size 16 as /dev/null (15.6 KiloBytes/sec) (average 15.6 KiloBytes/sec)\n",
+          "allowed": true
+        },
+        "overwrite": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "putting file /run/muying-fixture-pccme3ir as \\public\\matrix-existing.txt (19.5 kb/s) (average 19.5 kb/s)\n",
+          "allowed": true
+        },
+        "create": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "putting file /run/muying-fixture-pccme3ir as \\public\\smb-created-1.txt (19.5 kb/s) (average 19.5 kb/s)\n",
+          "allowed": true
+        },
+        "rename": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "",
+          "allowed": true
+        },
+        "delete": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "",
+          "allowed": true
+        },
+        "mkdir": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "",
+          "allowed": true
+        }
+      },
+      "personal_film": {
+        "list": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED listing \\personal_film\\*\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "read": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED opening remote file \\personal_film\\matrix-existing.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "overwrite": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED opening remote file \\personal_film\\matrix-existing.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "create": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED opening remote file \\personal_film\\smb-created-1.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "rename": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED renaming files \\personal_film\\matrix-rename.txt -> \\personal_film\\matrix-renamed.txt \n",
+          "stderr": "",
+          "allowed": false
+        },
+        "delete": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED listing \\personal_film\\matrix-delete.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "mkdir": {
+          "exit": 0,
+          "stdout": "NT_STATUS_ACCESS_DENIED making remote directory \\personal_film\\smb-dir-1\n",
+          "stderr": "",
+          "allowed": false
+        }
+      },
+      "personal_writing": {
+        "list": {
+          "exit": 0,
+          "stdout": "  .                                   D        0  Tue Oct 13 10:10:00 2026\n  ..                                  D        0  Tue Oct 13 10:08:16 2026\n  existing.txt                        N       19  Tue Oct 13 10:08:25 2026\n  matrix-existing.txt                 N       16  Tue Oct 13 10:09:59 2026\n  matrix-delete.txt                   N       16  Tue Oct 13 10:10:00 2026\n  unix-dir-1006                       D        0  Tue Oct 13 10:09:59 2026\n  matrix-rename.txt                   N       16  Tue Oct 13 10:10:00 2026\n  new-1006.txt                        N       12  Tue Oct 13 10:08:25 2026\n  unix-created-1006.txt               N        8  Tue Oct 13 10:09:59 2026\n\n\t\t7735264828 blocks of size 1024. 7627000864 blocks available\n",
+          "stderr": "",
+          "allowed": true
+        },
+        "read": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "getting file \\personal_writing\\matrix-existing.txt of size 16 as /dev/null (15.6 KiloBytes/sec) (average 15.6 KiloBytes/sec)\n",
+          "allowed": true
+        },
+        "overwrite": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "putting file /run/muying-fixture-pccme3ir as \\personal_writing\\matrix-existing.txt (0.7 kb/s) (average 0.7 kb/s)\n",
+          "allowed": true
+        },
+        "create": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "putting file /run/muying-fixture-pccme3ir as \\personal_writing\\smb-created-1.txt (19.5 kb/s) (average 19.5 kb/s)\n",
+          "allowed": true
+        },
+        "rename": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "",
+          "allowed": true
+        },
+        "delete": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "",
+          "allowed": true
+        },
+        "mkdir": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "",
+          "allowed": true
+        }
+      }
+    },
+    "沐影参观测试": {
+      "film": {
+        "list": {
+          "exit": 0,
+          "stdout": "  .                                   D        0  Tue Oct 13 10:09:59 2026\n  ..                                  D        0  Tue Oct 13 10:08:16 2026\n  unix-dir-1005                       D        0  Tue Oct 13 10:09:57 2026\n  existing.txt                        N       19  Tue Oct 13 10:08:25 2026\n  delete-probe.txt                    N       14  Tue Oct 13 10:08:25 2026\n  smb-dir-0                           D        0  Tue Oct 13 10:09:57 2026\n  matrix-existing.txt                 A       16  Tue Oct 13 10:10:02 2026\n  matrix-delete.txt                   N       16  Tue Oct 13 10:10:02 2026\n  unix-created-1005.txt               N        8  Tue Oct 13 10:09:57 2026\n  matrix-rename.txt                   N       16  Tue Oct 13 10:10:02 2026\n  smb-created-0.txt                   A       20  Tue Oct 13 10:09:57 2026\n  new-1005.txt                        N       12  Tue Oct 13 10:08:25 2026\n\n\t\t7735264828 blocks of size 1024. 7627000848 blocks available\n",
+          "stderr": "",
+          "allowed": true
+        },
+        "read": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "getting file \\film\\matrix-existing.txt of size 16 as /dev/null (15.6 KiloBytes/sec) (average 15.6 KiloBytes/sec)\n",
+          "allowed": true
+        },
+        "overwrite": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED opening remote file \\film\\matrix-existing.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "create": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED opening remote file \\film\\smb-created-2.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "rename": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED renaming files \\film\\matrix-rename.txt -> \\film\\matrix-renamed.txt \n",
+          "stderr": "",
+          "allowed": false
+        },
+        "delete": {
+          "exit": 0,
+          "stdout": "NT_STATUS_ACCESS_DENIED deleting remote file \\film\\matrix-delete.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "mkdir": {
+          "exit": 0,
+          "stdout": "NT_STATUS_ACCESS_DENIED making remote directory \\film\\smb-dir-2\n",
+          "stderr": "",
+          "allowed": false
+        }
+      },
+      "writing": {
+        "list": {
+          "exit": 0,
+          "stdout": "  .                                   D        0  Tue Oct 13 10:10:02 2026\n  ..                                  D        0  Tue Oct 13 10:08:16 2026\n  existing.txt                        N       19  Tue Oct 13 10:08:25 2026\n  smb-created-1.txt                   A       20  Tue Oct 13 10:10:00 2026\n  matrix-existing.txt                 A       16  Tue Oct 13 10:10:02 2026\n  matrix-delete.txt                   N       16  Tue Oct 13 10:10:02 2026\n  unix-dir-1006                       D        0  Tue Oct 13 10:09:59 2026\n  matrix-rename.txt                   N       16  Tue Oct 13 10:10:02 2026\n  new-1006.txt                        N       12  Tue Oct 13 10:08:25 2026\n  smb-dir-1                           D        0  Tue Oct 13 10:10:01 2026\n  unix-created-1006.txt               N        8  Tue Oct 13 10:09:59 2026\n\n\t\t7735264828 blocks of size 1024. 7627000704 blocks available\n",
+          "stderr": "",
+          "allowed": true
+        },
+        "read": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "getting file \\writing\\matrix-existing.txt of size 16 as /dev/null (15.6 KiloBytes/sec) (average 15.6 KiloBytes/sec)\n",
+          "allowed": true
+        },
+        "overwrite": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED opening remote file \\writing\\matrix-existing.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "create": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED opening remote file \\writing\\smb-created-2.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "rename": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED renaming files \\writing\\matrix-rename.txt -> \\writing\\matrix-renamed.txt \n",
+          "stderr": "",
+          "allowed": false
+        },
+        "delete": {
+          "exit": 0,
+          "stdout": "NT_STATUS_ACCESS_DENIED deleting remote file \\writing\\matrix-delete.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "mkdir": {
+          "exit": 0,
+          "stdout": "NT_STATUS_ACCESS_DENIED making remote directory \\writing\\smb-dir-2\n",
+          "stderr": "",
+          "allowed": false
+        }
+      },
+      "public": {
+        "list": {
+          "exit": 0,
+          "stdout": "  .                                   D        0  Tue Oct 13 10:10:02 2026\n  ..                                  D        0  Tue Oct 13 10:08:16 2026\n  unix-dir-1005                       D        0  Tue Oct 13 10:09:57 2026\n  existing.txt                        N       19  Tue Oct 13 10:08:25 2026\n  smb-created-1.txt                   A       20  Tue Oct 13 10:10:01 2026\n  smb-dir-0                           D        0  Tue Oct 13 10:09:58 2026\n  matrix-existing.txt                 A       16  Tue Oct 13 10:10:02 2026\n  matrix-delete.txt                   N       16  Tue Oct 13 10:10:02 2026\n  unix-dir-1006                       D        0  Tue Oct 13 10:09:59 2026\n  unix-created-1005.txt               N        8  Tue Oct 13 10:09:57 2026\n  matrix-rename.txt                   N       16  Tue Oct 13 10:10:02 2026\n  new-1006.txt                        N       12  Tue Oct 13 10:08:25 2026\n  smb-dir-1                           D        0  Tue Oct 13 10:10:01 2026\n  smb-created-0.txt                   A       20  Tue Oct 13 10:09:58 2026\n  new-1005.txt                        N       12  Tue Oct 13 10:08:25 2026\n  unix-created-1006.txt               N        8  Tue Oct 13 10:09:59 2026\n\n\t\t7735264828 blocks of size 1024. 7627000704 blocks available\n",
+          "stderr": "",
+          "allowed": true
+        },
+        "read": {
+          "exit": 0,
+          "stdout": "",
+          "stderr": "getting file \\public\\matrix-existing.txt of size 16 as /dev/null (15.6 KiloBytes/sec) (average 15.6 KiloBytes/sec)\n",
+          "allowed": true
+        },
+        "overwrite": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED opening remote file \\public\\matrix-existing.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "create": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED opening remote file \\public\\smb-created-2.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "rename": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED renaming files \\public\\matrix-rename.txt -> \\public\\matrix-renamed.txt \n",
+          "stderr": "",
+          "allowed": false
+        },
+        "delete": {
+          "exit": 0,
+          "stdout": "NT_STATUS_ACCESS_DENIED deleting remote file \\public\\matrix-delete.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "mkdir": {
+          "exit": 0,
+          "stdout": "NT_STATUS_ACCESS_DENIED making remote directory \\public\\smb-dir-2\n",
+          "stderr": "",
+          "allowed": false
+        }
+      },
+      "personal_film": {
+        "list": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED listing \\personal_film\\*\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "read": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED opening remote file \\personal_film\\matrix-existing.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "overwrite": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED opening remote file \\personal_film\\matrix-existing.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "create": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED opening remote file \\personal_film\\smb-created-2.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "rename": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED renaming files \\personal_film\\matrix-rename.txt -> \\personal_film\\matrix-renamed.txt \n",
+          "stderr": "",
+          "allowed": false
+        },
+        "delete": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED listing \\personal_film\\matrix-delete.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "mkdir": {
+          "exit": 0,
+          "stdout": "NT_STATUS_ACCESS_DENIED making remote directory \\personal_film\\smb-dir-2\n",
+          "stderr": "",
+          "allowed": false
+        }
+      },
+      "personal_writing": {
+        "list": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED listing \\personal_writing\\*\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "read": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED opening remote file \\personal_writing\\matrix-existing.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "overwrite": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED opening remote file \\personal_writing\\matrix-existing.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "create": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED opening remote file \\personal_writing\\smb-created-2.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "rename": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED renaming files \\personal_writing\\matrix-rename.txt -> \\personal_writing\\matrix-renamed.txt \n",
+          "stderr": "",
+          "allowed": false
+        },
+        "delete": {
+          "exit": 1,
+          "stdout": "NT_STATUS_ACCESS_DENIED listing \\personal_writing\\matrix-delete.txt\n",
+          "stderr": "",
+          "allowed": false
+        },
+        "mkdir": {
+          "exit": 0,
+          "stdout": "NT_STATUS_ACCESS_DENIED making remote directory \\personal_writing\\smb-dir-2\n",
+          "stderr": "",
+          "allowed": false
+        }
+      }
+    }
+  },
+  "aces": {
+    "/volume1/MuYing_ACL_Test": "[0]    group:10:allow:rwxpdDaARWc--:-fd-  (level:0)\n[1]    group:1006:allow:r-x---a-R-c--:----  (level:0)\n[2]    group:1007:allow:r-x---a-R-c--:----  (level:0)\n[3]    user:1007:allow:r-x---a-R-c--:----  (level:0)\n",
+    "/volume1/MuYing_ACL_Test/personal_writing": "[0]    user:1006:allow:rwxpdDaARWc--:-fd-  (level:0)\n[1]    group:10:allow:rwxpdDaARWc--:-fd-  (level:1)\n",
+    "/volume1/MuYing_ACL_Test/public": "[0]    group:1006:allow:rwxpdDaARWc--:-fd-  (level:0)\n[1]    group:1007:allow:rwxpdDaARWc--:-fd-  (level:0)\n[2]    user:1007:allow:r-x---a-R-c--:-fd-  (level:0)\n[3]    group:10:allow:rwxpdDaARWc--:-fd-  (level:1)\n",
+    "/volume1/MuYing_ACL_Test/writing": "[0]    group:1006:allow:r-x---a-R-c--:-fd-  (level:0)\n[1]    group:1007:allow:rwxpdDaARWc--:-fd-  (level:0)\n[2]    user:1007:allow:r-x---a-R-c--:-fd-  (level:0)\n[3]    group:10:allow:rwxpdDaARWc--:-fd-  (level:1)\n",
+    "/volume1/MuYing_ACL_Test/personal_film": "[0]    user:1005:allow:rwxpdDaARWc--:-fd-  (level:0)\n[1]    group:10:allow:rwxpdDaARWc--:-fd-  (level:1)\n",
+    "/volume1/MuYing_ACL_Test/film": "[0]    group:1006:allow:rwxpdDaARWc--:-fd-  (level:0)\n[1]    group:1007:allow:r-x---a-R-c--:-fd-  (level:0)\n[2]    user:1007:allow:r-x---a-R-c--:-fd-  (level:0)\n[3]    group:10:allow:rwxpdDaARWc--:-fd-  (level:1)\n",
+    "/volume1/MuYing_ACL_Test/personal_writing/existing.txt": "[0]    user:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/personal_writing/smb-created-1.txt": "[0]    user:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/personal_writing/matrix-existing.txt": "[0]    user:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/personal_writing/matrix-delete.txt": "[0]    user:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/personal_writing/unix-dir-1006": "[0]    user:1006:allow:rwxpdDaARWc--:-fd-  (level:1)\n[1]    group:10:allow:rwxpdDaARWc--:-fd-  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/personal_writing/matrix-rename.txt": "[0]    user:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/personal_writing/new-1006.txt": "[0]    user:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/personal_writing/smb-dir-1": "[0]    user:1006:allow:rwxpdDaARWc--:-fd-  (level:1)\n[1]    group:10:allow:rwxpdDaARWc--:-fd-  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/personal_writing/unix-created-1006.txt": "[0]    user:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/personal_writing/unix-dir-1006/child.txt": "[0]    user:1006:allow:rwxpdDaARWc--:----  (level:2)\n[1]    group:10:allow:rwxpdDaARWc--:----  (level:3)\n",
+    "/volume1/MuYing_ACL_Test/public/unix-dir-1005": "[0]    group:1006:allow:rwxpdDaARWc--:-fd-  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:-fd-  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:-fd-  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:-fd-  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/public/existing.txt": "[0]    group:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/public/smb-created-1.txt": "[0]    group:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/public/smb-dir-0": "[0]    group:1006:allow:rwxpdDaARWc--:-fd-  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:-fd-  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:-fd-  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:-fd-  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/public/matrix-existing.txt": "[0]    group:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/public/matrix-delete.txt": "[0]    group:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/public/unix-dir-1006": "[0]    group:1006:allow:rwxpdDaARWc--:-fd-  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:-fd-  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:-fd-  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:-fd-  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/public/unix-created-1005.txt": "[0]    group:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/public/matrix-rename.txt": "[0]    group:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/public/new-1006.txt": "[0]    group:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/public/smb-dir-1": "[0]    group:1006:allow:rwxpdDaARWc--:-fd-  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:-fd-  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:-fd-  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:-fd-  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/public/smb-created-0.txt": "[0]    group:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/public/new-1005.txt": "[0]    group:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/public/unix-created-1006.txt": "[0]    group:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/public/unix-dir-1005/child.txt": "[0]    group:1006:allow:rwxpdDaARWc--:----  (level:2)\n[1]    group:1007:allow:rwxpdDaARWc--:----  (level:2)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:2)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:3)\n",
+    "/volume1/MuYing_ACL_Test/public/unix-dir-1006/child.txt": "[0]    group:1006:allow:rwxpdDaARWc--:----  (level:2)\n[1]    group:1007:allow:rwxpdDaARWc--:----  (level:2)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:2)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:3)\n",
+    "/volume1/MuYing_ACL_Test/writing/existing.txt": "[0]    group:1006:allow:r-x---a-R-c--:----  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/writing/smb-created-1.txt": "[0]    group:1006:allow:r-x---a-R-c--:----  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/writing/matrix-existing.txt": "[0]    group:1006:allow:r-x---a-R-c--:----  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/writing/matrix-delete.txt": "[0]    group:1006:allow:r-x---a-R-c--:----  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/writing/unix-dir-1006": "[0]    group:1006:allow:r-x---a-R-c--:-fd-  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:-fd-  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:-fd-  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:-fd-  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/writing/matrix-rename.txt": "[0]    group:1006:allow:r-x---a-R-c--:----  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/writing/new-1006.txt": "[0]    group:1006:allow:r-x---a-R-c--:----  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/writing/smb-dir-1": "[0]    group:1006:allow:r-x---a-R-c--:-fd-  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:-fd-  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:-fd-  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:-fd-  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/writing/unix-created-1006.txt": "[0]    group:1006:allow:r-x---a-R-c--:----  (level:1)\n[1]    group:1007:allow:rwxpdDaARWc--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/writing/unix-dir-1006/child.txt": "[0]    group:1006:allow:r-x---a-R-c--:----  (level:2)\n[1]    group:1007:allow:rwxpdDaARWc--:----  (level:2)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:2)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:3)\n",
+    "/volume1/MuYing_ACL_Test/personal_film/unix-dir-1005": "[0]    user:1005:allow:rwxpdDaARWc--:-fd-  (level:1)\n[1]    group:10:allow:rwxpdDaARWc--:-fd-  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/personal_film/existing.txt": "[0]    user:1005:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/personal_film/delete-probe.txt": "[0]    user:1005:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/personal_film/smb-dir-0": "[0]    user:1005:allow:rwxpdDaARWc--:-fd-  (level:1)\n[1]    group:10:allow:rwxpdDaARWc--:-fd-  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/personal_film/matrix-existing.txt": "[0]    user:1005:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/personal_film/matrix-delete.txt": "[0]    user:1005:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/personal_film/unix-created-1005.txt": "[0]    user:1005:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/personal_film/matrix-rename.txt": "[0]    user:1005:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/personal_film/smb-created-0.txt": "[0]    user:1005:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/personal_film/new-1005.txt": "[0]    user:1005:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/personal_film/unix-dir-1005/child.txt": "[0]    user:1005:allow:rwxpdDaARWc--:----  (level:2)\n[1]    group:10:allow:rwxpdDaARWc--:----  (level:3)\n",
+    "/volume1/MuYing_ACL_Test/film/unix-dir-1005": "[0]    group:1006:allow:rwxpdDaARWc--:-fd-  (level:1)\n[1]    group:1007:allow:r-x---a-R-c--:-fd-  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:-fd-  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:-fd-  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/film/existing.txt": "[0]    group:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:1007:allow:r-x---a-R-c--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/film/delete-probe.txt": "[0]    group:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:1007:allow:r-x---a-R-c--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/film/smb-dir-0": "[0]    group:1006:allow:rwxpdDaARWc--:-fd-  (level:1)\n[1]    group:1007:allow:r-x---a-R-c--:-fd-  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:-fd-  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:-fd-  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/film/matrix-existing.txt": "[0]    group:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:1007:allow:r-x---a-R-c--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/film/matrix-delete.txt": "[0]    group:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:1007:allow:r-x---a-R-c--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/film/unix-created-1005.txt": "[0]    group:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:1007:allow:r-x---a-R-c--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/film/matrix-rename.txt": "[0]    group:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:1007:allow:r-x---a-R-c--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/film/smb-created-0.txt": "[0]    group:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:1007:allow:r-x---a-R-c--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/film/new-1005.txt": "[0]    group:1006:allow:rwxpdDaARWc--:----  (level:1)\n[1]    group:1007:allow:r-x---a-R-c--:----  (level:1)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:1)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:2)\n",
+    "/volume1/MuYing_ACL_Test/film/unix-dir-1005/child.txt": "[0]    group:1006:allow:rwxpdDaARWc--:----  (level:2)\n[1]    group:1007:allow:r-x---a-R-c--:----  (level:2)\n[2]    user:1007:allow:r-x---a-R-c--:----  (level:2)\n[3]    group:10:allow:rwxpdDaARWc--:----  (level:3)\n"
+  },
+  "failures": []
+}

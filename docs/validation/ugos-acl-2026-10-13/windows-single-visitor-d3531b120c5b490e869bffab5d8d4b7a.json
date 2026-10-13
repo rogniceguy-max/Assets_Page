@@ -1,0 +1,338 @@
+{
+  "kind": "Windows linked WPF explicit-credential SMB service integration; credential vault and complete login persistence NOT verified; not UI acceptance",
+  "allMatched": false,
+  "results": [
+    {
+      "identity": "visitor",
+      "stage": "WPF-service-WNet-connect",
+      "succeeded": true,
+      "win32": 0,
+      "failure": "None"
+    },
+    {
+      "identity": "visitor",
+      "space": "film",
+      "operation": "list",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "visitor",
+      "space": "film",
+      "operation": "read",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "visitor",
+      "space": "film",
+      "operation": "create",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "visitor",
+      "space": "film",
+      "operation": "overwrite",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "visitor",
+      "space": "film",
+      "operation": "rename",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "visitor",
+      "space": "film",
+      "operation": "delete",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "visitor",
+      "space": "film",
+      "stage": "probe-artifacts",
+      "created": false
+    },
+    {
+      "identity": "visitor",
+      "space": "writing",
+      "operation": "list",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "visitor",
+      "space": "writing",
+      "operation": "read",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "visitor",
+      "space": "writing",
+      "operation": "create",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "visitor",
+      "space": "writing",
+      "operation": "overwrite",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "visitor",
+      "space": "writing",
+      "operation": "rename",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "visitor",
+      "space": "writing",
+      "operation": "delete",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "visitor",
+      "space": "writing",
+      "stage": "probe-artifacts",
+      "created": false
+    },
+    {
+      "identity": "visitor",
+      "space": "public",
+      "operation": "list",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "visitor",
+      "space": "public",
+      "operation": "read",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "visitor",
+      "space": "public",
+      "operation": "create",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "visitor",
+      "space": "public",
+      "operation": "overwrite",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "visitor",
+      "space": "public",
+      "operation": "rename",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "visitor",
+      "space": "public",
+      "operation": "delete",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "visitor",
+      "space": "public",
+      "stage": "probe-artifacts",
+      "created": false
+    },
+    {
+      "identity": "visitor",
+      "space": "personal_film",
+      "operation": "list",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "visitor",
+      "space": "personal_film",
+      "operation": "read",
+      "expected": false,
+      "succeeded": false,
+      "matched": false,
+      "win32": 59,
+      "exception": "IOException"
+    },
+    {
+      "identity": "visitor",
+      "space": "personal_film",
+      "operation": "create",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "visitor",
+      "space": "personal_film",
+      "operation": "overwrite",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "visitor",
+      "space": "personal_film",
+      "operation": "rename",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "visitor",
+      "space": "personal_film",
+      "operation": "delete",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "visitor",
+      "space": "personal_film",
+      "stage": "probe-artifacts",
+      "created": false
+    },
+    {
+      "identity": "visitor",
+      "space": "personal_writing",
+      "operation": "list",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "visitor",
+      "space": "personal_writing",
+      "operation": "read",
+      "expected": false,
+      "succeeded": false,
+      "matched": false,
+      "win32": 59,
+      "exception": "IOException"
+    },
+    {
+      "identity": "visitor",
+      "space": "personal_writing",
+      "operation": "create",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "visitor",
+      "space": "personal_writing",
+      "operation": "overwrite",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "visitor",
+      "space": "personal_writing",
+      "operation": "rename",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "visitor",
+      "space": "personal_writing",
+      "operation": "delete",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "visitor",
+      "space": "personal_writing",
+      "stage": "probe-artifacts",
+      "created": false
+    }
+  ],
+  "runId": "d3531b120c5b490e869bffab5d8d4b7a"
+}

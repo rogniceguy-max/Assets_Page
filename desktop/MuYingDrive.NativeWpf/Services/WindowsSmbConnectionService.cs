@@ -87,6 +87,21 @@ public sealed class WindowsSmbConnectionService
         if (!_credentialVault.TryReadNasPassword(out var credential) || credential is null)
             return new SmbConnectionResult(ErrorNotFound, SmbConnectionFailure.CredentialsMissing);
 
+        return ConnectWithCredentials(credential.UserName, credential.Password);
+    }
+
+    /// <summary>
+    /// Connects with explicitly supplied credentials without persisting them or
+    /// cancelling existing connections. Supports isolated Windows logon contexts
+    /// where Credential Manager is unavailable. Never log these arguments.
+    /// </summary>
+    public SmbConnectionResult ConnectWithCredentials(string userName, string password)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("Windows SMB connections are available only on Windows.");
+        ArgumentException.ThrowIfNullOrWhiteSpace(userName);
+        ArgumentException.ThrowIfNullOrEmpty(password);
+
         var resource = new NetResource
         {
             ResourceType = ResourceTypeDisk,
@@ -97,8 +112,8 @@ public sealed class WindowsSmbConnectionService
         // these arguments; in particular, do not add them to exception or result text.
         var error = WNetAddConnection2W(
             ref resource,
-            credential.Password,
-            credential.UserName,
+            password,
+            userName,
             flags: 0);
 
         return new SmbConnectionResult(error);

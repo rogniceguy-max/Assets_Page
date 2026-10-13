@@ -1,0 +1,202 @@
+{
+  "mode": "readonly",
+  "runId": "95174fb6713e4044b7eb2d0ac1f8f342",
+  "before": {
+    "utc": "2026-10-13T02:39:45.003156+00:00",
+    "log_size": 39766,
+    "log_tail": "",
+    "service": "MainPID=10118\nNRestarts=0\nActiveState=active\nSubState=running\n"
+  },
+  "exit": 0,
+  "probe": {
+    "kind": "Single-identity Windows SMB diagnostic; no vault persistence; not UI acceptance",
+    "mode": "readonly",
+    "runId": "95174fb6713e4044b7eb2d0ac1f8f342",
+    "allMatched": true,
+    "events": [
+      {
+        "utc": "2026-10-13T02:39:44.9800886+00:00",
+        "monotonicMs": 33.034,
+        "stage": "validated",
+        "phase": "success",
+        "relativePath": null,
+        "expectedDenied": null,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:39:44.9805236+00:00",
+        "monotonicMs": 33.106,
+        "stage": "LogonUser",
+        "phase": "begin",
+        "relativePath": null,
+        "expectedDenied": null,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:39:45.0188010+00:00",
+        "monotonicMs": 71.3892,
+        "stage": "LogonUser",
+        "phase": "success",
+        "relativePath": null,
+        "expectedDenied": null,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:39:45.0203109+00:00",
+        "monotonicMs": 72.8938,
+        "stage": "WNet-connect",
+        "phase": "begin",
+        "relativePath": null,
+        "expectedDenied": null,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:39:45.1673123+00:00",
+        "monotonicMs": 219.8992,
+        "stage": "WNet-connect",
+        "phase": "success",
+        "relativePath": null,
+        "expectedDenied": false,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:39:45.1673275+00:00",
+        "monotonicMs": 219.9079,
+        "stage": "list",
+        "phase": "begin",
+        "relativePath": "film",
+        "expectedDenied": null,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:39:45.2584981+00:00",
+        "monotonicMs": 311.0849,
+        "stage": "list",
+        "phase": "success",
+        "relativePath": "film",
+        "expectedDenied": false,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:39:45.2585079+00:00",
+        "monotonicMs": 311.0882,
+        "stage": "read-allowed",
+        "phase": "begin",
+        "relativePath": "film/existing.txt",
+        "expectedDenied": null,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:39:45.2798310+00:00",
+        "monotonicMs": 332.4171,
+        "stage": "read-allowed",
+        "phase": "success",
+        "relativePath": "film/existing.txt",
+        "expectedDenied": false,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:39:45.2798425+00:00",
+        "monotonicMs": 332.4228,
+        "stage": "read-denied",
+        "phase": "begin",
+        "relativePath": "personal_writing/existing.txt",
+        "expectedDenied": null,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:39:45.2873837+00:00",
+        "monotonicMs": 339.9682,
+        "stage": "read-denied",
+        "phase": "error",
+        "relativePath": "personal_writing/existing.txt",
+        "expectedDenied": true,
+        "exception": "UnauthorizedAccessException",
+        "hresult": -2147024891,
+        "win32": 5
+      },
+      {
+        "utc": "2026-10-13T02:39:45.2874033+00:00",
+        "monotonicMs": 339.9837,
+        "stage": "observe-12s",
+        "phase": "begin",
+        "relativePath": null,
+        "expectedDenied": null,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:39:57.2930233+00:00",
+        "monotonicMs": 12345.6209,
+        "stage": "observe-12s",
+        "phase": "success",
+        "relativePath": null,
+        "expectedDenied": false,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:39:57.2930512+00:00",
+        "monotonicMs": 12345.6321,
+        "stage": "connection-alive-read",
+        "phase": "begin",
+        "relativePath": "film/existing.txt",
+        "expectedDenied": null,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:39:57.3482811+00:00",
+        "monotonicMs": 12400.8742,
+        "stage": "connection-alive-read",
+        "phase": "success",
+        "relativePath": "film/existing.txt",
+        "expectedDenied": false,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      },
+      {
+        "utc": "2026-10-13T02:39:57.3483876+00:00",
+        "monotonicMs": 12400.9681,
+        "stage": "process-complete",
+        "phase": "end",
+        "relativePath": null,
+        "expectedDenied": null,
+        "exception": null,
+        "hresult": null,
+        "win32": null
+      }
+    ]
+  },
+  "after": {
+    "utc": "2026-10-13T02:39:57.753277+00:00",
+    "log_size": 39884,
+    "log_tail": "[2026/10/13 10:39:45.330393,  0, pid=344080] ../../source3/modules/vfs_ugacl.c:1203(vfs_ugacl_init)\n  vfs_ugacl init.\n",
+    "service": "MainPID=10118\nNRestarts=0\nActiveState=active\nSubState=running\n"
+  },
+  "new_panic": false
+}

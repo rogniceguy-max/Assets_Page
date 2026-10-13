@@ -1,0 +1,228 @@
+{
+  "checks": 108,
+  "failures": [],
+  "results": {
+    "沐影影视测试": {
+      "personal_writing/smb-created-1.txt": {
+        "r": false,
+        "r+": false
+      },
+      "personal_writing/unix-created-1006.txt": {
+        "r": false,
+        "r+": false
+      },
+      "personal_writing/unix-dir-1006/child.txt": {
+        "r": false,
+        "r+": false
+      },
+      "public/smb-created-1.txt": {
+        "r": true,
+        "r+": true
+      },
+      "public/unix-created-1005.txt": {
+        "r": true,
+        "r+": true
+      },
+      "public/smb-created-0.txt": {
+        "r": true,
+        "r+": true
+      },
+      "public/unix-created-1006.txt": {
+        "r": true,
+        "r+": true
+      },
+      "public/unix-dir-1005/child.txt": {
+        "r": true,
+        "r+": true
+      },
+      "public/unix-dir-1006/child.txt": {
+        "r": true,
+        "r+": true
+      },
+      "writing/smb-created-1.txt": {
+        "r": true,
+        "r+": false
+      },
+      "writing/unix-created-1006.txt": {
+        "r": true,
+        "r+": false
+      },
+      "writing/unix-dir-1006/child.txt": {
+        "r": true,
+        "r+": false
+      },
+      "personal_film/unix-created-1005.txt": {
+        "r": true,
+        "r+": true
+      },
+      "personal_film/smb-created-0.txt": {
+        "r": true,
+        "r+": true
+      },
+      "personal_film/unix-dir-1005/child.txt": {
+        "r": true,
+        "r+": true
+      },
+      "film/unix-created-1005.txt": {
+        "r": true,
+        "r+": true
+      },
+      "film/smb-created-0.txt": {
+        "r": true,
+        "r+": true
+      },
+      "film/unix-dir-1005/child.txt": {
+        "r": true,
+        "r+": true
+      }
+    },
+    "沐影文学测试": {
+      "personal_writing/smb-created-1.txt": {
+        "r": true,
+        "r+": true
+      },
+      "personal_writing/unix-created-1006.txt": {
+        "r": true,
+        "r+": true
+      },
+      "personal_writing/unix-dir-1006/child.txt": {
+        "r": true,
+        "r+": true
+      },
+      "public/smb-created-1.txt": {
+        "r": true,
+        "r+": true
+      },
+      "public/unix-created-1005.txt": {
+        "r": true,
+        "r+": true
+      },
+      "public/smb-created-0.txt": {
+        "r": true,
+        "r+": true
+      },
+      "public/unix-created-1006.txt": {
+        "r": true,
+        "r+": true
+      },
+      "public/unix-dir-1005/child.txt": {
+        "r": true,
+        "r+": true
+      },
+      "public/unix-dir-1006/child.txt": {
+        "r": true,
+        "r+": true
+      },
+      "writing/smb-created-1.txt": {
+        "r": true,
+        "r+": true
+      },
+      "writing/unix-created-1006.txt": {
+        "r": true,
+        "r+": true
+      },
+      "writing/unix-dir-1006/child.txt": {
+        "r": true,
+        "r+": true
+      },
+      "personal_film/unix-created-1005.txt": {
+        "r": false,
+        "r+": false
+      },
+      "personal_film/smb-created-0.txt": {
+        "r": false,
+        "r+": false
+      },
+      "personal_film/unix-dir-1005/child.txt": {
+        "r": false,
+        "r+": false
+      },
+      "film/unix-created-1005.txt": {
+        "r": true,
+        "r+": false
+      },
+      "film/smb-created-0.txt": {
+        "r": true,
+        "r+": false
+      },
+      "film/unix-dir-1005/child.txt": {
+        "r": true,
+        "r+": false
+      }
+    },
+    "沐影参观测试": {
+      "personal_writing/smb-created-1.txt": {
+        "r": false,
+        "r+": false
+      },
+      "personal_writing/unix-created-1006.txt": {
+        "r": false,
+        "r+": false
+      },
+      "personal_writing/unix-dir-1006/child.txt": {
+        "r": false,
+        "r+": false
+      },
+      "public/smb-created-1.txt": {
+        "r": true,
+        "r+": false
+      },
+      "public/unix-created-1005.txt": {
+        "r": true,
+        "r+": false
+      },
+      "public/smb-created-0.txt": {
+        "r": true,
+        "r+": false
+      },
+      "public/unix-created-1006.txt": {
+        "r": true,
+        "r+": false
+      },
+      "public/unix-dir-1005/child.txt": {
+        "r": true,
+        "r+": false
+      },
+      "public/unix-dir-1006/child.txt": {
+        "r": true,
+        "r+": false
+      },
+      "writing/smb-created-1.txt": {
+        "r": true,
+        "r+": false
+      },
+      "writing/unix-created-1006.txt": {
+        "r": true,
+        "r+": false
+      },
+      "writing/unix-dir-1006/child.txt": {
+        "r": true,
+        "r+": false
+      },
+      "personal_film/unix-created-1005.txt": {
+        "r": false,
+        "r+": false
+      },
+      "personal_film/smb-created-0.txt": {
+        "r": false,
+        "r+": false
+      },
+      "personal_film/unix-dir-1005/child.txt": {
+        "r": false,
+        "r+": false
+      },
+      "film/unix-created-1005.txt": {
+        "r": true,
+        "r+": false
+      },
+      "film/smb-created-0.txt": {
+        "r": true,
+        "r+": false
+      },
+      "film/unix-dir-1005/child.txt": {
+        "r": true,
+        "r+": false
+      }
+    }
+  }
+}

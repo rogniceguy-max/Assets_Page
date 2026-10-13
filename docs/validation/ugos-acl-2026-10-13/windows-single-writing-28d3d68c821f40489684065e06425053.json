@@ -1,0 +1,324 @@
+{
+  "kind": "Windows linked WPF explicit-credential SMB service integration; credential vault and complete login persistence NOT verified; not UI acceptance",
+  "allMatched": false,
+  "results": [
+    {
+      "identity": "writing",
+      "stage": "WPF-service-WNet-connect",
+      "succeeded": true,
+      "win32": 0,
+      "failure": "None"
+    },
+    {
+      "identity": "writing",
+      "space": "film",
+      "operation": "list",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "writing",
+      "space": "film",
+      "operation": "read",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "writing",
+      "space": "film",
+      "operation": "create",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "writing",
+      "space": "film",
+      "operation": "overwrite",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "writing",
+      "space": "film",
+      "operation": "rename",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "writing",
+      "space": "film",
+      "operation": "delete",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "writing",
+      "space": "film",
+      "stage": "probe-artifacts",
+      "created": false
+    },
+    {
+      "identity": "writing",
+      "space": "writing",
+      "operation": "list",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "writing",
+      "space": "writing",
+      "operation": "read",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "writing",
+      "space": "writing",
+      "operation": "create",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "writing",
+      "space": "writing",
+      "operation": "overwrite",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "writing",
+      "space": "writing",
+      "operation": "rename",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "writing",
+      "space": "writing",
+      "operation": "delete",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "writing",
+      "space": "writing",
+      "stage": "probe-artifacts",
+      "created": true
+    },
+    {
+      "identity": "writing",
+      "space": "public",
+      "operation": "list",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "writing",
+      "space": "public",
+      "operation": "read",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "writing",
+      "space": "public",
+      "operation": "create",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "writing",
+      "space": "public",
+      "operation": "overwrite",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "writing",
+      "space": "public",
+      "operation": "rename",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "writing",
+      "space": "public",
+      "operation": "delete",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "writing",
+      "space": "public",
+      "stage": "probe-artifacts",
+      "created": true
+    },
+    {
+      "identity": "writing",
+      "space": "personal_film",
+      "operation": "list",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "writing",
+      "space": "personal_film",
+      "operation": "read",
+      "expected": false,
+      "succeeded": false,
+      "matched": false,
+      "win32": 59,
+      "exception": "IOException"
+    },
+    {
+      "identity": "writing",
+      "space": "personal_film",
+      "operation": "create",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "writing",
+      "space": "personal_film",
+      "operation": "overwrite",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "writing",
+      "space": "personal_film",
+      "operation": "rename",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "writing",
+      "space": "personal_film",
+      "operation": "delete",
+      "expected": false,
+      "succeeded": false,
+      "matched": true,
+      "win32": 5,
+      "exception": "UnauthorizedAccessException"
+    },
+    {
+      "identity": "writing",
+      "space": "personal_film",
+      "stage": "probe-artifacts",
+      "created": false
+    },
+    {
+      "identity": "writing",
+      "space": "personal_writing",
+      "operation": "list",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "writing",
+      "space": "personal_writing",
+      "operation": "read",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "writing",
+      "space": "personal_writing",
+      "operation": "create",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "writing",
+      "space": "personal_writing",
+      "operation": "overwrite",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "writing",
+      "space": "personal_writing",
+      "operation": "rename",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "writing",
+      "space": "personal_writing",
+      "operation": "delete",
+      "expected": true,
+      "succeeded": true,
+      "matched": true,
+      "win32": 0
+    },
+    {
+      "identity": "writing",
+      "space": "personal_writing",
+      "stage": "probe-artifacts",
+      "created": true
+    }
+  ],
+  "runId": "28d3d68c821f40489684065e06425053"
+}

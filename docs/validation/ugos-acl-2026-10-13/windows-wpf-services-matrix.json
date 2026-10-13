@@ -1,0 +1,25 @@
+{
+  "kind": "Windows linked WPF service integration; not UI acceptance",
+  "allMatched": false,
+  "results": [
+    {
+      "identity": "film",
+      "stage": "CredWrite-under-impersonation",
+      "exception": "Win32Exception",
+      "win32": 1312
+    },
+    {
+      "identity": "writing",
+      "stage": "CredWrite-under-impersonation",
+      "exception": "Win32Exception",
+      "win32": 1312
+    },
+    {
+      "identity": "visitor",
+      "stage": "CredWrite-under-impersonation",
+      "exception": "Win32Exception",
+      "win32": 1312
+    }
+  ],
+  "runId": "fd8bba22cdc24bb3b2e6a2b57382580d"
+}
