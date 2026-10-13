@@ -52,10 +52,12 @@ internal static class Program
             Assert(!model.Draft.SubmitCommand.CanExecute(null), "Submission must wait for screenshot preparation.");
             model.Draft.IsAdding = false;
             var main = new MainViewModel();
-            var workspace = new WorkspaceViewModel(main, session, settings);
+            var workspace = WorkspaceViewModel.ForEmployee(main, session, settings);
+            // The employee workspace always carries all three pages; the nullable
+            // properties exist for the tour, which has neither transfers nor files.
             typeof(FeedbackViewModel).GetField("_loaded", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(workspace.Feedback, true);
-            workspace.Transfers.Tasks.Add(failed);
-            workspace.Files.SearchText = "fixture-browse-filter";
+            workspace.Transfers!.Tasks.Add(failed);
+            workspace.Files!.SearchText = "fixture-browse-filter";
             var files = workspace.Files;
             var transfers = workspace.Transfers;
             workspace.NavigateCommand.Execute("反馈");
@@ -71,7 +73,7 @@ internal static class Program
                 application.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri($"pack://application:,,,/MuYingDrive.NativeWpf;component/Themes/{theme}.xaml") });
                 application.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("pack://application:,,,/MuYingDrive.NativeWpf;component/Themes/SharedStyles.xaml") });
                 Render(new FeedbackView { DataContext = model }, 960, 680, 96, Path.Combine(output, $"list-{theme}.png"));
-                workspace.Feedback.Items.Clear(); workspace.Feedback.Items.Add(item);
+                workspace.Feedback!.Items.Clear(); workspace.Feedback.Items.Add(item);
                 workspace.NavigateCommand.Execute("反馈");
                 Render(new WorkspaceView { DataContext = workspace }, 1200, 720, 96, Path.Combine(output, $"workspace-{theme}.png"));
                 workspace.ToggleSidebarCommand.Execute(null);

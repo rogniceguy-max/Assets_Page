@@ -68,6 +68,76 @@ Throws<CryptographicException>("rejects a well-formed but unsigned envelope", ()
     UpdateManifestVerifier.Verify(Encoding.UTF8.GetBytes(envelope));
 });
 
+Console.WriteLine("ClientConfigurationMerge.TryRefreshConnectionFields");
+{
+    // Shaped like a real nas-client.json: the connection fields the installer owns, plus
+    // the profile that belongs to whoever is signed in on this machine.
+    const string existing = """
+        {
+          "ApiBaseUri": "https://old-nas:8443/",
+          "CertificateSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "ShareRoot": "\\\\old-nas\\Assets",
+          "CredentialProfile": "colleague-b"
+        }
+        """;
+
+    // A rotated certificate is the case this exists for: the installer must overwrite the
+    // pin, and must not touch the profile that names the user's stored credentials.
+    Check("a rotated certificate rewrites the pin and share root",
+        ClientConfigurationMerge.TryRefreshConnectionFields(existing,
+            "https://new-nas:8443/", new string('2', 64), @"\\new-nas\Assets", out var rotated));
+    Check("the rotated pin is written", rotated.Contains(new string('2', 64)));
+    Check("the rotated address is written", rotated.Contains("https://new-nas:8443/"));
+    Check("the old pin is gone", !rotated.Contains(new string('1', 64)));
+    Check("the credential profile survives a certificate rotation",
+        rotated.Contains("colleague-b"));
+
+    Check("an unchanged installer config is reported as a no-op",
+        ClientConfigurationMerge.TryRefreshConnectionFields(existing,
+            "https://old-nas:8443/", new string('1', 64), @"\\old-nas\Assets", out var unchanged));
+    // Byte-identical means the caller can skip writing the file entirely, which keeps an
+    // ordinary reinstall from touching a file the client reads at every start.
+    Check("a no-op leaves the text byte-identical", ReferenceEquals(unchanged, existing));
+
+    Check("unknown fields are preserved",
+        ClientConfigurationMerge.TryRefreshConnectionFields(
+            """{"ApiBaseUri":"https://a/","CertificateSha256":"00","ShareRoot":"\\\\a\\B","SomethingElse":7}""",
+            "https://b/", "11", @"\\b\B", out var extra) && extra.Contains("SomethingElse"));
+
+    // Returning false sends the installer down its overwrite path: a file the client
+    // cannot parse supplies no credential profile worth preserving either.
+    Check("a non-object JSON document is rejected",
+        !ClientConfigurationMerge.TryRefreshConnectionFields("[]", "https://a/", "00", @"\\a\B", out _));
+    Check("malformed JSON is rejected",
+        !ClientConfigurationMerge.TryRefreshConnectionFields("{not json", "https://a/", "00", @"\\a\B", out _));
+    Check("an empty document is rejected",
+        !ClientConfigurationMerge.TryRefreshConnectionFields("", "https://a/", "00", @"\\a\B", out _));
+}
+
+Console.WriteLine("UpdateFailureText.DescribeConnectionFailure");
+{
+    // The whole point of this function: these two failures look identical on the wire and
+    // want opposite responses, so they must not read identically to the person seeing them.
+    // .NET 8 puts the error kind first in this overload.
+    var pinMismatch = new HttpRequestException(
+        HttpRequestError.SecureConnectionError, "The SSL connection could not be established.");
+    var unreachable = new HttpRequestException(
+        HttpRequestError.NameResolutionError, "No such host is known.");
+
+    var pinText = UpdateFailureText.DescribeConnectionFailure(pinMismatch);
+    var unreachableText = UpdateFailureText.DescribeConnectionFailure(unreachable);
+
+    Check("a pin mismatch is not reported as a network fault", !pinText.Contains("请检查网络"));
+    Check("a pin mismatch names the certificate as the cause", pinText.Contains("证书"));
+    Check("a pin mismatch warns against continuing", pinText.Contains("不要") || pinText.Contains("请勿")
+        || pinText.Contains("再继续"));
+    Check("an unreachable server still reports the plain network text", unreachableText.Contains("请检查网络"));
+    Check("the two failures do not share their wording", pinText != unreachableText);
+    Check("the download prefix is honoured",
+        UpdateFailureText.DescribeConnectionFailure(unreachable, "无法下载客户端安装包")
+            .Contains("无法下载客户端安装包"));
+}
+
 if (args.Length > 0 && args[0] == "--check-resources")
 {
     // A StaticResource key that does not exist compiles fine and throws

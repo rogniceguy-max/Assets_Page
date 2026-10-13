@@ -62,7 +62,7 @@ public sealed class ReleaseDownloader : IDisposable
         }
         catch (HttpRequestException exception)
         {
-            throw new ReleaseDownloadException("无法连接更新服务器，请检查网络或联系管理员。", exception);
+            throw new ReleaseDownloadException(UpdateFailureText.DescribeConnectionFailure(exception), exception);
         }
 
         using (response)
@@ -122,7 +122,8 @@ public sealed class ReleaseDownloader : IDisposable
         }
         catch (HttpRequestException exception)
         {
-            throw new ReleaseDownloadException("无法下载客户端安装包，请检查网络或联系管理员。", exception);
+            throw new ReleaseDownloadException(
+                UpdateFailureText.DescribeConnectionFailure(exception, "无法下载客户端安装包"), exception);
         }
 
         using (response)
@@ -214,6 +215,13 @@ public sealed class ReleaseDownloader : IDisposable
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             throw new ReleaseDownloadException("安装包下载长时间没有数据，请重试。");
+        }
+        catch (IOException exception)
+        {
+            // A response that ends early surfaces as HttpIOException, an IOException whose
+            // Message is raw CLR English. Left alone it reaches the setup window verbatim,
+            // where it reads like a crash rather than a dropped link.
+            throw new ReleaseDownloadException(UpdateFailureText.DownloadInterrupted, exception);
         }
     }
 

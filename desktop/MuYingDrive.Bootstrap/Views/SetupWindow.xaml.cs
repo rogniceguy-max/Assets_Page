@@ -9,6 +9,7 @@ public partial class SetupWindow : Window
 {
     private readonly SetupViewModel _viewModel;
     private bool _completed;
+    private bool _closeRequested;
 
     public SetupViewModel ViewModel => _viewModel;
 
@@ -29,13 +30,20 @@ public partial class SetupWindow : Window
         _completed = true;
         // Unattended mode never waits for a click and never launches the client, so it
         // closes on completion whether the install succeeded or failed.
-        if (arguments.Contains("--quiet")) Close();
+        if (_closeRequested || arguments.Contains("--quiet")) Close();
     }
 
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
-        // Closing mid-install could leave the install directory in a half-swapped state.
-        if (!_completed && _viewModel.IsBusy) e.Cancel = true;
+        if (_completed || !_viewModel.IsBusy) return;
+
+        // Closing mid-install could leave the install directory in a half-swapped state, so
+        // the close is deferred rather than refused: ask the install to stop, and close as
+        // soon as it has unwound. Refusing silently — which is what this used to do — makes
+        // the X look broken, and left Task Manager as the only exit from a stalled install.
+        _closeRequested = true;
+        e.Cancel = true;
+        _viewModel.CancelCommand.Execute(null);
     }
 
     private void ApplySystemTheme()

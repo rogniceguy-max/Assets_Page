@@ -20,9 +20,14 @@
                        AutomationProperties.LiveSetting="Polite" />
             <TextBlock Grid.Row="2" Text="{Binding Explanation}" Foreground="{DynamicResource Brush.Text.Secondary}"
                        TextWrapping="Wrap" />
-            <!-- Extraction progress cannot be reported reliably, so the bar stays
-                 indeterminate rather than showing a fabricated percentage. -->
-            <ProgressBar Grid.Row="4" Height="4" IsIndeterminate="True"
+            <!-- The download knows its own size, so the bar is determinate while it runs
+                 and falls back to indeterminate for the stages that cannot measure
+                 themselves (extraction, the version swap) rather than faking a percentage.
+                 Both bindings are OneWay on purpose: ProgressBar.Value and .IsIndeterminate
+                 are TwoWay by default and neither of these properties has a setter. -->
+            <ProgressBar Grid.Row="4" Height="4" Minimum="0" Maximum="100"
+                         Value="{Binding Progress, Mode=OneWay}"
+                         IsIndeterminate="{Binding IsProgressIndeterminate, Mode=OneWay}"
                          AutomationProperties.Name="安装进度">
                 <ProgressBar.Style>
                     <Style TargetType="ProgressBar">
@@ -43,6 +48,20 @@
                             <Setter Property="Visibility" Value="Collapsed" />
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding HasLaunchPath}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                </Button>
+                <!-- The only control available while the install is running. Without it a
+                     stuck or unwanted install had no way out but Task Manager. -->
+                <Button Content="取消" Margin="0,0,8,0" Command="{Binding CancelCommand}">
+                    <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource ActionButton}">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsBusy}" Value="True">
                                     <Setter Property="Visibility" Value="Visible" />
                                 </DataTrigger>
                             </Style.Triggers>

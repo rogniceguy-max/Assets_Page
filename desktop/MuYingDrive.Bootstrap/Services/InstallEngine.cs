@@ -1,13 +1,21 @@
 using System.Diagnostics;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Win32;
 using MuYingDrive.UpdateCore;
 
 namespace MuYingDrive.Bootstrap.Services;
 
-/// <summary>A single progress step for the setup window.</summary>
-public sealed record InstallProgress(string Title, string Explanation, string Status);
+/// <summary>
+/// A single progress step for the setup window.
+/// </summary>
+/// <param name="Percent">
+/// How far the current stage has got, or <c>null</c> when the stage cannot report one.
+/// Only the download can: extraction reads a ZIP the runtime does not narrate. A null
+/// here keeps the bar indeterminate rather than showing a fabricated percentage.
+/// </param>
+public sealed record InstallProgress(string Title, string Explanation, string Status, double? Percent = null);
 
 /// <summary>Outcome of an install or uninstall, including the path to launch on success.</summary>
 public sealed record InstallResult(bool Succeeded, string Title, string Explanation, string? LaunchPath = null);
@@ -231,13 +239,54 @@ public sealed class InstallEngine
             throw new InvalidOperationException($"无法获取客户端安装包：{exception.Message}", exception);
         }
 
+        var manifest = verified.Value;
         progress.Report(new InstallProgress("正在安装沐影盘",
-            $"正在下载沐影盘 {verified.Value.Version}。", "正在下载"));
+            $"正在下载沐影盘 {manifest.Version}。", "正在下载", Percent: 0));
 
         var partialPath = Path.Combine(workDirectory, "package.partial");
-        var packagePath = await downloader.DownloadPackageAsync(verified, partialPath, null, cancellationToken)
-            .ConfigureAwait(false);
-        return (packagePath, verified.Value);
+        string packagePath;
+        try
+        {
+            packagePath = await downloader.DownloadPackageAsync(
+                    verified, partialPath,
+                    new DownloadReporter(progress, manifest.PackageSize, manifest.Version),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is ReleaseDownloadException or InvalidDataException)
+        {
+            // Without this the raw downloader text reaches the window unwrapped, and the
+            // download stage reads differently from the manifest stage directly above it.
+            throw new InvalidOperationException($"无法获取客户端安装包：{exception.Message}", exception);
+        }
+
+        return (packagePath, manifest);
+    }
+
+    /// <summary>
+    /// Turns raw byte counts into the setup window's progress, throttled to whole
+    /// percentages so a 142 MB download does not flood the dispatcher with updates.
+    /// </summary>
+    private sealed class DownloadReporter(IProgress<InstallProgress> progress, long totalBytes, string version)
+        : IProgress<long>
+    {
+        private int _lastPercent = -1;
+
+        public void Report(long received)
+        {
+            if (totalBytes <= 0) return;
+            // 100L, not 100: received * 100 overflows Int32 on anything above ~21 MB.
+            var percent = (int)Math.Clamp(received * 100L / totalBytes, 0L, 100L);
+            if (percent == _lastPercent) return;
+            _lastPercent = percent;
+            progress.Report(new InstallProgress(
+                "正在安装沐影盘",
+                $"正在下载沐影盘 {version}（{Mebibytes(received)} / {Mebibytes(totalBytes)} MB）。",
+                "正在下载",
+                percent));
+        }
+
+        private static string Mebibytes(long bytes) => (bytes / 1048576.0).ToString("F1");
     }
 
     private static void VerifyStagedClient(string extracted)
@@ -249,25 +298,71 @@ public sealed class InstallEngine
     }
 
     /// <summary>
-    /// Writes the NAS configuration only when the client has none.
+    /// Seeds the client configuration on a first install, and refreshes the connection
+    /// fields of an existing one on a reinstall.
     /// </summary>
     /// <remarks>
-    /// <c>nas-client.json</c> carries the <c>CredentialProfile</c> that selects which
-    /// Windows Credential Manager entries hold the session token and SMB password.
-    /// Overwriting an existing file could point the client at a different profile and
-    /// silently drop the user's stored login, forcing them to sign in again. It is
-    /// therefore written only when missing, unless the operator forces it.
+    /// The split is deliberate. <c>CredentialProfile</c> selects which Credential Manager
+    /// entries hold the session token and SMB password, so it must survive a reinstall
+    /// untouched — replacing it would silently drop the user's stored login. The address,
+    /// pin and share root are the opposite: they are the one thing a new installer carries
+    /// that the update channel cannot deliver, because <c>nas-client.json</c> is not part
+    /// of any update package. A rotated server certificate that never reaches this file
+    /// leaves every installed client pinning the old one, with no way out but a reinstall.
+    /// <see cref="ClientConfigurationMerge"/> decides which fields those are.
     /// </remarks>
     private static void SeedConfiguration(ClientConfiguration configuration, string? configOverridePath, bool forceConfig)
     {
         var destination = UpdatePathPolicy.ClientSettingsPath;
-        if (File.Exists(destination) && !forceConfig) return;
+        if (File.Exists(destination) && !forceConfig && TryRefreshConfiguration(destination, configuration)) return;
+        // Falling through on failure is deliberate: a file that cannot be parsed supplies
+        // no credential profile either, so overwriting it repairs the machine rather than
+        // leaving a client that rejects its own configuration at every start.
 
         var content = !string.IsNullOrWhiteSpace(configOverridePath)
             ? File.ReadAllBytes(configOverridePath)
             : ReadResource(DefaultConfigResource);
         if (content is null) return;
 
+        WriteConfigurationAtomically(destination, content);
+    }
+
+    /// <summary>
+    /// Brings an existing configuration's connection fields up to date. Returns false when
+    /// the file is unreadable or is not a JSON object, which sends the caller down the
+    /// overwrite path.
+    /// </summary>
+    private static bool TryRefreshConfiguration(string destination, ClientConfiguration configuration)
+    {
+        string existing;
+        try
+        {
+            existing = File.ReadAllText(destination);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+
+        if (!ClientConfigurationMerge.TryRefreshConnectionFields(
+                existing, configuration.ApiBaseUri.AbsoluteUri, configuration.CertificateSha256,
+                configuration.ShareRoot, out var updated))
+        {
+            return false;
+        }
+
+        // Identical text means this installer carries the address and pin the machine
+        // already has — the ordinary reinstall — so the file is left exactly as it was.
+        if (!string.Equals(updated, existing, StringComparison.Ordinal))
+        {
+            WriteConfigurationAtomically(destination, Encoding.UTF8.GetBytes(updated));
+        }
+
+        return true;
+    }
+
+    private static void WriteConfigurationAtomically(string destination, byte[] content)
+    {
         Directory.CreateDirectory(UpdatePathPolicy.SettingsDirectory);
         UpdatePathPolicy.EnsureNoReparsePointComponents(UpdatePathPolicy.SettingsDirectory);
         var temporary = destination + ".tmp";

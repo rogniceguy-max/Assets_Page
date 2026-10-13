@@ -19,26 +19,61 @@ public sealed class SetupViewModel : ObservableObject
     private bool _isBusy = true;
     private bool _isSucceeded;
     private bool _hasFailed;
+    private bool _wasCancelled;
     private string? _launchPath;
+    private double _progress;
+    private bool _isProgressIndeterminate = true;
     private readonly CancellationTokenSource _cancellation = new();
 
     public SetupViewModel(Action closeWindow)
     {
         CloseCommand = new RelayCommand(_ => closeWindow(), _ => !IsBusy);
         LaunchCommand = new RelayCommand(_ => LaunchAndClose(closeWindow), _ => !IsBusy && HasLaunchPath);
+        CancelCommand = new RelayCommand(_ => RequestCancel(), _ => IsBusy && !WasCancelled);
     }
 
     public string Title { get => _title; private set => SetProperty(ref _title, value); }
     public string Explanation { get => _explanation; private set => SetProperty(ref _explanation, value); }
     public string Status { get => _status; private set => SetProperty(ref _status, value); }
-    public bool IsBusy { get => _isBusy; private set { if (SetProperty(ref _isBusy, value)) OnPropertyChanged(nameof(ActionText)); } }
+    public bool IsBusy
+    {
+        get => _isBusy;
+        private set
+        {
+            if (!SetProperty(ref _isBusy, value)) return;
+            OnPropertyChanged(nameof(ActionText));
+            CancelCommand.RaiseCanExecuteChanged();
+        }
+    }
     public bool IsSucceeded { get => _isSucceeded; private set => SetProperty(ref _isSucceeded, value); }
     public bool HasFailed { get => _hasFailed; private set => SetProperty(ref _hasFailed, value); }
+    public bool WasCancelled
+    {
+        get => _wasCancelled;
+        private set
+        {
+            if (!SetProperty(ref _wasCancelled, value)) return;
+            CancelCommand.RaiseCanExecuteChanged();
+        }
+    }
     public bool HasLaunchPath => !string.IsNullOrWhiteSpace(_launchPath);
-    public string ActionText => IsSucceeded ? "关闭" : "关闭";
+    public string ActionText => IsSucceeded ? "完成" : "关闭";
+
+    /// <summary>How far the current stage has got, for the determinate progress bar.</summary>
+    public double Progress { get => _progress; private set => SetProperty(ref _progress, value); }
+
+    /// <summary>True while the current stage cannot measure itself (everything but the download).</summary>
+    public bool IsProgressIndeterminate
+    {
+        get => _isProgressIndeterminate;
+        private set => SetProperty(ref _isProgressIndeterminate, value);
+    }
 
     public ICommand CloseCommand { get; }
     public ICommand LaunchCommand { get; }
+    // RelayCommand rather than ICommand: the enabled state depends on IsBusy, which
+    // changes underneath it, so it has to be able to raise its own CanExecuteChanged.
+    public RelayCommand CancelCommand { get; }
 
     public async Task RunAsync(string[] arguments)
     {
@@ -59,7 +94,13 @@ public sealed class SetupViewModel : ObservableObject
                     .ConfigureAwait(true)
                 : await InstallEngine.InstallAsync(
                         progress,
-                        arguments.Contains("--desktop-shortcut"),
+                        // A desktop shortcut is what a colleague who double-clicks Setup.exe
+                        // expects; without it the only way in is the Start Menu. Opt out with
+                        // --no-desktop-shortcut. An unattended deployment (--quiet) is the
+                        // exception: it must not put icons on anyone's desktop unless the
+                        // operator asks for it explicitly.
+                        !arguments.Contains("--no-desktop-shortcut")
+                            && (!arguments.Contains("--quiet") || arguments.Contains("--desktop-shortcut")),
                         ReadOption(arguments, "--config"),
                         arguments.Contains("--force-config"),
                         ReadOption(arguments, "--package"),
@@ -71,7 +112,10 @@ public sealed class SetupViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
-            // The window is closing; nothing to report.
+            // The user cancelled, or closed the window while it was working. The engine
+            // removes its own staging directory before the token reaches here, so the
+            // machine is untouched — report that plainly rather than as a failure.
+            SetCancelled();
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
             or InvalidDataException or InvalidOperationException or System.Security.SecurityException
@@ -90,7 +134,41 @@ public sealed class SetupViewModel : ObservableObject
         Title = progress.Title;
         Explanation = progress.Explanation;
         Status = progress.Status;
+        // Only the download knows its own size. Every other stage reports null, which
+        // keeps the bar indeterminate instead of inventing a percentage for it.
+        IsProgressIndeterminate = progress.Percent is null;
+        if (progress.Percent is double percent) Progress = percent;
         Trace($"{progress.Status}: {progress.Explanation}");
+    }
+
+    /// <summary>
+    /// Asks the running install to stop.
+    /// </summary>
+    /// <remarks>
+    /// The token is the only lever, and that is deliberate: the engine checks it between
+    /// stages and cleans up its own staging directory on the way out, so cancelling can
+    /// never leave a half-written install behind. A cancel that lands after the version
+    /// swap has already happened is simply ignored — those last steps do not await — and
+    /// the install finishes normally instead of reporting a cancellation that did not occur.
+    /// </remarks>
+    private void RequestCancel()
+    {
+        if (!IsBusy || WasCancelled) return;
+        WasCancelled = true;
+        Status = "正在取消";
+        Explanation = "正在安全停止，请稍候。";
+        Trace("cancel requested by the user");
+        _cancellation.Cancel();
+    }
+
+    private void SetCancelled()
+    {
+        Trace("CANCELLED.");
+        Title = "已取消安装";
+        Explanation = "安装已取消，未对这台电脑做任何更改。";
+        Status = "已取消";
+        IsBusy = false;
+        IsProgressIndeterminate = true;
     }
 
     private static void Trace(string message) => InstallTrace.Write(message);
