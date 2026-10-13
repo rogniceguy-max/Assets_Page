@@ -83,7 +83,7 @@
                         </Button>
                     </StackPanel>
 
-                    <ProgressBar Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Minimum="0" Maximum="100" Value="{Binding Progress}" Margin="42,14,0,0" VerticalAlignment="Center" />
+                    <ProgressBar Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Minimum="0" Maximum="100" Value="{Binding Progress, Mode=OneWay}" Margin="42,14,0,0" VerticalAlignment="Center" />
                     <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ProgressLabel}" Foreground="{DynamicResource Brush.Text.Secondary}" FontSize="{StaticResource Typography.FontSize.Caption}" Margin="12,10,0,0" HorizontalAlignment="Right" />
                     <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Text="{Binding ErrorMessage}" Foreground="{DynamicResource Brush.Status.Danger}"
                                FontSize="{StaticResource Typography.FontSize.Caption}" Margin="42,8,0,0" TextWrapping="Wrap" />

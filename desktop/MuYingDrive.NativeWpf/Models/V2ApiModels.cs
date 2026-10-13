@@ -50,6 +50,9 @@ public sealed class V2UserSession
     [JsonPropertyName("spaces")]
     public Dictionary<string, string> Spaces { get; init; } = new(StringComparer.Ordinal);
 
+    [JsonPropertyName("smb_username")]
+    public string? ExplicitSmbUserName { get; init; }
+
     /// <summary>
     /// Internal Samba identity encoded in the server-provided personal path.
     /// The display name remains <see cref="UserName"/>.
@@ -59,6 +62,14 @@ public sealed class V2UserSession
     {
         get
         {
+            if (ExplicitSmbUserName is not null)
+            {
+                if (string.IsNullOrWhiteSpace(ExplicitSmbUserName) || ExplicitSmbUserName.Length > 255 ||
+                    ExplicitSmbUserName.Any(char.IsControl) || ExplicitSmbUserName.Contains('/') || ExplicitSmbUserName.Contains('\\'))
+                    throw new InvalidDataException("The V2 API returned an invalid SMB identity.");
+                return ExplicitSmbUserName;
+            }
+
             const string personalPrefix = "/03_个人空间/";
             if (!Spaces.TryGetValue("personal", out var personalPath) ||
                 !personalPath.StartsWith(personalPrefix, StringComparison.Ordinal))

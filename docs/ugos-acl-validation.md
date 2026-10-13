@@ -62,6 +62,17 @@ Windows 权限探针运行时，所有测试连接均使用独立 `LogonUser` �
 
 这些结果降低了“单次拒绝读取”、“单次写入”、“写后重命名”或“写后删除”即触发的可能性。三个身份在同一 Windows 进程内依次连接并各自写一个小文件、同一身份短时间内连续写12个文件、三个身份依次尝试直接读取禁止的个人文件，以及“写后直接尝试无权限读取”均未产生新 PANIC。完整单身份五空间 probe 的唯一异常是个人文件属性查询 Win32 59；分步骤探针确认直接打开同一文件为 Win32 5。因此，当前仍未复现多身份综合矩阵中的 VFS 断言，不能归因于身份切换、拒绝访问或单次/短时连续写入。详细 UTC、单调时钟、HRESULT、SMB主服务状态及日志增量见各自 `minimal-*.json`、`switch-*.json`、`burst-write-*.json` 和 `write-own-denied-*.json`。最初综合测试里同时出现的写入时序、UGOS ACL 调用栈，以及后续隔离复测未复现，是目前能确认的边界；不重复已崩溃的多身份综合矩阵。
 
+### 触发条件定位（2026-10-13 复核）
+
+在原有结论基础上，把三次崩溃与 108 步多身份矩阵逐条比对，进一步收窄触发条件：
+
+- 三次调用栈完全一致，且都发生在 **tevent 延迟写时间更新定时器**回调中（`trigger_write_time_update_immediate` → `file_ntimes` → `can_write_to_fsp` → `smbd_check_access_rights_fsp` → VFS 链 `catia→fruit→full_audit→ugacl` → `vfs_ugacl.c:875`），**不是**某个直接 SMB 请求的同步路径。
+- 崩溃前紧邻日志必然是：对**被拒个人空间目录**（`personal_film` / `personal_writing`）的 ACL 查询返回拒绝（`ugacl_agent_acl fail, ret:-1073741790` = `0xC0000022`；`smbd_calculate_maximum_allowed_access_fsp: Could not get acl ... NT_STATUS_ACCESS_DENIED`）。
+- 三次分别落在 `film → personal_writing`、`writing → personal_film`、`visitor → personal_film + personal_writing`，与矩阵中被拒访问逐条吻合。
+- **假设（未证实）**：被拒目录的 fsp 在 `real_smb_file_name` 为 NULL 时被延迟写时间更新回调再次访问，`ugvfs_acl_fget_nt_acl()` 缺少 NULL 防御而断言。该假设可解释“单步复测不重现”——它依赖延迟定时器与被拒 fsp 的**组合时序**，而非任何单次操作。
+- 断言的具体文件、SMB 请求与 file id 仍无法从日志还原（core 未保留），故 `ACCESS_DENIED` 与断言的因果性仍不能确证。
+- 面向厂商的完整定位报告与最小复现步骤见 [`ugos-samba-vfs-ugacl-assert-report.md`](ugos-samba-vfs-ugacl-assert-report.md)。
+
 ### 根因结论边界
 
 - **已证实：** 最初完整 Windows 多身份矩阵期间三个独立 smbd 子进程发生 `vfs_ugacl.c:875` `real_smb_file_name` 断言；Samba 是 Debian 4.17.12；日志调用栈由延迟更新时间进入 UGOS ACL VFS。三个子进程退出，但 `smbd` 主服务未重启，仍 active / `NRestarts=0`。
@@ -79,6 +90,15 @@ Windows 权限探针运行时，所有测试连接均使用独立 `LogonUser` �
 
 操作后生产根目录、影视和文学目录的 ACE 与 mode 均同基线；Assets SMB 条目语义同基线（账户顺序忽略）。证据：`post-matrix-production-check.json`。未逐个遍历/校验 5,085 个文件，不声称完成全量文件校验。
 
+## 证据一致性待核（未决）
+
+`docs/validation/ugos-acl-2026-10-13/final-production-check.json` 由其 `check.production_directory_ACLs_unchanged` 报告 **`false`**，但同一文件 `observed` 中三个生产目录的 ACE 与 mode 与基线**逐字节一致**；而 `ugos-account-investigation/final-production-check.json`（另一套 schema）三项检查均为 `true`。
+
+两者结论相反，生成脚本不在仓库内，**无法从现有文件判断生产目录 ACL 是否真的发生漂移**。在澄清前：
+
+- 该文件的 `false` **不得**被当作“生产已变更”的证据，也**不得**被当作“生产未变更”的证据。
+- 不据此提交生产变更或回退方案；如要继续，需重跑校验并保留比较基线。
+
 ## 清理与回退（尚未执行）
 
 1. 停止仅属于测试环境的应用/服务，确认无测试传输。
@@ -86,6 +106,23 @@ Windows 权限探针运行时，所有测试连接均使用独立 `LogonUser` �
 3. 用户指示后仅删除测试工具产生的文件、测试共享和三名测试账号及专用组；不得清理生产或旧测试账号。
 4. 通过 UGOS 删除共享前，必须考虑其再次重生成生产 SMB 配置的副作用，比较完整配置并单独确定恢复方案。
 5. 不用整个旧 `smbshare.conf` 直接覆盖后续配置；只按经审查的差异回退对应共享条目。
+
+## 客户端（WPF）隔离修复：换身份不再“进入不了”
+
+Windows 在**同一登录会话内不允许对同一服务器用不同用户名建立第二条连接**（WNet 错误 **1219**）。此前客户端在退出登录时刻意不断开该连接（为保留 commit `02cb888` 的共享会话安全修复），于是切换测试身份后残留的旧身份连接会让新身份连接直接失败，只弹出“请到资源管理器断开该连接”而无法进入。
+
+现改为在**新账号登录成功后、写入新凭据之前**自动清理：
+
+- 清空本机保存的会话令牌与 SMB 凭据；
+- 断开本应用对该共享的 WNet 连接（`WNetCancelConnection2W`，force）；
+- 再以新身份重新连接。
+
+边界：
+
+- 清理只在**服务器已接受新登录之后**执行；登录失败不会清除当前账号的凭据，避免打错密码反而被登出。
+- 退出登录仍**不**断开 WNet 连接（`02cb888` 修复保留）。
+- 若资源管理器等其它进程仍占用该共享，强制断开可能失败；此时退回到原有提示，需用户手动关闭占用后重新登录。
+- 该修复为客户端行为，**尚未在真机 WPF 交互验收中确认**，列为待验收项。
 
 ## 后续门槛
 

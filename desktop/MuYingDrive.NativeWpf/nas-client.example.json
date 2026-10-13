@@ -1,5 +1,6 @@
 {
   "ApiBaseUri": "https://nas-host.example.invalid:8443/",
   "CertificateSha256": "REPLACE_WITH_64_HEX_SHA256_FINGERPRINT",
-  "ShareRoot": "\\\\nas-host.example.invalid\\Assets"
+  "ShareRoot": "\\\\nas-host.example.invalid\\Assets",
+  "CredentialProfile": "default"
 }

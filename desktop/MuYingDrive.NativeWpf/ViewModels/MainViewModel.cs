@@ -23,9 +23,10 @@ public sealed class MainViewModel : ObservableObject
             var settings = NasClientSettings.Load();
             _settings = settings;
             var api = new V2ApiClient(new V2ApiClientOptions(settings.ApiBaseUri, settings.CertificateSha256));
+            var profileSuffix = settings.CredentialProfile == "default" ? string.Empty : "." + settings.CredentialProfile;
             var vault = new WindowsCredentialVault(new WindowsCredentialVaultOptions(
-                "MuYingDrive.V2.ActiveSession",
-                "MuYingDrive.V2.ActiveSmbCredential"));
+                "MuYingDrive.V2" + profileSuffix + ".ActiveSession",
+                "MuYingDrive.V2" + profileSuffix + ".ActiveSmbCredential"));
             var smb = new WindowsSmbConnectionService(new WindowsSmbConnectionOptions(settings.ShareRoot), vault);
             _sessionService = new V2SessionService(api, vault, smb);
         }

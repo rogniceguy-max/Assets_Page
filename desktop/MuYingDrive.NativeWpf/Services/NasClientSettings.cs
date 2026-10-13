@@ -5,6 +5,9 @@ namespace MuYingDrive.NativeWpf.Services;
 /// <summary>Non-secret V2 API, certificate pin, and SMB share settings.</summary>
 public sealed record NasClientSettings(Uri ApiBaseUri, string CertificateSha256, string ShareRoot)
 {
+    /// <summary>Credential Manager profile. "default" preserves the existing employee targets.</summary>
+    public string CredentialProfile { get; init; } = "default";
+
     public static NasClientSettings Load()
     {
         var settingsPath = Path.Combine(AppContext.BaseDirectory, "nas-client.json");
@@ -37,9 +40,14 @@ public sealed record NasClientSettings(Uri ApiBaseUri, string CertificateSha256,
         if (settings is null || settings.ApiBaseUri is null || settings.ApiBaseUri.Scheme != Uri.UriSchemeHttps ||
             string.IsNullOrWhiteSpace(settings.CertificateSha256) ||
             string.IsNullOrWhiteSpace(settings.ShareRoot) ||
-            !settings.ShareRoot.StartsWith("\\\\", StringComparison.Ordinal))
+            !settings.ShareRoot.StartsWith("\\\\", StringComparison.Ordinal) ||
+            !IsValidCredentialProfile(settings.CredentialProfile))
             throw new InvalidOperationException("客户端尚未配置 NAS 服务，请联系管理员。", null);
 
         return settings;
     }
+
+    private static bool IsValidCredentialProfile(string value) =>
+        !string.IsNullOrWhiteSpace(value) && value.Length <= 48 &&
+        value.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_');
 }

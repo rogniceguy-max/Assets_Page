@@ -93,6 +93,16 @@ public sealed class V2SessionService
 
     private async Task<DriveSession> SaveAndConnectAsync(V2UserSession user, string token, string password)
     {
+        // Every new account starts from a clean local state. Drop the previous
+        // account's saved credentials and this process's SMB connection to the
+        // share first: Windows rejects a second connection to the same server
+        // under a different user name (WNet error 1219), so without the
+        // disconnect the newly signed-in user cannot reach the share at all.
+        // This runs only after the server accepted the new login, so a failed
+        // sign-in leaves the current account's credentials intact.
+        ClearLocalCredentials();
+        _smb.Disconnect();
+
         try
         {
             _vault.SaveV2SessionToken(FormatIdentity(user), token);

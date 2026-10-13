@@ -58,6 +58,7 @@ public sealed class WindowsSmbConnectionService
 {
     private const int ResourceTypeDisk = 1;
     private const uint ErrorNotFound = 1168;
+    private const uint ErrorNotConnected = 2250;
 
     private readonly WindowsSmbConnectionOptions _options;
     private readonly WindowsCredentialVault _credentialVault;
@@ -88,6 +89,28 @@ public sealed class WindowsSmbConnectionService
             return new SmbConnectionResult(ErrorNotFound, SmbConnectionFailure.CredentialsMissing);
 
         return ConnectWithCredentials(credential.UserName, credential.Password);
+    }
+
+    /// <summary>
+    /// Drops this process's connection to the configured UNC share. A new account
+    /// must call this before connecting: Windows refuses a second connection to the
+    /// same server under a different user name (WNet error 1219) while the previous
+    /// account's connection is still present in the logon session. A missing
+    /// connection is treated as success so callers can always run this before a
+    /// fresh connect.
+    /// </summary>
+    public SmbConnectionResult Disconnect()
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("Windows SMB connections are available only on Windows.");
+
+        // Force the drop: without fForce, Windows returns ERROR_OPEN_FILES while any
+        // other process still holds a handle and the credential conflict would persist.
+        var error = WNetCancelConnection2W(_options.ShareRoot, 0, true);
+        if (error == 0 || error == ErrorNotFound || error == ErrorNotConnected)
+            return new SmbConnectionResult(0);
+
+        return new SmbConnectionResult(error);
     }
 
     /// <summary>
@@ -152,5 +175,11 @@ public sealed class WindowsSmbConnectionService
         string password,
         string userName,
         uint flags);
+
+    [DllImport("Mpr.dll", EntryPoint = "WNetCancelConnection2W", CharSet = CharSet.Unicode, SetLastError = false, ExactSpelling = true)]
+    private static extern uint WNetCancelConnection2W(
+        string name,
+        uint flags,
+        [MarshalAs(UnmanagedType.Bool)] bool force);
 
 }
