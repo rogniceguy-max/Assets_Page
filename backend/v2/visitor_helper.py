@@ -21,6 +21,7 @@ Protocol (one request per process):
 from __future__ import annotations
 
 import json
+import grp
 import os
 import pwd
 import socket
@@ -36,6 +37,7 @@ MAX_READ_BYTES = 4 * 1024 * 1024
 
 EXPECTED_PEER_USER = os.environ.get("MUYING_V2_HELPER_PEER_USER", "muying-v2")
 VISITOR_USER = os.environ.get("MUYING_V2_VISITOR_USER", "沐影参观")
+VISITOR_GROUP = os.environ.get("MUYING_V2_VISITOR_GROUP", "my_visitor")
 
 # Space roots are resolved here, never supplied by the caller: the client sends a space
 # id and a relative path, and an unknown id is rejected outright.
@@ -74,21 +76,34 @@ class RequestRejected(Exception):
 
 
 def _drop_privileges() -> None:
-    """Become the visitor identity. This cannot be undone by this process."""
+    """Become the visitor identity. This cannot be undone by this process.
+
+    The dedicated visitor *group* is used, not the account's primary group. UGOS gives
+    new accounts the shared ``users`` group as their primary group, so dropping to
+    ``pw_gid`` would run under a group shared with employees and administrators — both
+    an over-grant and, in practice, a denial, because the read-only ACLs are granted to
+    the dedicated group rather than to ``users``.
+    """
     try:
         account = pwd.getpwnam(VISITOR_USER)
     except KeyError:
         raise RequestRejected("VISITOR_ACCOUNT_MISSING", "参观身份尚未配置。") from None
+    try:
+        group = grp.getgrnam(VISITOR_GROUP)
+    except KeyError:
+        raise RequestRejected("VISITOR_GROUP_MISSING", "参观专用组尚未配置。") from None
 
     try:
-        os.setgroups([account.pw_gid])
-        os.setgid(account.pw_gid)
+        os.setgroups([group.gr_gid])
+        os.setgid(group.gr_gid)
         os.setuid(account.pw_uid)
     except OSError:
         raise RequestRejected("PRIVILEGE_DROP_FAILED", "参观通道无法安全降权。") from None
 
     # Verify the drop actually took effect before any filesystem access.
     if os.getuid() != account.pw_uid or os.geteuid() != account.pw_uid:
+        raise RequestRejected("PRIVILEGE_DROP_FAILED", "参观通道无法安全降权。")
+    if os.getgid() != group.gr_gid or os.getgroups() != [group.gr_gid]:
         raise RequestRejected("PRIVILEGE_DROP_FAILED", "参观通道无法安全降权。")
 
 
