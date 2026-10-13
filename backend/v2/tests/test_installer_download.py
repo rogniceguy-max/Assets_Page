@@ -11,14 +11,16 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import stat
 import tempfile
+import threading
 import unittest
 from email.parser import BytesParser
 from pathlib import Path
 
-from backend.v2.installer_store import newest_setup_name
+from backend.v2.installer_store import _has_write_bit, newest_setup_name
 from backend.v2.release_store import OpenRelease, ReleaseNotFound, ReleaseUnavailable
-from backend.v2.server import create_handler
+from backend.v2.server import MAX_CONCURRENT_DOWNLOADS, create_handler
 from backend.v2.service import ApiError
 
 
@@ -49,6 +51,24 @@ class NewestSetupNameTests(unittest.TestCase):
         self.assertIsNone(newest_setup_name(["MuYingDrive.Setup-9.9.9.exe.bak"]))
 
 
+class ImmutabilityRuleTests(unittest.TestCase):
+    """The rule that keeps a half-copied package from being handed out.
+
+    Testable here even though the store itself is not: it is a pure decision over a
+    stat result, and it is the difference between refusing an upload in progress and
+    serving a truncated executable with a checksum that vouches for it.
+    """
+
+    def test_a_writable_file_is_not_publishable(self):
+        # 0644/0664/0666 are what a plain copy or an upload leaves behind.
+        for mode in (0o644, 0o664, 0o666, 0o600, 0o444 | stat.S_IWOTH):
+            self.assertTrue(_has_write_bit(mode), oct(mode))
+
+    def test_a_read_only_file_is_publishable(self):
+        for mode in (0o444, 0o555, 0o400):
+            self.assertFalse(_has_write_bit(mode), oct(mode))
+
+
 class FakeInstallerStore:
     """Stands in for InstallerStore, which is built on POSIX-only directory handles."""
 
@@ -67,9 +87,14 @@ class FakeInstallerStore:
         return name
 
     def sha256(self, name: str) -> str:
-        return hashlib.sha256(self._files[name]).hexdigest()
+        # Via open_verified, like the real store: the immutability rule has to apply to
+        # the digest route too, or a half-written package would be endorsed rather than
+        # refused.
+        opened, digest = self.open_verified(name)
+        opened.close()
+        return digest
 
-    def open(self, name: str) -> OpenRelease:
+    def open_verified(self, name: str) -> tuple[OpenRelease, str]:
         payload = self._files[name]
         path = self._root / f"payload-{len(payload)}.bin"
         path.write_bytes(payload)
@@ -77,7 +102,7 @@ class FakeInstallerStore:
         # stop the stream at the first \x1a. The real store never runs there, but these
         # tests do.
         descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
-        return OpenRelease(descriptor, len(payload), 0, 0, 0, 0)
+        return OpenRelease(descriptor, len(payload), 0, 0, 0, 0), hashlib.sha256(payload).hexdigest()
 
 
 class UnconfiguredInstallerStore:
@@ -104,13 +129,15 @@ class InstallerDownloadTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def request(self, path, headers=None, installer=None):
+    def request(self, path, headers=None, installer=None, download_slots=None):
         # No Authorization header anywhere: these routes must never need one.
         values = {"Host": "localhost"}
         values.update(headers or {})
         raw = (f"GET {path} HTTP/1.1\r\n" + "".join(f"{k}: {v}\r\n" for k, v in values.items()) + "\r\n").encode("ascii")
         handler_type = create_handler(
-            self.app, installer=installer if installer is not None else FakeInstallerStore(self.root, self.files))
+            self.app,
+            installer=installer if installer is not None else FakeInstallerStore(self.root, self.files),
+            download_slots=download_slots)
         handler = handler_type.__new__(handler_type)
         handler.rfile = io.BytesIO(raw)
         handler.wfile = io.BytesIO()
@@ -165,6 +192,45 @@ class InstallerDownloadTests(unittest.TestCase):
     def test_an_unconfigured_directory_serves_nothing(self):
         for path in ("/download", "/download/muying-setup.exe", "/download/muying-setup.sha256"):
             self.assertEqual(self.request(path, installer=UnconfiguredInstallerStore())[0], 503)
+
+    def test_too_many_downloads_at_once_are_refused_not_queued(self):
+        # The cap exists so a roomful of colleagues fetching the installer cannot take
+        # the login API down with them. Queuing would be worse than refusing: a queued
+        # request keeps holding the worker slot it is waiting for a slot to be freed in.
+        slots = threading.BoundedSemaphore(MAX_CONCURRENT_DOWNLOADS)
+        for _ in range(MAX_CONCURRENT_DOWNLOADS):
+            slots.acquire()
+        status, headers, body = self.request("/download/muying-setup.exe", download_slots=slots)
+        self.assertEqual(status, 503)
+        self.assertEqual(headers.get("Retry-After"), "30")
+        self.assertIn("DOWNLOAD_BUSY", body.decode("utf-8"))
+
+    def test_the_api_is_untouched_while_downloads_are_refused(self):
+        slots = threading.BoundedSemaphore(MAX_CONCURRENT_DOWNLOADS)
+        for _ in range(MAX_CONCURRENT_DOWNLOADS):
+            slots.acquire()
+        self.request("/download/muying-setup.exe", download_slots=slots)
+        self.assertEqual(self.request("/api/v2/health", download_slots=slots)[0], 200)
+
+    def test_a_package_that_is_still_being_written_is_not_served(self):
+        # Mirrors the store's immutability rule: a writable published file is a file
+        # mid-copy, and a checksum read from it would vouch for a truncated download.
+        class MidCopyStore(FakeInstallerStore):
+            def open_verified(self, name):
+                raise ReleaseUnavailable("installer must be immutable while published")
+
+        store = MidCopyStore(self.root, self.files)
+        self.assertEqual(self.request("/download/muying-setup.exe", installer=store)[0], 503)
+        self.assertEqual(self.request("/download/muying-setup.sha256", installer=store)[0], 503)
+
+    def test_a_broken_directory_reports_itself_unhealthy(self):
+        # 503 rather than a friendly 200 page: an operator who mistyped the directory
+        # needs the endpoint to look down to them, not to read as "nothing yet".
+        class BrokenStore(FakeInstallerStore):
+            def latest_name(self):
+                raise ReleaseUnavailable("installer directory unavailable")
+
+        self.assertEqual(self.request("/download", installer=BrokenStore(self.root, self.files))[0], 503)
 
     def test_neighbouring_paths_are_not_served(self):
         # The download root must not become a general file server.

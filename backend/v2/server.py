@@ -41,6 +41,18 @@ DOWNLOAD_ROOT = "/download"
 INSTALLER_FILE_PATH = f"{DOWNLOAD_ROOT}/muying-setup.exe"
 INSTALLER_DIGEST_PATH = f"{DOWNLOAD_ROOT}/muying-setup.sha256"
 
+# Downloads run in the same worker pool as the authenticated API, and every connection
+# holds one of its 32 slots for as long as the transfer lasts. Without a separate cap, a
+# roomful of colleagues fetching the installer at once — the entire point of the route —
+# would take login and update checks down with it. Capping downloads well below the pool
+# leaves the API most of its capacity whatever the downloads are doing.
+MAX_CONCURRENT_DOWNLOADS = 8
+# A client that drains a chunk just inside the socket timeout holds its slot forever
+# otherwise: 20 s of silence never happens if it never goes quiet. This bounds the hold
+# however slowly it reads. At a gigabit the whole file takes about two seconds; this is
+# the floor below which a transfer is not really progressing.
+MAX_DOWNLOAD_SECONDS = 300
+
 
 def _bearer_token(headers) -> str | None:
     value = headers.get("Authorization", "")
@@ -54,6 +66,7 @@ def create_handler(app: V2Application, *,
                    update_releases_dir: Path | None = None,
                    installer_dir: Path | None = None,
                    installer: InstallerStore | None = None,
+                   download_slots: threading.BoundedSemaphore | None = None,
                    update_failure_db_path: Path | None = None,
                    feedback: FeedbackService | None = None,
                    visitor: VisitorService | None = None):
@@ -67,6 +80,10 @@ def create_handler(app: V2Application, *,
     # routes can be exercised on a platform without the POSIX directory primitives the
     # real store is built on.
     installer = installer or InstallerStore(installer_dir)
+    # Injectable so the refusal path can be exercised without holding eight real
+    # transfers open. It must be shared across requests, which is why it lives here and
+    # not on the handler.
+    download_slots = download_slots or threading.BoundedSemaphore(MAX_CONCURRENT_DOWNLOADS)
     failure_store = None
     db_path = update_failure_db_path or getattr(app, "db_path", None)
     if db_path is not None:
@@ -341,18 +358,32 @@ def create_handler(app: V2Application, *,
             if not installer.configured:
                 self._send_error(ApiError(503, "INSTALLER_UNAVAILABLE", "安装包下载暂不可用。"))
                 return
-            try:
-                name = installer.latest_name()
-                digest = installer.sha256(name)
-                opened = installer.open(name)
-            except ReleaseNotFound:
-                self._send_error(ApiError(404, "INSTALLER_NOT_FOUND", "尚未发布安装包。"))
-                return
-            except (ReleaseUnavailable, OSError):
-                self._send_error(ApiError(503, "INSTALLER_UNAVAILABLE", "安装包下载暂不可用。"))
+            # Refused rather than queued: a queued download would hold its worker slot
+            # while waiting for another, which is the exhaustion this exists to stop.
+            if not download_slots.acquire(blocking=False):
+                self.send_response(503)
+                self.send_header("Retry-After", "30")
+                self._send_release_headers("application/json; charset=utf-8", None, '"busy"')
+                self.end_headers()
+                self.wfile.write(json.dumps(
+                    {"success": False, "code": "DOWNLOAD_BUSY", "error": "同时下载的人数过多，请稍后重试。"},
+                    ensure_ascii=False).encode("utf-8"))
                 return
 
+            opened = None
             try:
+                try:
+                    name = installer.latest_name()
+                    # One descriptor for the ETag and the bytes: a checksum computed from
+                    # a separate open could describe a file the caller never receives.
+                    opened, digest = installer.open_verified(name)
+                except ReleaseNotFound:
+                    self._send_error(ApiError(404, "INSTALLER_NOT_FOUND", "尚未发布安装包。"))
+                    return
+                except (ReleaseUnavailable, OSError):
+                    self._send_error(ApiError(503, "INSTALLER_UNAVAILABLE", "安装包下载暂不可用。"))
+                    return
+
                 etag = f'"{digest}"'
                 if self._etag_matches(self.headers.get("If-None-Match"), etag):
                     self.send_response(304)
@@ -390,6 +421,7 @@ def create_handler(app: V2Application, *,
                     self.send_header("Content-Range", f"bytes {start}-{end}/{opened.size}")
                 self.end_headers()
                 os.lseek(opened.file_descriptor, start, os.SEEK_SET)
+                deadline = time.monotonic() + MAX_DOWNLOAD_SECONDS
                 remaining = length
                 while remaining:
                     chunk = os.read(opened.file_descriptor, min(RELEASE_CHUNK_BYTES, remaining))
@@ -397,8 +429,16 @@ def create_handler(app: V2Application, *,
                         break
                     self.wfile.write(chunk)
                     remaining -= len(chunk)
+                    if remaining and time.monotonic() > deadline:
+                        # The client is not draining. Ending the response costs it a
+                        # truncated download; continuing would hold this worker slot,
+                        # and a share of the API's capacity, for as long as it stalled.
+                        self.close_connection = True
+                        break
             finally:
-                opened.close()
+                if opened is not None:
+                    opened.close()
+                download_slots.release()
 
         def _serve_installer_digest(self) -> None:
             if not installer.configured:
@@ -434,8 +474,7 @@ def create_handler(app: V2Application, *,
 
             try:
                 name = installer.latest_name()
-                digest = installer.sha256(name)
-                opened = installer.open(name)
+                opened, digest = installer.open_verified(name)
                 try:
                     size = opened.size
                 finally:
@@ -445,7 +484,11 @@ def create_handler(app: V2Application, *,
             except ReleaseNotFound:
                 body = "沐影盘安装包下载\n\n尚未发布安装包。\n"
             except (ReleaseUnavailable, OSError):
-                body = "沐影盘安装包下载\n\n安装包下载暂不可用。\n"
+                # 503 rather than a friendly 200: an operator who mistyped the directory,
+                # or forgot to make the package read-only, should see the endpoint report
+                # itself unhealthy instead of a page that reads as nothing published yet.
+                self._send_error(ApiError(503, "INSTALLER_UNAVAILABLE", "安装包下载暂不可用。"))
+                return
             else:
                 mebibytes = size / (1024 * 1024)
                 body = (
