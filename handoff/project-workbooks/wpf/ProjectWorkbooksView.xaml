@@ -1,0 +1,150 @@
+<UserControl x:Class="MuYingDrive.ProjectWorkbooks.ProjectWorkbooksView"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ xmlns:local="clr-namespace:MuYingDrive.ProjectWorkbooks"
+ Loaded="OnLoaded" Background="{DynamicResource Brush.Surface.Canvas}"
+ Foreground="{DynamicResource Brush.Text.Primary}" FontSize="14" FontFamily="{DynamicResource Typography.FontFamily}">
+ <UserControl.Resources>
+  <!-- Scoped fallback only. OnLoaded adopts matching host resources. Never merged into App.Resources. -->
+  <SolidColorBrush x:Key="Brush.Surface.Canvas" Color="#101112"/>
+  <SolidColorBrush x:Key="Brush.Surface.Panel" Color="#191A1C"/>
+  <SolidColorBrush x:Key="Brush.Border.Subtle" Color="#303238"/>
+  <SolidColorBrush x:Key="Brush.Text.Primary" Color="#F0F1F4"/>
+  <SolidColorBrush x:Key="Brush.Text.Secondary" Color="#A8ADB7"/>
+  <SolidColorBrush x:Key="Brush.Accent.Primary" Color="#6058D6"/>
+  <SolidColorBrush x:Key="Brush.Status.Danger" Color="#D14343"/>
+  <FontFamily x:Key="Typography.FontFamily">Inter, Noto Sans SC, Microsoft YaHei UI</FontFamily>
+  <BooleanToVisibilityConverter x:Key="BoolVisibility"/>
+  <Style x:Key="Typography.Caption" TargetType="TextBlock">
+   <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}"/>
+   <Setter Property="TextWrapping" Value="Wrap"/><Setter Property="Margin" Value="0,0,0,6"/>
+  </Style>
+  <Style x:Key="Button.Secondary" TargetType="Button">
+   <Setter Property="Background" Value="{DynamicResource Brush.Surface.Panel}"/>
+   <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
+   <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Subtle}"/>
+   <Setter Property="Padding" Value="10,7"/><Setter Property="Margin" Value="0,0,6,6"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+    <Border x:Name="Chrome" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="{TemplateBinding Padding}">
+     <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+    </Border><ControlTemplate.Triggers>
+     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Brush.Accent.Primary}"/></Trigger>
+     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Chrome" Property="BorderThickness" Value="2"/></Trigger>
+     <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Chrome" Property="Opacity" Value="0.5"/></Trigger>
+    </ControlTemplate.Triggers>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style x:Key="Button.Primary" TargetType="Button" BasedOn="{StaticResource Button.Secondary}">
+   <Setter Property="Background" Value="{DynamicResource Brush.Accent.Primary}"/>
+  </Style>
+  <Style TargetType="Button" BasedOn="{StaticResource Button.Secondary}"/>
+  <Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/></Style>
+  <Style x:Key="Cell" TargetType="Border"><Setter Property="Padding" Value="10"/>
+   <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Subtle}"/><Setter Property="BorderThickness" Value="0,0,1,0"/>
+  </Style>
+  <DataTemplate x:Key="SceneRowTemplate">
+   <Border Loaded="OnRowLoaded" MouseLeftButtonUp="OnSceneRowClick" KeyDown="OnSceneRowKeyDown" Focusable="True" ToolTip="查看批注" AutomationProperties.Name="节拍行，按回车查看批注" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" Margin="0,0,0,8" Background="{DynamicResource Brush.Surface.Panel}">
+    <StackPanel>
+     <Border Padding="10" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="0,0,0,1">
+      <Grid>
+       <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+       <TextBlock Grid.Column="0" Margin="0,0,10,0"><Run Text="场景号  " Foreground="{DynamicResource Brush.Text.Secondary}"/><Run Text="{Binding Row.SceneNumber}"/></TextBlock>
+       <TextBlock Grid.Column="1" Margin="0,0,10,0"><Run Text="节拍号  " Foreground="{DynamicResource Brush.Text.Secondary}"/><Run Text="{Binding Row.BeatNumber}"/></TextBlock>
+       <TextBlock Grid.Column="2"><Run Text="制作难度  " Foreground="{DynamicResource Brush.Text.Secondary}"/><Run Text="{Binding Row.LabelLevel}"/></TextBlock>
+      </Grid>
+     </Border>
+     <StackPanel Margin="10">
+      <TextBlock Text="故事内容" Style="{DynamicResource Typography.Caption}"/><TextBlock Text="{Binding Row.StoryContent}"/>
+      <TextBlock Text="拆分规划" Style="{DynamicResource Typography.Caption}" Margin="0,12,0,6"/><TextBlock Text="{Binding Row.BreakdownPlan}"/>
+     </StackPanel>
+    </StackPanel>
+   </Border>
+  </DataTemplate>
+  <DataTemplate x:Key="AssetRowTemplate">
+   <Border Loaded="OnRowLoaded" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" Margin="0,0,0,8" Background="{DynamicResource Brush.Surface.Panel}">
+    <local:ResponsiveColumnsPanel Weights="0.8,1,1,2,3" Breakpoint="760">
+     <Border Style="{StaticResource Cell}"><StackPanel><TextBlock Text="类别" Style="{DynamicResource Typography.Caption}"/><TextBlock Text="{Binding Row.Category}"/></StackPanel></Border>
+     <Border Style="{StaticResource Cell}"><StackPanel><TextBlock Text="名称 / 形态" Style="{DynamicResource Typography.Caption}"/><TextBlock Text="{Binding Row.Name}"/><TextBlock Text="{Binding Row.Variant}" Foreground="{DynamicResource Brush.Text.Secondary}"/><Button Click="OnGeneralReview" Margin="0,12,0,6" Padding="4"><TextBlock Text="{Binding GeneralSummaryText}" TextWrapping="Wrap"/></Button><Button Content="比较图片" Click="OnCompareRow"/><Button Content="选定历史" Click="OnSelectionHistory"/></StackPanel></Border>
+     <Border Style="{StaticResource Cell}"><StackPanel><TextBlock Text="出场" Style="{DynamicResource Typography.Caption}"/><TextBlock Text="{Binding Row.Appearance}"/></StackPanel></Border>
+     <Border Style="{StaticResource Cell}" AllowDrop="True" Tag="selected" DragOver="OnImageDragOver" Drop="OnImageDrop">
+      <StackPanel><TextBlock Text="选定" Style="{DynamicResource Typography.Caption}"/>
+       <Button Click="OnPreviewSelected" Padding="0" HorizontalAlignment="Stretch" ToolTip="查看大图">
+        <Grid Height="110"><TextBlock Text="拖入一张图片" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Selected}" Value="{x:Null}"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock><Image Source="{Binding Selected.Preview}" Stretch="Uniform"/></Grid>
+       </Button><TextBlock Text="{Binding Selected.Name}"/><TextBlock Text="{Binding Selected.Error}" Foreground="{DynamicResource Brush.Text.Secondary}"/>
+       <TextBlock Text="{Binding Selected.SummaryText}" FontSize="11" Margin="0,4,0,8" Foreground="{DynamicResource Brush.Text.Secondary}"/>
+       <WrapPanel IsEnabled="{Binding Row.CanEdit}"><Button Content="选择图片" Tag="selected" Click="OnPickImages"/><Button Content="清空" Click="OnClearSelected"/></WrapPanel>
+      </StackPanel>
+     </Border>
+     <Border Style="{StaticResource Cell}" AllowDrop="True" Tag="candidates" DragOver="OnImageDragOver" Drop="OnImageDrop">
+      <StackPanel><TextBlock Text="备选" Style="{DynamicResource Typography.Caption}"/>
+       <ItemsControl ItemsSource="{Binding Candidates}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate><DataTemplate>
+         <StackPanel Width="100" Margin="0,0,8,8">
+          <Button Click="OnPreviewCandidate" Padding="0" ToolTip="查看大图"><Image Source="{Binding Preview}" Width="88" Height="72" Stretch="Uniform"/></Button>
+          <TextBlock Text="{Binding Name}" FontSize="11"/><TextBlock Text="{Binding Error}" FontSize="11"/>
+          <TextBlock Text="{Binding SummaryText}" FontSize="11" Margin="0,4,0,6" Foreground="{DynamicResource Brush.Text.Secondary}"/>
+          <Button Content="设为选定" Click="OnUseCandidate" FontSize="11" Padding="4" IsEnabled="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}}"/>
+          <Button Content="移除" Click="OnRemoveCandidate" FontSize="11" Padding="4" IsEnabled="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}}"/>
+         </StackPanel>
+        </DataTemplate></ItemsControl.ItemTemplate>
+       </ItemsControl>
+       <Button Content="添加备选" Tag="candidates" Click="OnPickImages" HorizontalAlignment="Left" IsEnabled="{Binding Row.CanEdit}"/>
+      </StackPanel>
+     </Border>
+    </local:ResponsiveColumnsPanel>
+   </Border>
+  </DataTemplate>
+ </UserControl.Resources>
+ <Grid Margin="24">
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+  <StackPanel Grid.Row="0"><TextBlock Text="项目" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,16"/>
+   <ComboBox ItemsSource="{Binding Projects}" SelectedItem="{Binding SelectedProject}" DisplayMemberPath="Name" SelectionChanged="OnProjectChanged" IsEnabled="{Binding Ready}" MinWidth="180" MaxWidth="340" HorizontalAlignment="Left" Margin="0,0,0,12" ToolTip="选择项目"/>
+   <TextBlock Text="{Binding Error}" Foreground="{DynamicResource Brush.Status.Danger}" Margin="0,0,0,8"/>
+   <Button Content="重新加载" Click="OnRefresh" HorizontalAlignment="Left" IsEnabled="{Binding Ready}" Visibility="{Binding CanReload, Converter={StaticResource BoolVisibility}}"/>
+   <ProgressBar Height="3" IsIndeterminate="True" Visibility="{Binding Busy, Converter={StaticResource BoolVisibility}}" Margin="0,0,0,8"/>
+  </StackPanel>
+  <StackPanel Grid.Row="1" Visibility="{Binding HasPendingOperation, Converter={StaticResource BoolVisibility}}" IsEnabled="{Binding Ready}" Margin="0,0,0,12">
+   <TextBlock Text="{Binding PendingText}"/><WrapPanel Margin="0,6,0,0"><Button Content="重试这次操作" Click="OnRetryPending"/><Button Content="取消待确认操作" Click="OnCancelPending"/></WrapPanel>
+  </StackPanel>
+  <Grid Grid.Row="2" IsEnabled="{Binding Ready}">
+   <Grid Visibility="{Binding IsHome, Converter={StaticResource BoolVisibility}}" AllowDrop="True" DragOver="OnWorkbookDragOver" Drop="OnWorkbookDrop" Background="Transparent">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+    <StackPanel><WrapPanel>
+     <Button Content="导入 .xlsx" Click="OnImport" Style="{DynamicResource Button.Primary}"/>
+     <Button Content="新建节拍表" Tag="scene_beats" Click="OnCreate"/>
+     <Button Content="新建资产表" Tag="asset_review" Click="OnCreate"/>
+    </WrapPanel></StackPanel>
+    <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+     <ItemsControl ItemsSource="{Binding Files}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+      <ItemsControl.ItemTemplate><DataTemplate>
+       <Button Click="OnOpenFile" Width="200" Height="130" Margin="0,0,12,12" HorizontalContentAlignment="Stretch">
+        <StackPanel><TextBlock Text="▦" FontSize="35" Foreground="{DynamicResource Brush.Accent.Primary}" Margin="0,0,0,12"/><TextBlock Text="{Binding Name}" TextWrapping="Wrap"/><TextBlock Text="XLSX 工作簿" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}"/></StackPanel>
+       </Button>
+      </DataTemplate></ItemsControl.ItemTemplate>
+     </ItemsControl>
+    </ScrollViewer>
+   </Grid>
+   <Grid Visibility="{Binding IsOpen, Converter={StaticResource BoolVisibility}}">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <StackPanel><WrapPanel><Button Content="返回项目" Click="OnBack"/><Button Content="下载原件" Click="OnDownload"/><Button Content="导出" Click="OnExport"/><Button Content="导入修订" Click="OnImportRevision"/><Button Content="修订记录" Click="OnRevisions"/></WrapPanel>
+     <TextBlock Text="{Binding Document.File.Name}" FontSize="16" FontWeight="SemiBold" Margin="0,8,0,8"/><TextBlock Text="{Binding Notice}" Foreground="{DynamicResource Brush.Text.Secondary}" Margin="0,0,0,10"/>
+     <WrapPanel Margin="0,0,0,12"><TextBlock Text="工作表" VerticalAlignment="Center" Margin="0,0,8,0"/><ComboBox ItemsSource="{Binding Sheets}" SelectedItem="{Binding SelectedSheet}" DisplayMemberPath="Name" MinWidth="140" MaxWidth="280" Margin="0,0,12,0"/>
+      <TextBox Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}" Width="200" Padding="6" ToolTip="搜索节拍正文、场景、编号或规划" Background="{DynamicResource Brush.Surface.Panel}" Foreground="{DynamicResource Brush.Text.Primary}"/>
+      <ComboBox ItemsSource="{Binding LevelFilters}" SelectedItem="{Binding LevelFilter}" MinWidth="100" Margin="12,0,0,0" ToolTip="制作难度筛选"/>
+     </WrapPanel>
+    </StackPanel>
+    <ScrollViewer x:Name="WorkbookScroll" Grid.Row="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" ScrollChanged="OnWorkbookScroll">
+     <StackPanel DataContext="{Binding SelectedSheet}">
+      <ItemsControl ItemsSource="{Binding Assets}" ItemTemplate="{StaticResource AssetRowTemplate}" Visibility="{Binding IsAsset, Converter={StaticResource BoolVisibility}}"/>
+      <ItemsControl ItemsSource="{Binding DataContext.VisibleScenes, RelativeSource={RelativeSource AncestorType=UserControl}}" ItemTemplate="{StaticResource SceneRowTemplate}" Visibility="{Binding IsScene, Converter={StaticResource BoolVisibility}}"/>
+      <ItemsControl ItemsSource="{Binding GenericRows}" Visibility="{Binding IsGeneric, Converter={StaticResource BoolVisibility}}">
+       <ItemsControl.ItemTemplate><DataTemplate><Border BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" Padding="12" Margin="0,0,0,8">
+        <ItemsControl ItemsSource="{Binding Cells}"><ItemsControl.ItemTemplate><DataTemplate><StackPanel Margin="0,0,0,12"><TextBlock Text="{Binding Label}" Style="{DynamicResource Typography.Caption}"/><TextBlock Text="{Binding Value}"/></StackPanel></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+       </Border></DataTemplate></ItemsControl.ItemTemplate>
+      </ItemsControl>
+     </StackPanel>
+    </ScrollViewer>
+   </Grid>
+  </Grid>
+ </Grid>
+</UserControl>

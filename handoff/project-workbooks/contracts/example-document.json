@@ -1,0 +1,52 @@
+{
+  "file": {
+    "id": "sample-workbook",
+    "name": "资产选定与评分表.xlsx",
+    "template_kind": "asset_review",
+    "version": 1
+  },
+  "sheets": [
+    {
+      "id": "sample-sheet",
+      "name": "资产选定与评分",
+      "kind": "asset_review",
+      "asset_rows": [
+        {
+          "id": "sample-row",
+          "version": 1,
+          "category": "人物",
+          "name": "示例角色",
+          "appearance": "第1集第2场",
+          "selected_image": {
+            "id": "sample-image-a",
+            "name": "选定形象.png",
+            "media_type": "image/png",
+            "width": 800,
+            "height": 1200
+          },
+          "candidate_images": [
+            {
+              "id": "sample-image-b",
+              "name": "备选形象一.png",
+              "media_type": "image/png",
+              "width": 800,
+              "height": 1200
+            },
+            {
+              "id": "sample-image-c",
+              "name": "备选形象二.jpg",
+              "media_type": "image/jpeg",
+              "width": 900,
+              "height": 1200
+            }
+          ]
+        }
+      ],
+      "scene_rows": [],
+      "columns": [],
+      "generic_rows": []
+    }
+  ],
+  "fidelity": "template",
+  "notices": []
+}

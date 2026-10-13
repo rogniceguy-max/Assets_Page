@@ -1,0 +1,282 @@
+openapi: 3.1.0
+info:
+  title: MuYing Project Workbooks handoff API
+  version: 1.0.0-proposed
+  description: Proposed integration contract, not deployed. See API.md for ownership and fidelity rules.
+security:
+  - bearerSession: []
+paths:
+  /api/v2/project-workbooks:
+    get:
+      operationId: listProjectWorkbooks
+      responses:
+        '200':
+          description: All visible project workbook files
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/ProjectFile'}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v2/project-workbooks/create:
+    post:
+      operationId: createProjectWorkbook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [template_kind]
+              additionalProperties: false
+              properties:
+                template_kind: {type: string, enum: [scene_beats, asset_review]}
+      responses:
+        '201':
+          description: Real empty xlsx created from template
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectFile'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v2/project-workbooks/import:
+    post:
+      operationId: importProjectWorkbook
+      parameters:
+        - {$ref: '#/components/parameters/FileName'}
+      requestBody:
+        required: true
+        description: Raw xlsx bytes, max 20 MiB; backend verifies OOXML independently of suffix.
+        content:
+          application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+            schema: {type: string, format: binary}
+      responses:
+        '201':
+          description: Original retained and project file registered
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectFile'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v2/project-workbooks/{file_id}:
+    parameters:
+      - {$ref: '#/components/parameters/FileId'}
+    get:
+      operationId: openProjectWorkbook
+      responses:
+        '200':
+          description: Ordered sheets with template or explicitly values-only representation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WorkbookDocument'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v2/project-workbooks/{file_id}/original:
+    parameters:
+      - {$ref: '#/components/parameters/FileId'}
+    get:
+      operationId: downloadOriginalWorkbook
+      responses:
+        '200':
+          description: Original file, not an export of later image relationship edits
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: {type: string, format: binary}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v2/project-workbooks/image-assets:
+    get:
+      operationId: listWorkbookImageAssets
+      responses:
+        '200':
+          description: Current actor's accessible images
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/ImageAsset'}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: uploadWorkbookImageAsset
+      parameters:
+        - {$ref: '#/components/parameters/FileName'}
+      requestBody:
+        required: true
+        description: Max 20 MiB. Decode, bound dimensions, and verify actual media type before storage.
+        content:
+          image/png: {schema: {type: string, format: binary}}
+          image/jpeg: {schema: {type: string, format: binary}}
+          image/webp: {schema: {type: string, format: binary}}
+      responses:
+        '201':
+          description: Persistent media reference; no row association yet
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ImageAsset'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v2/project-workbooks/image-assets/{asset_id}/content:
+    get:
+      operationId: getWorkbookImageContent
+      parameters:
+        - name: asset_id
+          in: path
+          required: true
+          schema: {type: string}
+        - name: thumbnail
+          in: query
+          schema: {type: boolean, default: true}
+      responses:
+        '200':
+          description: Authorized image bytes; Cache-Control private, no-store
+          content:
+            image/png: {schema: {type: string, format: binary}}
+            image/jpeg: {schema: {type: string, format: binary}}
+            image/webp: {schema: {type: string, format: binary}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v2/project-workbooks/{file_id}/asset-rows/{row_id}/images:
+    parameters:
+      - {$ref: '#/components/parameters/FileId'}
+      - name: row_id
+        in: path
+        required: true
+        schema: {type: string}
+    put:
+      operationId: replaceAssetRowImages
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expected_version, selected_image_id, candidate_image_ids]
+              additionalProperties: false
+              properties:
+                expected_version: {type: integer, minimum: 1}
+                selected_image_id: {type: [string, 'null']}
+                candidate_image_ids:
+                  type: array
+                  maxItems: 100
+                  uniqueItems: true
+                  items: {type: string}
+      responses:
+        '200':
+          description: Updated row with incremented version and resolved image metadata
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AssetRow'}
+        '409':
+          description: VERSION_CONFLICT; reload before new user intent, do not blindly retry
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        default: {$ref: '#/components/responses/Error'}
+components:
+  securitySchemes:
+    bearerSession: {type: http, scheme: bearer}
+  parameters:
+    FileName:
+      name: X-File-Name
+      in: header
+      required: true
+      description: URI-percent-encoded UTF-8 basename, no directory components
+      schema: {type: string}
+    FileId:
+      name: file_id
+      in: path
+      required: true
+      schema: {type: string}
+  responses:
+    Error:
+      description: Structured authorization, validation, version, or storage error
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string}
+            message: {type: string}
+    ProjectFile:
+      type: object
+      required: [id, name, template_kind, version]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        template_kind: {type: string, enum: [scene_beats, asset_review, generic]}
+        version: {type: integer, minimum: 1}
+    ImageAsset:
+      type: object
+      required: [id, name, media_type, width, height]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        media_type: {type: string, enum: [image/png, image/jpeg, image/webp]}
+        width: {type: integer, minimum: 1}
+        height: {type: integer, minimum: 1}
+    AssetRow:
+      type: object
+      required: [id, version, category, name, appearance, selected_image, candidate_images]
+      properties:
+        id: {type: string}
+        version: {type: integer, minimum: 1}
+        category: {type: [string, 'null']}
+        name: {type: [string, 'null']}
+        appearance: {type: [string, 'null']}
+        selected_image:
+          anyOf:
+            - {$ref: '#/components/schemas/ImageAsset'}
+            - {type: 'null'}
+        candidate_images:
+          type: array
+          maxItems: 100
+          items: {$ref: '#/components/schemas/ImageAsset'}
+    SceneRow:
+      type: object
+      required: [id, version, scene_number, beat_number, story_content, label_level, breakdown_plan]
+      properties:
+        id: {type: string}
+        version: {type: integer, minimum: 1}
+        scene_number: {type: [string, 'null']}
+        beat_number: {type: [string, 'null']}
+        story_content: {type: [string, 'null']}
+        label_level: {type: [string, 'null']}
+        breakdown_plan: {type: [string, 'null']}
+    GenericColumn:
+      type: object
+      required: [key, label]
+      properties:
+        key: {type: string}
+        label: {type: string}
+    GenericRow:
+      type: object
+      required: [id, cells]
+      properties:
+        id: {type: string}
+        cells:
+          type: object
+          additionalProperties: {type: [string, 'null']}
+    WorkbookSheet:
+      type: object
+      required: [id, name, kind, asset_rows, scene_rows, columns, generic_rows]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        kind: {type: string, enum: [asset_review, scene_beats, generic]}
+        asset_rows: {type: array, items: {$ref: '#/components/schemas/AssetRow'}}
+        scene_rows: {type: array, items: {$ref: '#/components/schemas/SceneRow'}}
+        columns: {type: array, items: {$ref: '#/components/schemas/GenericColumn'}}
+        generic_rows: {type: array, items: {$ref: '#/components/schemas/GenericRow'}}
+    WorkbookDocument:
+      type: object
+      required: [file, sheets, fidelity, notices]
+      properties:
+        file: {$ref: '#/components/schemas/ProjectFile'}
+        sheets: {type: array, items: {$ref: '#/components/schemas/WorkbookSheet'}}
+        fidelity: {type: string, enum: [template, values_only]}
+        notices: {type: array, items: {type: string}}

@@ -1,0 +1,5 @@
+{
+  "expected_version": 1,
+  "selected_image_id": "sample-image-b",
+  "candidate_image_ids": ["sample-image-b", "sample-image-c"]
+}

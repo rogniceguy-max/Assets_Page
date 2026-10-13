@@ -1,0 +1,170 @@
+openapi: 3.1.0
+info:
+  title: MuYing Project Workbook Reviews extension
+  version: 2.0.0-proposed
+  description: Additive routes. REVIEWS.md is authoritative. Not deployed.
+security:
+  - bearerSession: []
+paths:
+  /api/v2/project-workbooks/{file_id}/asset-rows/{row_id}/review-summaries:
+    parameters:
+      - {$ref: '#/components/parameters/FileId'}
+      - {$ref: '#/components/parameters/RowId'}
+    get:
+      operationId: getAssetReviewSummaries
+      responses:
+        '200':
+          description: Current image targets plus general discussion, including zero-count entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/ReviewSummary'}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v2/project-workbooks/{file_id}/asset-rows/{row_id}/reviews:
+    parameters:
+      - {$ref: '#/components/parameters/FileId'}
+      - {$ref: '#/components/parameters/RowId'}
+    get:
+      operationId: getAssetReviewThread
+      parameters:
+        - name: image_id
+          in: query
+          description: Omit for asset-wide general discussion; do not send literal null or empty string.
+          schema: {type: string, minLength: 1}
+      responses:
+        '200': {$ref: '#/components/responses/Thread'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v2/project-workbooks/{file_id}/asset-rows/{row_id}/reviews/vote:
+    parameters:
+      - {$ref: '#/components/parameters/FileId'}
+      - {$ref: '#/components/parameters/RowId'}
+    put:
+      operationId: setMyImageVote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [image_id, verdict]
+              properties:
+                image_id: {type: string, minLength: 1}
+                verdict: {type: [string, 'null'], enum: [good, bad, null]}
+      responses:
+        '200': {$ref: '#/components/responses/Thread'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v2/project-workbooks/{file_id}/asset-rows/{row_id}/reviews/comments:
+    parameters:
+      - {$ref: '#/components/parameters/FileId'}
+      - {$ref: '#/components/parameters/RowId'}
+    post:
+      operationId: addAssetReviewComment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [image_id, text]
+              properties:
+                image_id: {type: [string, 'null']}
+                text: {$ref: '#/components/schemas/CommentText'}
+      responses:
+        '201': {$ref: '#/components/responses/Thread'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v2/project-workbooks/{file_id}/asset-rows/{row_id}/reviews/comments/{comment_id}:
+    parameters:
+      - {$ref: '#/components/parameters/FileId'}
+      - {$ref: '#/components/parameters/RowId'}
+      - name: comment_id
+        in: path
+        required: true
+        schema: {type: string}
+    put:
+      operationId: editMyAssetReviewComment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_version, text]
+              properties:
+                expected_version: {type: integer, minimum: 1}
+                text: {$ref: '#/components/schemas/CommentText'}
+      responses:
+        '200': {$ref: '#/components/responses/Thread'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deleteMyAssetReviewComment
+      parameters:
+        - name: expected_version
+          in: query
+          required: true
+          schema: {type: integer, minimum: 1}
+      responses:
+        '200': {$ref: '#/components/responses/Thread'}
+        default: {$ref: '#/components/responses/Error'}
+components:
+  securitySchemes:
+    bearerSession: {type: http, scheme: bearer}
+  parameters:
+    FileId: {name: file_id, in: path, required: true, schema: {type: string}}
+    RowId: {name: row_id, in: path, required: true, schema: {type: string}}
+  responses:
+    Thread:
+      description: Authoritative thread after read or atomic mutation
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ReviewThread'}
+    Error:
+      description: Safe structured error; 409 VERSION_CONFLICT for stale comment edits/deletes
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error:
+                type: object
+                required: [code, message]
+                properties:
+                  code: {type: string}
+                  message: {type: string}
+  schemas:
+    CommentText: {type: string, minLength: 1, maxLength: 4000, description: Trimmed nonblank text; no unpaired surrogates.}
+    ReviewSummary:
+      type: object
+      required: [image_id, good, bad, comment_count, my_verdict]
+      properties:
+        image_id: {type: [string, 'null']}
+        good: {type: integer, minimum: 0}
+        bad: {type: integer, minimum: 0}
+        comment_count: {type: integer, minimum: 0}
+        my_verdict: {type: [string, 'null'], enum: [good, bad, null]}
+    ReviewComment:
+      type: object
+      required: [id, user_id, user_name, text, version, created_at, updated_at, can_edit, can_delete]
+      properties:
+        id: {type: string}
+        user_id: {type: string, description: Derived from authenticated principal only}
+        user_name: {type: string}
+        text: {$ref: '#/components/schemas/CommentText'}
+        version: {type: integer, minimum: 1}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        can_edit: {type: boolean}
+        can_delete: {type: boolean}
+    ReviewThread:
+      allOf:
+        - {$ref: '#/components/schemas/ReviewSummary'}
+        - type: object
+          required: [comments]
+          properties:
+            comments: {type: array, items: {$ref: '#/components/schemas/ReviewComment'}}

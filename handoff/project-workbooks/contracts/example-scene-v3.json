@@ -1,0 +1,79 @@
+{
+  "file": {
+    "id": "sample-revision-b",
+    "name": "示例项目_第26集.xlsx",
+    "template_kind": "scene_beats",
+    "version": 7,
+    "project_id": "sample-project",
+    "revision_of": "sample-revision-a",
+    "revision_label": "第2版"
+  },
+  "sheets": [
+    {
+      "id": "sample-episode-26",
+      "name": "第26集",
+      "kind": "scene_beats",
+      "asset_rows": [],
+      "columns": [],
+      "generic_rows": [],
+      "scene_rows": [
+        {
+          "id": "sample-beat-stable-id",
+          "version": 3,
+          "scene_number": "第26集第2场",
+          "beat_number": "beat4",
+          "story_content": "示例原文，只用于演示数据结构；不是实际剧本内容。",
+          "label_level": "红",
+          "breakdown_plan": "先拍人物反应，再处理手部细节。",
+          "scene_context": "示例教室 · 日",
+          "cast_context": "示例角色甲、示例角色乙",
+          "legacy_notes": [
+            {
+              "label": "成员批注一",
+              "text": "导入时已有的示例文字，作者尚未确认。",
+              "source_cell": "F5"
+            },
+            {
+              "label": "成员批注二",
+              "text": null,
+              "source_cell": "G5"
+            },
+            {
+              "label": "成员批注三",
+              "text": null,
+              "source_cell": "H5"
+            },
+            {
+              "label": "成员批注四",
+              "text": null,
+              "source_cell": "I5"
+            },
+            {
+              "label": "成员批注五",
+              "text": null,
+              "source_cell": "J5"
+            },
+            {
+              "label": "成员批注六",
+              "text": null,
+              "source_cell": "K5"
+            }
+          ],
+          "origins": [
+            {
+              "file_id": "sample-revision-a",
+              "row_id": "sample-old-beat-3"
+            },
+            {
+              "file_id": "sample-revision-a",
+              "row_id": "sample-old-beat-4"
+            }
+          ],
+          "can_edit": true
+        }
+      ]
+    }
+  ],
+  "fidelity": "template",
+  "notices": []
+}
