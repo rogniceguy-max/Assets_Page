@@ -15,6 +15,9 @@ public partial class FeedbackCreateWindow : Window
     public FeedbackCreateWindow(FeedbackDraftViewModel model)
     {
         _model = model;
+        // The draft is reused between openings, so a previous failure's message would
+        // otherwise still be on screen the next time the window is opened.
+        model.Error = "";
         InitializeComponent();
         DataContext = model;
         model.Submitted += OnSubmitted;

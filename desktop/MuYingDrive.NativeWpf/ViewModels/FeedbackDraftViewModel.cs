@@ -49,11 +49,27 @@ public sealed class FeedbackDraftViewModel : ObservableObject
     private async Task SubmitAsync()
     {
         if (!CanSubmit) return;
+
+        // The server collapses all of these into one generic "反馈内容无效" that names no
+        // field, so they are checked here first. The trimmed values are what get sent,
+        // because the server validates the trimmed text rather than what the boxes held.
+        var title = Title.Trim();
+        var description = Description.Trim();
+        if (title.Length == 0) { Error = "请填写反馈标题。"; return; }
+        if (title.Length > 120) { Error = "标题最多 120 个字。"; return; }
+        if (description.Length == 0) { Error = "请填写反馈描述。"; return; }
+        if (description.Length > 4000) { Error = "描述最多 4000 个字。"; return; }
+        if (title.Concat(description).Any(c => char.IsControl(c) && c is not '\n' and not '\t'))
+        {
+            Error = "内容包含无法提交的控制字符，请重新输入。";
+            return;
+        }
+
         IsBusy = true; Error = "";
         try
         {
             var images = Images.Select(i => new FeedbackImagePayload(i.Mime, Convert.ToBase64String(i.Bytes))).ToArray();
-            var result = await _api.CreateFeedbackAsync(_token, new FeedbackSubmission(Kind, Category, Title, Description, images, PrivacyConfirmed), _ct);
+            var result = await _api.CreateFeedbackAsync(_token, new FeedbackSubmission(Kind, Category, title, description, images, PrivacyConfirmed), _ct);
             Title = ""; Description = ""; Images.Clear(); PrivacyConfirmed = false;
             Submitted?.Invoke(this, result);
         }
