@@ -11,6 +11,47 @@ modify `muying-hub.service`, its code, or its database.
 - `/etc/muying-v2/server.env` and `helper.env` contain non-secret settings.
 - `/etc/muying-v2/server.crt` and `server.key` are the V2-only TLS certificate.
 - `/etc/samba/muying-v2-users.map` and `.json` are owned by the root helper.
+- `/volume1/muying-releases/` holds signed updater releases (`MUYING_V2_UPDATE_RELEASES_DIR`).
+- `/volume1/muying-download/` holds first-install packages (`MUYING_V2_INSTALLER_DIR`).
+
+## Publishing a first-install package
+
+`GET /download` is unauthenticated by design: a colleague with nothing installed has no
+session and no update channel, so the setup executable has to be fetchable by URL. Only
+the newest version is advertised.
+
+Drop `MuYingDrive.Setup-<X.Y.Z>.exe` into `MUYING_V2_INSTALLER_DIR` and drop the matching
+`.sha256` beside it if you want the published checksum to come from a file rather than be
+recomputed. No restart is needed; the directory is read per request.
+
+Two properties are enforced by the service, and a package that fails either is **not
+served at all** — it does not fall back to an older one:
+
+- **The file must be immutable.** Mode `0444`, owned `root:muying-v2`, directory `0755`.
+  Anything with a write bit is treated as a copy still in progress. This is not
+  decoration: a half-copied 154 MB executable would otherwise be advertised, and the
+  checksum published beside it would be computed from those same partial bytes, so a
+  recipient's verification would pass and the file would not run.
+- **The name must be exactly `MuYingDrive.Setup-<X.Y.Z>.exe`.** Anything else is ignored.
+
+Publish by copying to a temporary name and renaming into place, so the destination never
+exists in a partial state:
+
+```sh
+install -o root -g muying-v2 -m 0444 MuYingDrive.Setup-1.0.16.exe \
+    /volume1/muying-download/MuYingDrive.Setup-1.0.16.exe.new
+mv -T /volume1/muying-download/MuYingDrive.Setup-1.0.16.exe.new \
+      /volume1/muying-download/MuYingDrive.Setup-1.0.16.exe
+sudo -u muying-v2 sha256sum /volume1/muying-download/MuYingDrive.Setup-1.0.16.exe \
+    > /volume1/muying-download/MuYingDrive.Setup-1.0.16.exe.sha256
+```
+
+Older versions may stay in the directory; they are simply never selected. Delete them
+when you want the space back.
+
+The download routes share the API's listener, so they are capped separately
+(`MAX_CONCURRENT_DOWNLOADS`) and refuse with `503` and `Retry-After` when full, rather
+than queueing and consuming the capacity they are waiting for.
 
 ## First installation outline
 

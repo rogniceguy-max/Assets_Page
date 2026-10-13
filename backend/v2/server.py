@@ -35,6 +35,12 @@ MAX_UPDATE_FAILURE_REPORT_BYTES = 2048
 UPDATE_FAILURE_REPORT_PATH = f"{API_ROOT}/diagnostics/update-failures"
 PACKAGE_PATH_RE = re.compile(rf"^{API_ROOT}/updates/packages/([a-f0-9]{{32}})$")
 RELEASE_CHUNK_BYTES = 256 * 1024
+# How long a connection may take to complete its TLS handshake before it is dropped.
+# Without a bound, one client that opens a TCP connection and sends no ClientHello
+# holds the accept loop; see process_request_thread.
+HANDSHAKE_TIMEOUT_SECONDS = 20
+# How long an accepted connection may sit without making progress.
+REQUEST_TIMEOUT_SECONDS = 20
 # Human-facing, so deliberately outside API_ROOT: this is a URL to paste to a
 # colleague, not part of the client protocol.
 DOWNLOAD_ROOT = "/download"
@@ -501,6 +507,10 @@ def create_handler(app: V2Application, *,
                     f"下载      {INSTALLER_FILE_PATH}\n"
                     f"校验值    {INSTALLER_DIGEST_PATH}\n"
                     "\n"
+                    f"校验      下载后算出的 SHA-256 应等于上面那串。校验文件里写的是\n"
+                    f"          {name}，与浏览器保存的文件名一致；用 curl -O 取到的\n"
+                    "          是 muying-setup.exe，需先改名才能用 sha256sum -c。\n"
+                    "\n"
                     "安装不需要管理员权限。首次运行若出现「Windows 已保护你的电脑」，\n"
                     "点「更多信息」再点「仍要运行」即可。\n"
                 )
@@ -600,6 +610,9 @@ def make_server(settings: Settings, app: V2Application) -> ThreadingHTTPServer:
     class V2HTTPServer(ThreadingHTTPServer):
         def __init__(self, server_address, request_handler):
             self._request_slots = threading.BoundedSemaphore(32)
+            # Set once the listener is wrapped. The loopback development path below
+            # returns an unwrapped server, and a plain socket has no do_handshake.
+            self.tls_enabled = False
             super().__init__(server_address, request_handler)
 
         def process_request(self, request, client_address):
@@ -614,15 +627,31 @@ def make_server(settings: Settings, app: V2Application) -> ThreadingHTTPServer:
 
         def process_request_thread(self, request, client_address):
             try:
+                if self.tls_enabled:
+                    # The handshake runs here, in a worker, not inside accept() on the
+                    # accept thread. A client that opens a TCP connection and never sends
+                    # a ClientHello would otherwise block that one thread indefinitely:
+                    # the accept backlog fills and the entire listener stops answering,
+                    # for both the API and the downloads, with no worker involved and
+                    # nothing to time out. Here it costs one worker slot and ends by
+                    # timeout.
+                    #
+                    # The listener cannot simply be given a timeout instead: CPython's
+                    # socket.accept() explicitly forces the accepted socket back to
+                    # blocking mode when the listener has one, so that would make the
+                    # hang permanent rather than bound it.
+                    request.settimeout(HANDSHAKE_TIMEOUT_SECONDS)
+                    try:
+                        request.do_handshake()
+                    except OSError:
+                        # Includes ssl.SSLError, a malformed ClientHello, and the timeout.
+                        self.shutdown_request(request)
+                        return
+                # Do not let a slow or abandoned request hold a worker thread forever.
+                request.settimeout(REQUEST_TIMEOUT_SECONDS)
                 super().process_request_thread(request, client_address)
             finally:
                 self._request_slots.release()
-
-        def get_request(self):
-            request, address = super().get_request()
-            # Do not let a slow or abandoned request hold a worker thread forever.
-            request.settimeout(20)
-            return request, address
 
         def handle_error(self, request, client_address):
             # Default socket error tracebacks include IPs; feedback must not emit them.
@@ -659,7 +688,11 @@ def make_server(settings: Settings, app: V2Application) -> ThreadingHTTPServer:
         certfile=str(settings.tls_certificate),
         keyfile=str(settings.tls_private_key),
     )
-    server.socket = context.wrap_socket(server.socket, server_side=True)
+    # do_handshake_on_connect=False so accept() returns as soon as TCP connects; the
+    # handshake is done in the worker, where it can be given a timeout. See
+    # process_request_thread.
+    server.socket = context.wrap_socket(server.socket, server_side=True, do_handshake_on_connect=False)
+    server.tls_enabled = True
     return server
 
 
