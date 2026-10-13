@@ -68,6 +68,52 @@ Throws<CryptographicException>("rejects a well-formed but unsigned envelope", ()
     UpdateManifestVerifier.Verify(Encoding.UTF8.GetBytes(envelope));
 });
 
+if (args.Length > 0 && args[0] == "--probe-update")
+{
+    // Exercises the client's exact update plumbing — settings file, TLS pin, manifest
+    // fetch, signature verification, version comparison and package download — without
+    // the UI, so a failure here isolates the network path from the client's wiring.
+    Console.WriteLine("Update probe using " + args[1]);
+    try
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(args[1]));
+        var root = document.RootElement;
+        var apiBase = new Uri(root.GetProperty("ApiBaseUri").GetString()!);
+        var pin = root.GetProperty("CertificateSha256").GetString()!;
+        var currentVersion = args.Length > 2 ? args[2] : "1.0.0";
+        Console.WriteLine($"  settings: {apiBase}  current={currentVersion}");
+
+        using var downloader = new ReleaseDownloader(apiBase, pin);
+        var verified = await downloader.GetStableManifestAsync();
+        Console.WriteLine($"  PASS  manifest fetched and signature verified (server version {verified.Value.Version})");
+
+        if (!UpdateManifestVerifier.IsNewer(verified.Value.Version, currentVersion))
+        {
+            Console.WriteLine("  PASS  no newer version available");
+        }
+        else
+        {
+            Console.WriteLine($"  update available: {currentVersion} -> {verified.Value.Version}, downloading");
+            var target = Path.Combine(Path.GetTempPath(), "muying-probe-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(target);
+            var partial = Path.Combine(target, "package.partial");
+            var started = DateTime.UtcNow;
+            var package = await downloader.DownloadPackageAsync(verified, partial, null);
+            var info = new FileInfo(package);
+            Console.WriteLine($"  PASS  package downloaded ({info.Length} bytes, {Math.Round((DateTime.UtcNow - started).TotalSeconds, 1)}s), SHA-256 verified");
+            Directory.Delete(target, recursive: true);
+        }
+    }
+    catch (Exception exception)
+    {
+        Console.WriteLine($"  FAIL  {exception.GetType().Name}: {exception.Message}");
+        failures++;
+    }
+    Console.WriteLine();
+    Console.WriteLine(failures == 0 ? "PROBE PASSED" : $"{failures} PROBE FAILURE(S)");
+    return failures == 0 ? 0 : 1;
+}
+
 if (args.Length > 0)
 {
     Console.WriteLine("Signed release verification: " + args[0]);

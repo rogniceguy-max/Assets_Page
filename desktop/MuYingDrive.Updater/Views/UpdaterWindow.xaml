@@ -16,7 +16,10 @@
             </Grid.RowDefinitions>
             <TextBlock Grid.Row="0" Text="{Binding Title}" FontSize="20" FontWeight="SemiBold" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
             <TextBlock Grid.Row="2" Text="{Binding Explanation}" Foreground="{DynamicResource Brush.Text.Secondary}" TextWrapping="Wrap" />
-            <ProgressBar Grid.Row="4" Height="4" Minimum="0" Maximum="100" Value="{Binding Progress}"
+            <!-- ProgressBar.Value binds TwoWay by default; Progress is read-only, so the
+                 default mode throws InvalidOperationException while the window is being
+                 constructed and the updater dies before it can show anything. -->
+            <ProgressBar Grid.Row="4" Height="4" Minimum="0" Maximum="100" Value="{Binding Progress, Mode=OneWay}"
                          IsIndeterminate="{Binding IsProgressIndeterminate}" AutomationProperties.Name="更新进度">
                 <ProgressBar.Style>
                     <Style TargetType="ProgressBar">

@@ -315,6 +315,16 @@ public sealed class InstallEngine
             throw new InvalidOperationException("客户端配置缺少必要的 NAS 参数。");
         }
 
+        // Mirrors NasClientSettings.Load's own check. Without it the installer happily
+        // seeds a configuration the client rejects at every start ("客户端尚未配置 NAS
+        // 服务"), and because that failure happens while building the main view model it
+        // also silently disables the update coordinator.
+        if (!dto.ShareRoot.StartsWith("\\\\", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "客户端配置的 ShareRoot 必须是 UNC 路径，例如 \\\\nas\\Assets。");
+        }
+
         // Validated here so a malformed pin cannot ship inside an installer.
         _ = CertificatePin.ParseSha256Pin(dto.CertificateSha256);
         return new ClientConfiguration(api, dto.CertificateSha256, dto.ShareRoot,
