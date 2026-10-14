@@ -119,6 +119,43 @@ class WorkbookRouteTests(unittest.TestCase):
     def test_projects_rejects_a_query_string(self):
         self.assertEqual(422, self.request("GET", "/api/v2/project-workbooks/projects?x=1")[0])
 
+    def test_a_project_id_is_the_directory_inode(self):
+        # The id has to survive a rename. The client joins the workbooks and the media of a
+        # project through this value, so an id derived from the name would break every join
+        # the moment someone renames a project — and the name is exactly the thing users are
+        # invited to change.
+        by_name = {item["name"]: item["id"] for item in self.projects()}
+        for name in ("孟婆", "空项目"):
+            self.assertEqual(str((self.root / name).stat().st_ino), by_name[name])
+
+    def test_only_directories_in_the_root_are_projects(self):
+        # The root is shared with the storage layer, so it will hold things that are not
+        # projects: files, cache directories, and whatever a colleague drags in over SMB.
+        # None of them may be listed, and a symlink in particular must not be followed —
+        # that is a path out of the root wearing a project's name.
+        (self.root / "说明.txt").write_text("not a project", encoding="utf-8")
+        (self.root / ".muying_cache").mkdir()
+        outside = Path(self.temp.name) / "outside"
+        outside.mkdir()
+        try:
+            (self.root / "链接项目").symlink_to(outside, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pass  # Creating a symlink needs a privilege Windows does not always grant.
+
+        self.assertEqual(sorted(["空项目", "孟婆"]), sorted(item["name"] for item in self.projects()))
+
+    def test_an_unreadable_root_is_503_not_an_empty_project_list(self):
+        # "No projects yet" and "the projects are right there and this process may not read
+        # them" look identical in the response body, and they mean opposite things. Serving
+        # the second as the first is how a misconfigured deployment stays invisible: the
+        # sidebar simply shows nothing, and nothing is also what a new install shows.
+        missing = Path(self.temp.name) / "does-not-exist"
+        self.api = ProjectsApi(
+            NasSecurity(self.app.session),
+            NasWorkbookServices(missing),
+            workflow=NasWorkflowServices(missing))
+        self.assertEqual(503, self.request("GET", "/api/v2/project-workbooks/projects")[0])
+
     def test_files_lists_only_workbooks(self):
         project_id = next(item["id"] for item in self.projects() if item["name"] == "孟婆")
         status, _, body = self.request("GET", f"/api/v2/project-workbooks?project_id={project_id}")
