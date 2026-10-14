@@ -99,12 +99,13 @@ internal static class Program
 
             // --- where a write may land ---------------------------------------------------
             var resolver = new SmbSpaceResolver(settings, session.User);
-            var department = resolver.GetSpacePath(DriveSpaceKind.Department);
-            Assert(resolver.IsWithinSpace(DriveSpaceKind.Department, department), "The space root is inside itself.");
-            Assert(resolver.RequireWritablePath(DriveSpaceKind.Department, Path.Combine(department, "素材", "a.png")).Length > 0,
+            var departmentScope = resolver.ResolveScope(DriveSpaceKind.Department);
+            var department = departmentScope.Root;
+            Assert(resolver.IsWithinSpace(departmentScope, department), "The space root is inside itself.");
+            Assert(resolver.RequireWritablePath(departmentScope, Path.Combine(department, "素材", "a.png")).Length > 0,
                 "A path inside the space is a valid write target.");
             var walkedOut = false;
-            try { resolver.RequireWritablePath(DriveSpaceKind.Department, Path.Combine(department, "..", "elsewhere")); }
+            try { resolver.RequireWritablePath(departmentScope, Path.Combine(department, "..", "elsewhere")); }
             catch (InvalidOperationException) { walkedOut = true; }
             Assert(walkedOut, "A path that walks out of the space must be refused.");
             // The link walk must not reject an ordinary path, or browsing would break the
@@ -247,20 +248,24 @@ internal static class Program
             return 1;
         }
 
-        // One space, named "film", rooted at the directory above the one given.
+        // The space under test is "film", rooted at the directory given; "public" exists so
+        // that "refuses a path belonging to another space" tests that refusal rather than
+        // dying earlier on a space the fixture never defined.
         var settings = new NasClientSettings(
             new Uri("https://nas-acceptance.invalid"), new string('0', 64), parent);
         var session = new DriveSession(
             new V2UserSession
             {
                 Id = 1, UserName = "acceptance", Department = "acceptance", GroupType = "film",
-                Spaces = new() { ["film"] = Path.GetFileName(full) }
+                Spaces = new() { ["film"] = Path.GetFileName(full), ["public"] = "公共素材" }
             },
             "acceptance-token", new SmbConnectionResult(0));
 
         var spaces = new SmbSpaceResolver(settings, session.User);
         var mutations = new SmbFileMutations(spaces);
-        var kind = DriveSpaceKind.Department;
+        // The department scope, resolved once. Everything below works on the scope — a root
+        // plus a policy — so this harness is the same shape as the browser it exercises.
+        var scope = spaces.ResolveScope(DriveSpaceKind.Department);
         var scratch = Path.Combine(full, "_ops-probe-" + Guid.NewGuid().ToString("N"));
 
         try
@@ -269,7 +274,7 @@ internal static class Program
             Console.WriteLine($"scratch: {scratch}");
 
             Directory.CreateDirectory(scratch);
-            mutations.EnsureDirectoriesAsync(kind, [
+            mutations.EnsureDirectoriesAsync(scope, [
                 Path.Combine(scratch, "素材"),
                 Path.Combine(scratch, "素材", "子目录"),
                 Path.Combine(scratch, "素材", "空目录")
@@ -280,24 +285,24 @@ internal static class Program
 
             var original = Path.Combine(scratch, "照片.txt");
             File.WriteAllText(original, "first");
-            var copy = mutations.DuplicateInPlaceAsync(kind, original).GetAwaiter().GetResult();
+            var copy = mutations.DuplicateInPlaceAsync(scope, original).GetAwaiter().GetResult();
             Verify("duplicates beside the original", File.Exists(copy), Path.GetFileName(copy));
             Verify("the copy is numbered, not named the same",
                 Path.GetFileName(copy) == "照片 (2).txt", Path.GetFileName(copy));
             Verify("the original is untouched", File.ReadAllText(original) == "first");
 
-            var second = mutations.DuplicateInPlaceAsync(kind, original).GetAwaiter().GetResult();
+            var second = mutations.DuplicateInPlaceAsync(scope, original).GetAwaiter().GetResult();
             Verify("a second duplicate takes the next number",
                 Path.GetFileName(second) == "照片 (3).txt", Path.GetFileName(second));
 
-            var renamed = mutations.RenameAsync(kind, original, "改名后.txt").GetAwaiter().GetResult();
+            var renamed = mutations.RenameAsync(scope, original, "改名后.txt").GetAwaiter().GetResult();
             Verify("renames to a free name exactly",
                 Path.GetFileName(renamed) == "改名后.txt" && !File.Exists(original), Path.GetFileName(renamed));
 
             // The exact number it lands on depends on what is already there, so the property
             // asserted is the one that matters: it is not the name asked for, it is numbered,
             // and what it would have landed on is untouched.
-            var collided = mutations.RenameAsync(kind, renamed, "照片 (2).txt").GetAwaiter().GetResult();
+            var collided = mutations.RenameAsync(scope, renamed, "照片 (2).txt").GetAwaiter().GetResult();
             var collidedName = Path.GetFileName(collided);
             Verify("a rename onto an existing name is numbered rather than overwriting",
                 collidedName != "照片 (2).txt" && collidedName.StartsWith("照片 (") && collidedName.EndsWith(").txt"),
@@ -309,20 +314,20 @@ internal static class Program
             File.WriteAllText(Path.Combine(scratch, "素材", "子目录", "b.txt"), "b");
             // Four: a.txt, 子目录, 子目录/b.txt, 空目录. Folders count — the point of the
             // number is to warn about everything that goes, not just the files.
-            var contained = mutations.CountContainedAsync(kind, Path.Combine(scratch, "素材")).GetAwaiter().GetResult();
+            var contained = mutations.CountContainedAsync(scope, Path.Combine(scratch, "素材")).GetAwaiter().GetResult();
             Verify("counts everything under a folder for the confirmation", contained == 4, $"{contained}");
 
             var escaped = false;
-            try { mutations.DeleteAsync(kind, Path.Combine(full, "..", "Assets", "00_公共素材")); }
+            try { mutations.DeleteAsync(scope, Path.Combine(full, "..", "Assets", "00_公共素材")); }
             catch (InvalidOperationException) { escaped = true; }
             Verify("refuses a path that walks out of the space", escaped);
 
             var wrongKind = false;
-            try { mutations.DeleteAsync(DriveSpaceKind.Public, Path.Combine(scratch, "素材")); }
+            try { mutations.DeleteAsync(spaces.ResolveScope(DriveSpaceKind.Public), Path.Combine(scratch, "素材")); }
             catch (InvalidOperationException) { wrongKind = true; }
             Verify("refuses a path belonging to another space", wrongKind);
 
-            mutations.DeleteAsync(kind, scratch).GetAwaiter().GetResult();
+            mutations.DeleteAsync(scope, scratch).GetAwaiter().GetResult();
             Verify("deletes a folder and everything under it", !Directory.Exists(scratch));
         }
         finally

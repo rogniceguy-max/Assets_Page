@@ -22,12 +22,15 @@ public enum DriveSpaceKind
 /// </remarks>
 public sealed class SmbFileCatalog
 {
-    private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+    // Internal rather than private: SpaceScope decides whether a file belongs in a media
+    // view, and it has to classify an extension the same way this type does. Two copies of
+    // this list is how a file ends up listed in one place and filtered out of another.
+    internal static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff", ".webp", ".heic", ".avif"
     };
 
-    private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
+    internal static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".wmv", ".mpeg", ".mpg"
     };
@@ -37,20 +40,19 @@ public sealed class SmbFileCatalog
     public SmbFileCatalog(SmbSpaceResolver spaces) =>
         _spaces = spaces ?? throw new ArgumentNullException(nameof(spaces));
 
-    /// <summary>Resolves one of the four UI space selectors to its UNC directory.</summary>
-    public string GetSpacePath(DriveSpaceKind kind) => _spaces.GetSpacePath(kind);
-
     /// <summary>Enumerates only immediate children; reparse points are omitted to prevent traversal outside the share.</summary>
-    public Task<IReadOnlyList<DriveFileItem>> EnumerateAsync(DriveSpaceKind kind, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<DriveFileItem>> EnumerateAsync(SpaceScope scope, CancellationToken cancellationToken = default)
     {
-        return EnumerateDirectoryAsync(kind, GetSpacePath(kind), cancellationToken);
+        ArgumentNullException.ThrowIfNull(scope);
+        return EnumerateDirectoryAsync(scope, scope.Root, cancellationToken);
     }
 
     public Task<IReadOnlyList<DriveFileItem>> EnumerateDirectoryAsync(
-        DriveSpaceKind kind, string directory, CancellationToken cancellationToken = default)
+        SpaceScope scope, string directory, CancellationToken cancellationToken = default)
     {
-        directory = _spaces.RequireReadablePath(kind, directory);
-        var readOnly = kind == DriveSpaceKind.OtherDepartment;
+        ArgumentNullException.ThrowIfNull(scope);
+        directory = _spaces.RequireReadablePath(scope, directory);
+        var readOnly = !scope.CanWrite;
         return Task.Run<IReadOnlyList<DriveFileItem>>(() =>
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -92,6 +94,12 @@ public sealed class SmbFileCatalog
                 var modified = info.LastWriteTime;
                 var size = isDirectory ? 0L : ((FileInfo)info).Length;
                 var extension = isDirectory ? string.Empty : Path.GetExtension(path);
+
+                // A media view lists only its own kind, but never hides folders: walking
+                // into them is the only way to reach the media they organise.
+                if (!isDirectory && !scope.IncludesFile(extension))
+                    continue;
+
                 var isImage = ImageExtensions.Contains(extension);
                 var isVideo = VideoExtensions.Contains(extension);
                 results.Add(new DriveFileItem

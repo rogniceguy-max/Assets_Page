@@ -67,13 +67,49 @@ public sealed class SmbSpaceResolver
         return ResolveVirtualPath(virtualPath);
     }
 
-    /// <summary>Whether <paramref name="path"/> sits inside the given space.</summary>
-    public bool IsWithinSpace(DriveSpaceKind kind, string path) =>
-        Within(GetSpacePath(kind), path);
+    /// <summary>The folder under the share root that holds every project.</summary>
+    public const string ProjectFolderName = "Project";
+
+    /// <summary>
+    /// Turns a UI space into the scope the browse and write services work in.
+    /// </summary>
+    /// <remarks>
+    /// The department mapping stays here and nowhere else. Everything downstream is handed
+    /// a root and a policy, which is what lets the navigation be rebuilt around projects
+    /// without the browser having to learn a second space model.
+    /// </remarks>
+    public SpaceScope ResolveScope(DriveSpaceKind kind, SpaceMediaKind media = SpaceMediaKind.All) =>
+        new(GetSpacePath(kind), canWrite: kind != DriveSpaceKind.OtherDepartment, media);
+
+    /// <summary>The scope of one project: <c>&lt;share&gt;\Project\&lt;name&gt;</c>.</summary>
+    /// <remarks>
+    /// A project is a directory named by the user, so its name is the one part of this path
+    /// that comes from them and it goes through the same rule a rename target does. The
+    /// containment check that follows is not redundant with that rule: this is the single
+    /// place a user-supplied string becomes the root that every later path is checked
+    /// against, so it is worth answering the question directly rather than trusting the
+    /// caller of the rule.
+    ///
+    /// Projects are readable and writable by everyone signed in — that is the model, not an
+    /// oversight — so CanWrite does not depend on who is asking.
+    /// </remarks>
+    public SpaceScope ResolveProjectScope(string projectName, SpaceMediaKind media = SpaceMediaKind.All)
+    {
+        var safeName = ValidateNameSegment(projectName);
+        var root = Path.GetFullPath(Path.Combine(_shareRoot, ProjectFolderName, safeName));
+        var prefix = _shareRoot.EndsWith('\\') ? _shareRoot : _shareRoot + "\\";
+        if (!root.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("项目路径超出 SMB 共享范围。");
+        return new SpaceScope(root, canWrite: true, media);
+    }
+
+    /// <summary>Whether <paramref name="path"/> sits inside the given scope.</summary>
+    public bool IsWithinSpace(SpaceScope scope, string path) =>
+        Within(scope.Root, path);
 
     /// <summary>
     /// Returns <paramref name="path"/> normalized, or throws when it is not inside the
-    /// given space. The cheap check, for reading.
+    /// given scope. The cheap check, for reading.
     /// </summary>
     /// <remarks>
     /// A string comparison only. That is adequate for listing, which is why it is what
@@ -82,11 +118,12 @@ public sealed class SmbSpaceResolver
     /// It deliberately does **not** verify that the path is link-free; see
     /// <see cref="RequireWritablePath"/> for why that is a separate question.
     /// </remarks>
-    public string RequireReadablePath(DriveSpaceKind kind, string path)
+    public string RequireReadablePath(SpaceScope scope, string path)
     {
+        ArgumentNullException.ThrowIfNull(scope);
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         var full = Path.GetFullPath(path);
-        if (!Within(GetSpacePath(kind), full))
+        if (!Within(scope.Root, full))
             throw new InvalidOperationException("路径超出当前空间范围。");
         return full;
     }
@@ -108,9 +145,9 @@ public sealed class SmbSpaceResolver
     /// oversight: it is the difference between what the server presents and what this
     /// client is willing to change.
     /// </remarks>
-    public string RequireWritablePath(DriveSpaceKind kind, string path)
+    public string RequireWritablePath(SpaceScope scope, string path)
     {
-        var full = RequireReadablePath(kind, path);
+        var full = RequireReadablePath(scope, path);
         EnsureNoReparsePoints(full);
         return full;
     }

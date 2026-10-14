@@ -27,7 +27,9 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
     private string _currentDirectory = string.Empty;
     private bool _isLoading;
     private string _errorMessage = string.Empty;
-    private DriveSpaceKind _currentSpace = DriveSpaceKind.Department;
+    // What the browser is currently pointed at: a root and the rules that apply inside it.
+    // Assigned in the constructor before anything reads it.
+    private SpaceScope _scope = null!;
     private readonly string _departmentName;
     private int _loadRequestId;
     private readonly bool _smbConnected;
@@ -47,7 +49,8 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
         ItemsView = CollectionViewSource.GetDefaultView(Files);
         ItemsView.Filter = FilterItem;
         SpaceTitle = session.User.Department;
-        _currentRoot = _catalog.GetSpacePath(DriveSpaceKind.Department);
+        _scope = _spaces.ResolveScope(DriveSpaceKind.Department);
+        _currentRoot = _scope.Root;
         _currentDirectory = _currentRoot;
         _smbConnected = session.SmbConnection.Succeeded;
         _smbConnectionError = session.SmbConnection.HasCredentialConflict
@@ -164,7 +167,7 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
     public int SelectedCount => _selection.Count;
     public string SelectedLabel => SelectedCount == 1 ? "已选择 1 项" : $"已选择 {SelectedCount} 项";
     public bool HasSelection => SelectedCount > 0;
-    public bool IsReadOnly => _currentSpace == DriveSpaceKind.OtherDepartment;
+    public bool IsReadOnly => !_scope.CanWrite;
     public bool IsLoading
     {
         get => _isLoading;
@@ -268,9 +271,15 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
 
     public async Task InitializeAsync() => await LoadCurrentDirectoryAsync();
 
+    /// <summary>Points the browser at one of the spaces the sidebar offers, by its label.</summary>
+    /// <remarks>
+    /// This is the last place that still knows department names. Everything below it works
+    /// on the resolved <see cref="SpaceScope"/>, which is what makes replacing these labels
+    /// with projects a change here rather than a change everywhere.
+    /// </remarks>
     public void SetSpace(string space)
     {
-        _currentSpace = space switch
+        var kind = space switch
         {
             "本部门" => DriveSpaceKind.Department,
             "公共素材" => DriveSpaceKind.Public,
@@ -278,15 +287,26 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
             "其他部门" => DriveSpaceKind.OtherDepartment,
             _ => DriveSpaceKind.Department
         };
-        SpaceTitle = _currentSpace switch
+        SetScope(_spaces.ResolveScope(kind), kind switch
         {
             DriveSpaceKind.Department => _departmentName,
             DriveSpaceKind.Public => "公共素材",
             DriveSpaceKind.Personal => "个人空间",
             DriveSpaceKind.OtherDepartment => _departmentName == "影视资源库" ? "文学创作库" : "影视资源库",
             _ => "本部门"
-        };
-        _currentRoot = _catalog.GetSpacePath(_currentSpace);
+        });
+    }
+
+    /// <summary>
+    /// Points the browser at a scope: a directory, what may be done in it, and which of its
+    /// files to list.
+    /// </summary>
+    public void SetScope(SpaceScope scope, string title)
+    {
+        ArgumentNullException.ThrowIfNull(scope);
+        _scope = scope;
+        SpaceTitle = title;
+        _currentRoot = _scope.Root;
         _currentDirectory = _currentRoot;
         OnPropertyChanged(nameof(CurrentPathLabel));
         OnPropertyChanged(nameof(IsReadOnly));
@@ -428,7 +448,7 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
             // that would never produce an empty subfolder, and a permission problem would
             // arrive as one failed transfer per file instead of one clear message.
             await _mutations.EnsureDirectoriesAsync(
-                _currentSpace, plan.Directories.Select(relative => Path.Combine(_currentDirectory, relative)).ToArray());
+                _scope, plan.Directories.Select(relative => Path.Combine(_currentDirectory, relative)).ToArray());
         }
         catch (Exception exception) when (IsMutationFailure(exception))
         {
@@ -470,7 +490,7 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
             string freeName;
             try
             {
-                freeName = _mutations.ResolveFreeName(_currentSpace, destinationDirectory, name, claimed);
+                freeName = _mutations.ResolveFreeName(_scope, destinationDirectory, name, claimed);
             }
             catch (InvalidOperationException exception)
             {
@@ -514,7 +534,7 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
         if (string.Equals(newName, item.Name, StringComparison.Ordinal)) return;
 
         await RunMutationAsync($"无法重命名“{item.Name}”",
-            () => _mutations.RenameAsync(_currentSpace, item.FullPath, newName));
+            () => _mutations.RenameAsync(_scope, item.FullPath, newName));
     }
 
     private async Task DuplicateAsync(DriveFileItem? clicked)
@@ -527,7 +547,7 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
         {
             try
             {
-                await _mutations.DuplicateInPlaceAsync(_currentSpace, target.FullPath);
+                await _mutations.DuplicateInPlaceAsync(_scope, target.FullPath);
             }
             catch (Exception exception) when (IsMutationFailure(exception))
             {
@@ -556,7 +576,7 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
 
             try
             {
-                var contained = await _mutations.CountContainedAsync(_currentSpace, target.FullPath);
+                var contained = await _mutations.CountContainedAsync(_scope, target.FullPath);
                 listing.Add($"{target.Name}（文件夹，内含 {contained} 项）");
             }
             catch (Exception exception) when (IsMutationFailure(exception))
@@ -578,7 +598,7 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
         {
             try
             {
-                await _mutations.DeleteAsync(_currentSpace, target.FullPath);
+                await _mutations.DeleteAsync(_scope, target.FullPath);
             }
             catch (Exception exception) when (IsMutationFailure(exception))
             {
@@ -726,7 +746,7 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
         UploadCommand.RaiseCanExecuteChanged();
         try
         {
-            var items = await _catalog.EnumerateDirectoryAsync(_currentSpace, _currentDirectory);
+            var items = await _catalog.EnumerateDirectoryAsync(_scope, _currentDirectory);
             if (requestId != _loadRequestId)
                 return;
 

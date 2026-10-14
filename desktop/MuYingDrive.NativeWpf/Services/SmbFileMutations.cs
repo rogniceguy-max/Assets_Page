@@ -32,7 +32,7 @@ public sealed class SmbFileMutations(SmbSpaceResolver spaces)
     /// makes a two-hundred-file upload run to completion without asking anything.
     /// </param>
     public string ResolveFreeName(
-        DriveSpaceKind kind, string directory, string desiredName, ISet<string>? claimed = null)
+        SpaceScope scope, string directory, string desiredName, ISet<string>? claimed = null)
     {
         var safeName = SmbSpaceResolver.ValidateNameSegment(desiredName);
         if (IsFree(directory, safeName, claimed)) return safeName;
@@ -54,9 +54,9 @@ public sealed class SmbFileMutations(SmbSpaceResolver spaces)
     /// exists for cross-media moves. On a large folder it will simply take a while.
     /// </remarks>
     public Task<string> DuplicateInPlaceAsync(
-        DriveSpaceKind kind, string sourceFullPath, CancellationToken cancellationToken = default)
+        SpaceScope scope, string sourceFullPath, CancellationToken cancellationToken = default)
     {
-        var source = _spaces.RequireWritablePath(kind, sourceFullPath);
+        var source = _spaces.RequireWritablePath(scope, sourceFullPath);
         return Task.Run(() =>
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -66,8 +66,8 @@ public sealed class SmbFileMutations(SmbSpaceResolver spaces)
 
             var parent = Path.GetDirectoryName(source)
                 ?? throw new InvalidOperationException("无法确定所在文件夹。");
-            var destination = Path.Combine(parent, ResolveFreeName(kind, parent, Path.GetFileName(source)));
-            _spaces.RequireWritablePath(kind, destination);
+            var destination = Path.Combine(parent, ResolveFreeName(scope, parent, Path.GetFileName(source)));
+            _spaces.RequireWritablePath(scope, destination);
 
             if (isDirectory) CopyTree(source, destination, cancellationToken);
             else File.Copy(source, destination, overwrite: false);
@@ -80,10 +80,10 @@ public sealed class SmbFileMutations(SmbSpaceResolver spaces)
     /// renaming to the name it already has is a no-op rather than an error.
     /// </summary>
     public Task<string> RenameAsync(
-        DriveSpaceKind kind, string sourceFullPath, string newName,
+        SpaceScope scope, string sourceFullPath, string newName,
         ISet<string>? claimed = null, CancellationToken cancellationToken = default)
     {
-        var source = _spaces.RequireWritablePath(kind, sourceFullPath);
+        var source = _spaces.RequireWritablePath(scope, sourceFullPath);
         return Task.Run(() =>
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -93,8 +93,8 @@ public sealed class SmbFileMutations(SmbSpaceResolver spaces)
 
             var parent = Path.GetDirectoryName(source)
                 ?? throw new InvalidOperationException("无法确定所在文件夹。");
-            var destination = Path.Combine(parent, ResolveFreeName(kind, parent, newName, claimed));
-            _spaces.RequireWritablePath(kind, destination);
+            var destination = Path.Combine(parent, ResolveFreeName(scope, parent, newName, claimed));
+            _spaces.RequireWritablePath(scope, destination);
 
             if (string.Equals(source, destination, StringComparison.OrdinalIgnoreCase)) return source;
 
@@ -107,9 +107,9 @@ public sealed class SmbFileMutations(SmbSpaceResolver spaces)
     }
 
     /// <summary>Deletes a file, or a folder and everything under it.</summary>
-    public Task DeleteAsync(DriveSpaceKind kind, string targetFullPath, CancellationToken cancellationToken = default)
+    public Task DeleteAsync(SpaceScope scope, string targetFullPath, CancellationToken cancellationToken = default)
     {
-        var target = _spaces.RequireWritablePath(kind, targetFullPath);
+        var target = _spaces.RequireWritablePath(scope, targetFullPath);
         return Task.Run(() =>
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -137,11 +137,11 @@ public sealed class SmbFileMutations(SmbSpaceResolver spaces)
     /// instead of one clear error.
     /// </remarks>
     public Task EnsureDirectoriesAsync(
-        DriveSpaceKind kind, IReadOnlyList<string> directories, CancellationToken cancellationToken = default)
+        SpaceScope scope, IReadOnlyList<string> directories, CancellationToken cancellationToken = default)
     {
         var verified = directories
             .Where(directory => !string.IsNullOrWhiteSpace(directory))
-            .Select(directory => _spaces.RequireWritablePath(kind, directory))
+            .Select(directory => _spaces.RequireWritablePath(scope, directory))
             // Shallowest first: RequireWritablePath walks every existing component, and
             // creating a parent before its child keeps that walk meaningful.
             .OrderBy(directory => directory.Length)
@@ -165,9 +165,9 @@ public sealed class SmbFileMutations(SmbSpaceResolver spaces)
     /// dialog that says "42 items" and then removes 900 is worse than no number at all.
     /// </remarks>
     public Task<int> CountContainedAsync(
-        DriveSpaceKind kind, string path, CancellationToken cancellationToken = default)
+        SpaceScope scope, string path, CancellationToken cancellationToken = default)
     {
-        var target = _spaces.RequireReadablePath(kind, path);
+        var target = _spaces.RequireReadablePath(scope, path);
         return Task.Run(() =>
         {
             if (!Directory.Exists(target)) return 0;
