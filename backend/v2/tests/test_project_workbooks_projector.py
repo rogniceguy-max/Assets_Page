@@ -94,7 +94,7 @@ class ProjectorTests(unittest.TestCase):
             self.assertIsNone(row["scene_context"])
             self.assertIsNone(row["cast_context"])
             self.assertEqual([], row["origins"])
-            self.assertFalse(row["can_edit"])
+            self.assertTrue(row["can_edit"])
 
     def test_the_document_fits_the_response_ceiling(self):
         payload = json.dumps(self.master, ensure_ascii=False, separators=(",", ":")).encode("utf-8")

@@ -17,6 +17,9 @@ from __future__ import annotations
 
 import base64
 import posixpath
+import secrets
+import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO, Mapping
 from urllib.parse import unquote
@@ -219,7 +222,65 @@ class NasWorkflowServices:
 
     def update_scene(self, actor: Any, file_id: str, row_id: str, expected_version: int,
                      label_level: Any, breakdown_plan: Any) -> dict:
-        raise _not_implemented()
+        import openpyxl
+        project_id, file_name = _decode_file_id(file_id)
+        path = _resolve_file(self._root, project_id, file_name)
+
+        try:
+            sheet_id, row_str = row_id.split("#")
+            row_num = int(row_str)
+        except Exception:
+            raise ApiFault(422, "INVALID_ROW_ID", "无效的行标识。")
+
+        try:
+            wb = openpyxl.load_workbook(path)
+        except Exception as error:
+            raise ApiFault(503, "WORKBOOK_UNAVAILABLE", "工作簿无法读取。") from error
+
+        try:
+            sheet_index = int(sheet_id[1:]) if sheet_id.startswith("s") else -1
+            if 0 <= sheet_index < len(wb.worksheets):
+                ws = wb.worksheets[sheet_index]
+            else:
+                ws = wb[sheet_id]
+        except Exception:
+            raise ApiFault(404, "NOT_FOUND", "工作表不存在。")
+
+        classification = projector._classify_sheet(ws)
+        label_col = classification.fields.get("label_level")
+        plan_col = classification.fields.get("breakdown_plan")
+
+        if label_col is not None:
+            ws.cell(row=row_num, column=label_col + 1, value=label_level if label_level else None)
+        if plan_col is not None:
+            ws.cell(row=row_num, column=plan_col + 1, value=breakdown_plan if breakdown_plan else None)
+
+        try:
+            wb.save(path)
+        except Exception as error:
+            raise ApiFault(500, "SAVE_FAILED", f"保存工作簿失败：{error}") from error
+
+        row_cells = list(ws.iter_rows(min_row=row_num, max_row=row_num))[0]
+        def _get(col):
+            if col is not None and col < len(row_cells):
+                val = row_cells[col].value
+                return str(val) if val is not None else None
+            return None
+
+        return {
+            "id": row_id,
+            "version": expected_version + 1,
+            "scene_number": _get(classification.fields.get("scene_number")),
+            "beat_number": _get(classification.fields.get("beat_number")),
+            "story_content": _get(classification.fields.get("story_content")),
+            "label_level": label_level,
+            "breakdown_plan": breakdown_plan,
+            "legacy_notes": [],
+            "scene_context": None,
+            "cast_context": None,
+            "origins": [],
+            "can_edit": True,
+        }
 
     def update_origins(self, actor: Any, file_id: str, row_id: str, expected_version: int,
                        origins: list[dict[str, str]]) -> dict:
@@ -335,4 +396,262 @@ def _decode_asset_id(asset_id: str) -> tuple[str, str]:
     if not separator or not project_id.isdigit() or not rel_path:
         raise ApiFault(422, "INVALID_REQUEST", "素材标识无效。")
     return project_id, rel_path
+
+
+class NasReviewServices:
+    """SQLite-backed review and comment service for project workbooks."""
+
+    def __init__(self, db_path: Path | str, row_kind: str = "scene-rows") -> None:
+        self.db_path = Path(db_path)
+        self.row_kind = row_kind
+        self._init_db()
+
+    def _connect(self):
+        from contextlib import contextmanager
+        @contextmanager
+        def _ctx():
+            conn = sqlite3.connect(self.db_path)
+            try:
+                yield conn
+                conn.commit()
+            finally:
+                conn.close()
+        return _ctx()
+
+    def _init_db(self) -> None:
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS project_reviews (
+                    id TEXT PRIMARY KEY,
+                    file_id TEXT NOT NULL,
+                    row_kind TEXT NOT NULL,
+                    row_id TEXT NOT NULL,
+                    image_id TEXT,
+                    user_id TEXT NOT NULL,
+                    user_name TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    version INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    resolved INTEGER NOT NULL DEFAULT 0,
+                    resolution_note TEXT
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_project_reviews_lookup
+                ON project_reviews (file_id, row_kind, row_id, image_id)
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS project_review_votes (
+                    file_id TEXT NOT NULL,
+                    row_id TEXT NOT NULL,
+                    image_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    verdict TEXT NOT NULL,
+                    PRIMARY KEY (file_id, row_id, image_id, user_id)
+                )
+            """)
+
+    def summaries(self, actor: Any, file_id: str, row_id: str) -> list[dict[str, Any]]:
+        user_id = str(actor.get("user", {}).get("id", "")) if isinstance(actor, dict) else ""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("""
+                SELECT image_id, COUNT(*) as comment_count
+                FROM project_reviews
+                WHERE file_id = ? AND row_kind = ? AND row_id = ?
+                GROUP BY image_id
+            """, (file_id, self.row_kind, row_id)).fetchall()
+
+            vote_rows = conn.execute("""
+                SELECT image_id,
+                       SUM(CASE WHEN verdict = 'good' THEN 1 ELSE 0 END) as good,
+                       SUM(CASE WHEN verdict = 'bad' THEN 1 ELSE 0 END) as bad,
+                       MAX(CASE WHEN user_id = ? THEN verdict ELSE NULL END) as my_verdict
+                FROM project_review_votes
+                WHERE file_id = ? AND row_id = ?
+                GROUP BY image_id
+            """, (user_id, file_id, row_id)).fetchall()
+
+            votes_by_img = {r["image_id"]: r for r in vote_rows}
+            result = []
+            seen_images = set()
+            for r in rows:
+                img_id = r["image_id"]
+                seen_images.add(img_id)
+                v = votes_by_img.get(img_id)
+                result.append({
+                    "image_id": img_id,
+                    "good": v["good"] if v else 0,
+                    "bad": v["bad"] if v else 0,
+                    "comment_count": r["comment_count"],
+                    "my_verdict": v["my_verdict"] if v else None,
+                })
+            for img_id, v in votes_by_img.items():
+                if img_id not in seen_images:
+                    result.append({
+                        "image_id": img_id,
+                        "good": v["good"],
+                        "bad": v["bad"],
+                        "comment_count": 0,
+                        "my_verdict": v["my_verdict"],
+                    })
+            if not result:
+                result.append({
+                    "image_id": None,
+                    "good": 0,
+                    "bad": 0,
+                    "comment_count": 0,
+                    "my_verdict": None,
+                })
+            return result
+
+    def thread(self, actor: Any, file_id: str, row_id: str, image_id: str | None) -> dict[str, Any]:
+        current_user_id = str(actor.get("user", {}).get("id", "")) if isinstance(actor, dict) else ""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            if image_id is None:
+                rows = conn.execute("""
+                    SELECT * FROM project_reviews
+                    WHERE file_id = ? AND row_kind = ? AND row_id = ? AND image_id IS NULL
+                    ORDER BY created_at ASC
+                """, (file_id, self.row_kind, row_id)).fetchall()
+            else:
+                rows = conn.execute("""
+                    SELECT * FROM project_reviews
+                    WHERE file_id = ? AND row_kind = ? AND row_id = ? AND image_id = ?
+                    ORDER BY created_at ASC
+                """, (file_id, self.row_kind, row_id, image_id)).fetchall()
+
+            comments = []
+            for r in rows:
+                u_id = str(r["user_id"])
+                can_edit = (u_id == current_user_id)
+                can_delete = can_edit
+                can_resolve = True
+                comments.append({
+                    "id": r["id"],
+                    "user_id": u_id,
+                    "user_name": r["user_name"],
+                    "text": r["text"],
+                    "version": r["version"],
+                    "created_at": r["created_at"],
+                    "updated_at": r["updated_at"],
+                    "can_edit": can_edit,
+                    "can_delete": can_delete,
+                    "resolved": bool(r["resolved"]),
+                    "resolution_note": r["resolution_note"],
+                    "can_resolve": can_resolve,
+                })
+
+            good = bad = 0
+            my_verdict = None
+            if image_id is not None:
+                v_rows = conn.execute("""
+                    SELECT verdict, user_id FROM project_review_votes
+                    WHERE file_id = ? AND row_id = ? AND image_id = ?
+                """, (file_id, row_id, image_id)).fetchall()
+                for v in v_rows:
+                    if v["verdict"] == "good": good += 1
+                    elif v["verdict"] == "bad": bad += 1
+                    if str(v["user_id"]) == current_user_id:
+                        my_verdict = v["verdict"]
+
+            return {
+                "image_id": image_id,
+                "good": good,
+                "bad": bad,
+                "comment_count": len(comments),
+                "my_verdict": my_verdict,
+                "comments": comments,
+            }
+
+    def add_comment(self, actor: Any, file_id: str, row_id: str, image_id: str | None,
+                    text: str) -> dict[str, Any]:
+        user = actor.get("user", {}) if isinstance(actor, dict) else {}
+        user_id = str(user.get("id", "0"))
+        user_name = str(user.get("username", "user"))
+        comment_id = secrets.token_hex(16)
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute("""
+                INSERT INTO project_reviews (id, file_id, row_kind, row_id, image_id, user_id, user_name, text, version, created_at, updated_at, resolved, resolution_note)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, NULL)
+            """, (comment_id, file_id, self.row_kind, row_id, image_id, user_id, user_name, text, now, now))
+        return self.thread(actor, file_id, row_id, image_id)
+
+    def edit_comment(self, actor: Any, file_id: str, row_id: str, comment_id: str,
+                     expected_version: int, text: str) -> dict[str, Any]:
+        user_id = str(actor.get("user", {}).get("id", "")) if isinstance(actor, dict) else ""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM project_reviews WHERE id = ?", (comment_id,)).fetchone()
+            if not row:
+                raise ApiFault(404, "NOT_FOUND", "批注不存在。")
+            if row["version"] != expected_version:
+                raise ApiFault(409, "CONFLICT", "批注已被修改，请重新加载。")
+            if str(row["user_id"]) != user_id:
+                raise ApiFault(403, "FORBIDDEN", "只能编辑自己的批注。")
+            conn.execute("""
+                UPDATE project_reviews
+                SET text = ?, version = version + 1, updated_at = ?
+                WHERE id = ?
+            """, (text, now, comment_id))
+            image_id = row["image_id"]
+        return self.thread(actor, file_id, row_id, image_id)
+
+    def delete_comment(self, actor: Any, file_id: str, row_id: str, comment_id: str,
+                       expected_version: int) -> dict[str, Any]:
+        user_id = str(actor.get("user", {}).get("id", "")) if isinstance(actor, dict) else ""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM project_reviews WHERE id = ?", (comment_id,)).fetchone()
+            if not row:
+                raise ApiFault(404, "NOT_FOUND", "批注不存在。")
+            if row["version"] != expected_version:
+                raise ApiFault(409, "CONFLICT", "批注已被修改，请重新加载。")
+            if str(row["user_id"]) != user_id:
+                raise ApiFault(403, "FORBIDDEN", "只能删除自己的批注。")
+            conn.execute("DELETE FROM project_reviews WHERE id = ?", (comment_id,))
+            image_id = row["image_id"]
+        return self.thread(actor, file_id, row_id, image_id)
+
+    def resolve_comment(self, actor: Any, file_id: str, row_id: str, comment_id: str,
+                        expected_version: int, resolved: bool,
+                        resolution_note: str | None) -> dict[str, Any]:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM project_reviews WHERE id = ?", (comment_id,)).fetchone()
+            if not row:
+                raise ApiFault(404, "NOT_FOUND", "批注不存在。")
+            if row["version"] != expected_version:
+                raise ApiFault(409, "CONFLICT", "批注已被修改，请重新加载。")
+            conn.execute("""
+                UPDATE project_reviews
+                SET resolved = ?, resolution_note = ?, version = version + 1, updated_at = ?
+                WHERE id = ?
+            """, (1 if resolved else 0, resolution_note, now, comment_id))
+            image_id = row["image_id"]
+        return self.thread(actor, file_id, row_id, image_id)
+
+    def vote(self, actor: Any, file_id: str, row_id: str, image_id: str,
+             verdict: str | None) -> dict[str, Any]:
+        user_id = str(actor.get("user", {}).get("id", "")) if isinstance(actor, dict) else ""
+        with self._connect() as conn:
+            if verdict is None:
+                conn.execute("""
+                    DELETE FROM project_review_votes
+                    WHERE file_id = ? AND row_id = ? AND image_id = ? AND user_id = ?
+                """, (file_id, row_id, image_id, user_id))
+            else:
+                conn.execute("""
+                    INSERT INTO project_review_votes (file_id, row_id, image_id, user_id, verdict)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(file_id, row_id, image_id, user_id) DO UPDATE SET verdict = excluded.verdict
+                """, (file_id, row_id, image_id, user_id, verdict))
+        return self.thread(actor, file_id, row_id, image_id)
+
 

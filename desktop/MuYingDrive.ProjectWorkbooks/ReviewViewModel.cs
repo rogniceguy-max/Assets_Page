@@ -31,7 +31,7 @@ public sealed class ReviewViewModel(IProjectWorkbookService service, string file
     public string RowId { get; } = rowId;
     public string RowKind { get; } = rowKind is "asset-rows" or "scene-rows" ? rowKind : throw new ArgumentException("不支持的行类型。");
     public string? ImageId { get; } = image?.Asset.Id;
-    public string Title => image?.Name ?? (RowKind == "scene-rows" ? "节拍讨论" : "资产讨论");
+    public string Title => image?.Name ?? (RowKind == "scene-rows" ? "批注" : "资产批注");
     public bool IsImage => ImageId != null;
     public ObservableCollection<ReviewComment> Comments { get; } = [];
     private bool _busy;
@@ -44,7 +44,7 @@ public sealed class ReviewViewModel(IProjectWorkbookService service, string file
     private ImageSource? _preview = image?.Preview;
     public ImageSource? Preview { get => _preview; private set { _preview = value; Changed(); } }
     private ReviewThread? _thread;
-    public string SummaryText => _thread is { } t ? IsImage ? $"好 {t.Good} · 不好 {t.Bad} · 评论 {t.CommentCount}" : $"评论 {t.CommentCount}" : "统计暂不可用";
+    public string SummaryText => _thread is { } t ? IsImage ? $"好 {t.Good} · 不好 {t.Bad} · 批注 {t.CommentCount}" : $"批注 {t.CommentCount}" : "统计暂不可用";
     /// <summary>An empty list once the thread is known, never a claim made before it is read.</summary>
     public bool HasNoComments => _thread != null && Comments.Count == 0;
     public string MyVerdictText => _thread == null ? "评价状态未知" : _thread.MyVerdict switch { "good" => "我的评价：好", "bad" => "我的评价：不好", _ => "尚未评价" };
@@ -52,7 +52,7 @@ public sealed class ReviewViewModel(IProjectWorkbookService service, string file
     public string Draft { get => _draft; set { _draft = value; Changed(); } }
     private ReviewComment? _editing;
     public bool IsEditing => _editing != null;
-    public string ComposerTitle => IsEditing ? "编辑评论" : "添加评论";
+    public string ComposerTitle => IsEditing ? "编辑批注" : "添加批注";
     public string SendLabel => IsEditing ? "保存" : "发送";
     private bool _mustRefresh;
     public bool CanReload => _mustRefresh || ImageError != null;

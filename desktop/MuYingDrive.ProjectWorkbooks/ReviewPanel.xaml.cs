@@ -12,6 +12,7 @@ public partial class ReviewPanel : UserControl
 {
     private bool _loaded;
     public ReviewPanel() => InitializeComponent();
+    public void AddAction(UIElement element) => ActionPanel.Children.Add(element);
     private ReviewViewModel Model => (ReviewViewModel)DataContext;
 
     private async void OnLoaded(object sender, RoutedEventArgs e)

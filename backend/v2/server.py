@@ -36,7 +36,7 @@ from .visitor_http import dispatch as dispatch_visitor
 # than that one feature being offline. The routes then fall through to the host's 404.
 try:
     from .project_workbooks_http import dispatch as dispatch_project_workbooks
-    from .project_workbooks.nas_adapter import NasSecurity, NasWorkbookServices, NasWorkflowServices
+    from .project_workbooks.nas_adapter import NasReviewServices, NasSecurity, NasWorkbookServices, NasWorkflowServices
     from .project_workbooks.projects_api import ProjectsApi
     # The project-space routes are the host's own, but they reuse the vendored package's
     # directory scan so the two cannot disagree about what a project is — which means they
@@ -47,7 +47,7 @@ except ImportError:
     dispatch_project_workbooks = None
     dispatch_project_spaces = None
     ProjectsApi = ProjectSpaceService = ProjectProvisioner = None
-    NasSecurity = NasWorkbookServices = NasWorkflowServices = None
+    NasSecurity = NasWorkbookServices = NasWorkflowServices = NasReviewServices = None
 
 
 API_ROOT = "/api/v2"
@@ -271,9 +271,15 @@ def create_handler(app: V2Application, *,
             self._send_error(ApiError(404, "NOT_FOUND", "接口不存在。"))
 
         def do_DELETE(self) -> None:  # noqa: N802
-            # Only the visitor channel uses DELETE: ending a tour session.
+            if project_workbooks is not None and dispatch_project_workbooks(self, project_workbooks):
+                return
             if not dispatch_visitor(self, visitor, "DELETE"):
                 self._send_error(ApiError(404, "NOT_FOUND", "接口不存在。"))
+
+        def do_PUT(self) -> None:  # noqa: N802
+            if project_workbooks is not None and dispatch_project_workbooks(self, project_workbooks):
+                return
+            self._send_error(ApiError(404, "NOT_FOUND", "接口不存在。"))
 
         def do_POST(self) -> None:  # noqa: N802
             if dispatch_feedback(self, feedback, _bearer_token(self.headers), "POST"):
@@ -767,10 +773,13 @@ def make_server(settings: Settings, app: V2Application) -> ThreadingHTTPServer:
     provisioner = ProjectProvisioner(settings.project_socket) if ProjectProvisioner is not None else None
     project_workbooks = None
     if settings.project_docs_root is not None and ProjectsApi is not None:
+        review_db = Path(settings.database_path).parent / "project_reviews.db"
         project_workbooks = ProjectsApi(
             NasSecurity(app.session),
             NasWorkbookServices(settings.project_docs_root),
-            workflow=NasWorkflowServices(settings.project_docs_root, provisioner=provisioner))
+            workflow=NasWorkflowServices(settings.project_docs_root, provisioner=provisioner),
+            reviews=NasReviewServices(review_db, row_kind="asset-rows") if NasReviewServices is not None else None,
+            scene_reviews=NasReviewServices(review_db, row_kind="scene-rows") if NasReviewServices is not None else None)
     # Listing needs only the directory; creating needs the root helper. Unset socket means
     # listing still works and creating answers 503 with the reason, which is better than a
     # + that appears to work.

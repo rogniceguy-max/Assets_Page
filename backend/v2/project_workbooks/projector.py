@@ -59,6 +59,7 @@ SCENE_ALIASES = {
     "故事内容": "story_content",
     "标注等级": "label_level",
     "等级": "label_level",
+    "制作难度": "label_level",
     "拆分规划": "breakdown_plan",
 }
 ASSET_ALIASES = {
@@ -249,7 +250,7 @@ def _scene_sheet(sheet_id: str, title: str, worksheet, classification: Classific
             "scene_context": None,
             "cast_context": None,
             "origins": [],
-            "can_edit": False,
+            "can_edit": True,
         })
 
     return {
