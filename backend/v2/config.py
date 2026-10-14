@@ -17,6 +17,7 @@ class Settings:
     tls_private_key: Path | None
     provisioner_socket: Path | None
     visitor_socket: Path | None
+    project_socket: Path | None
     public_root: Path
     update_releases_dir: Path | None
     installer_dir: Path | None
@@ -29,6 +30,7 @@ def load_settings() -> Settings:
     private_key = os.environ.get("MUYING_V2_TLS_KEY")
     socket_path = os.environ.get("MUYING_V2_PROVISIONER_SOCKET")
     visitor_socket = os.environ.get("MUYING_V2_VISITOR_SOCKET")
+    project_socket = os.environ.get("MUYING_V2_PROJECT_SOCKET")
     update_releases_dir = os.environ.get("MUYING_V2_UPDATE_RELEASES_DIR")
     installer_dir = os.environ.get("MUYING_V2_INSTALLER_DIR")
     project_docs_root = os.environ.get("MUYING_V2_PROJECT_DOCS_ROOT")
@@ -41,6 +43,7 @@ def load_settings() -> Settings:
         tls_private_key=Path(private_key) if private_key else None,
         provisioner_socket=Path(socket_path) if socket_path else None,
         visitor_socket=Path(visitor_socket) if visitor_socket else None,
+        project_socket=Path(project_socket) if project_socket else None,
         public_root=Path(os.environ.get("MUYING_V2_PUBLIC_ROOT", "/volume1/Assets")),
         # Keep the original path so the release store can reject symlinked roots.
         update_releases_dir=Path(update_releases_dir).absolute() if update_releases_dir else None,

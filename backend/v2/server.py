@@ -38,9 +38,16 @@ try:
     from .project_workbooks_http import dispatch as dispatch_project_workbooks
     from .project_workbooks.nas_adapter import NasSecurity, NasWorkbookServices, NasWorkflowServices
     from .project_workbooks.projects_api import ProjectsApi
+    # The project-space routes are the host's own, but they reuse the vendored package's
+    # directory scan so the two cannot disagree about what a project is — which means they
+    # share its spreadsheet dependency and go unavailable together with it.
+    from .project_spaces import ProjectProvisioner, ProjectSpaceService
+    from .project_spaces_http import dispatch as dispatch_project_spaces
 except ImportError:
     dispatch_project_workbooks = None
-    NasSecurity = NasWorkbookServices = NasWorkflowServices = ProjectsApi = None
+    dispatch_project_spaces = None
+    ProjectsApi = ProjectSpaceService = ProjectProvisioner = None
+    NasSecurity = NasWorkbookServices = NasWorkflowServices = None
 
 
 API_ROOT = "/api/v2"
@@ -152,7 +159,8 @@ def create_handler(app: V2Application, *,
                    update_failure_db_path: Path | None = None,
                    feedback: FeedbackService | None = None,
                    visitor: VisitorService | None = None,
-                   project_workbooks: ProjectsApi | None = None):
+                   project_workbooks: ProjectsApi | None = None,
+                   project_spaces: ProjectSpaceService | None = None):
     feedback = feedback or FeedbackService(app.session, app.db_path.parent / "feedback")
     # No visitor reader configured means the tour is unavailable, not open: the routes
     # still answer, but every read fails closed.
@@ -222,6 +230,12 @@ def create_handler(app: V2Application, *,
                 return
             # The workbook module writes its own response and returns whether it owned the
             # path; it has to run before the host's routes because it authenticates itself.
+            if project_spaces is not None and dispatch_project_spaces(
+                    self, project_spaces, _bearer_token(self.headers), "GET"):
+                return
+            if project_spaces is not None and dispatch_project_spaces(
+                    self, project_spaces, _bearer_token(self.headers), "POST"):
+                return
             if project_workbooks is not None and dispatch_project_workbooks(self, project_workbooks):
                 return
             path = urlsplit(self.path).path
@@ -756,12 +770,21 @@ def make_server(settings: Settings, app: V2Application) -> ThreadingHTTPServer:
             NasSecurity(app.session),
             NasWorkbookServices(settings.project_docs_root),
             workflow=NasWorkflowServices(settings.project_docs_root))
+    # Listing needs only the directory; creating needs the root helper. Unset socket means
+    # listing still works and creating answers 503 with the reason, which is better than a
+    # + that appears to work.
+    project_spaces = None
+    if settings.project_docs_root is not None and ProjectSpaceService is not None:
+        project_spaces = ProjectSpaceService(
+            settings.project_docs_root, app.session,
+            ProjectProvisioner(settings.project_socket))
     server = V2HTTPServer((settings.bind_host, settings.port),
                           create_handler(app, update_releases_dir=settings.update_releases_dir,
                                          installer_dir=settings.installer_dir,
                                          update_failure_db_path=settings.database_path,
                                          feedback=feedback, visitor=visitor,
-                                         project_workbooks=project_workbooks))
+                                         project_workbooks=project_workbooks,
+                                         project_spaces=project_spaces))
     server.daemon_threads = True
     server.request_queue_size = 64
 
