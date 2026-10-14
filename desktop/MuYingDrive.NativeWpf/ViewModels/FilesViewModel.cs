@@ -136,6 +136,17 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
         _refreshTimer = null;
     }
 
+    /// <summary>
+    /// Handles an .xlsx the user opened from the browser, returning false to decline it.
+    /// </summary>
+    /// <remarks>
+    /// Assigned by the workspace, because only it can turn a path into the ids the workbook
+    /// routes take: the project folder name comes from the path, and the file id comes from
+    /// the sidebar tree that was built from the backend. Re-deriving the id here would be a
+    /// second implementation of an encoding the server owns.
+    /// </remarks>
+    public Func<string, bool>? WorkbookOpener { get; set; }
+
     public event Action<SelectionRequest>? SelectionRequested;
 
     public ObservableCollection<DriveFileItem> Files { get; }
@@ -431,6 +442,17 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
         if (!_smbConnected)
         {
             MessageBox.Show(_smbConnectionError, "NAS 未连接", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        // A workbook belongs to this application. Handing it to Windows opens Excel, which is
+        // both the wrong window and a second writer on a file the server tracks revisions
+        // for. The host decides whether it recognises the file; false means fall through and
+        // let the default application have it, which is right for everything else.
+        if (Path.GetExtension(item.FullPath).Equals(".xlsx", StringComparison.OrdinalIgnoreCase)
+            && WorkbookOpener is { } openWorkbook
+            && openWorkbook(item.FullPath))
+        {
             return;
         }
 

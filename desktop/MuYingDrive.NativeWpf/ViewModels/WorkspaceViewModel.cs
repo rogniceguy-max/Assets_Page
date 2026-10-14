@@ -115,6 +115,53 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     private void ActivateProjectNode(ProjectNode node) => ProjectNodeActivator?.Invoke(node);
 
+    /// <summary>
+    /// Opens an .xlsx the user opened from the file browser in the workbook reader, returning
+    /// false when this does not recognise it and the default application should have it.
+    /// </summary>
+    public bool TryOpenWorkbookFile(string fullPath)
+    {
+        if (ProjectNodeActivator is null) return false;
+        var node = FindWorkbookNode(fullPath);
+        if (node is null) return false;
+        ProjectNodeActivator(node);
+        return true;
+    }
+
+    /// <summary>
+    /// The 工作簿 row for a file directly under a project folder, or null when there is none.
+    /// </summary>
+    /// <remarks>
+    /// The path is matched against the tree rather than turned into a file id here. That id
+    /// is the server's own encoding of the project id and the file name, and the tree already
+    /// holds one per workbook because the server returned it — recomputing it would be a
+    /// second implementation of the same rule, and the two would disagree the day it changed.
+    ///
+    /// Deliberately narrow: the file has to sit at exactly
+    /// <c>&lt;share&gt;\Project\&lt;project&gt;\&lt;name&gt;</c> and that project has to have
+    /// listed a workbook of that name. A file in a subfolder, or in a project that is not
+    /// loaded, is not something this can open — and declining is the honest answer, because
+    /// the alternative is handing it to Excel and calling that success.
+    /// </remarks>
+    private ProjectNode? FindWorkbookNode(string fullPath)
+    {
+        var segments = fullPath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var rootIndex = Array.FindLastIndex(segments, segment =>
+            segment.Equals(SmbSpaceResolver.ProjectFolderName, StringComparison.OrdinalIgnoreCase));
+        if (rootIndex < 0 || rootIndex + 2 != segments.Length - 1) return null;
+
+        var projectName = segments[rootIndex + 1];
+        var fileName = segments[^1];
+        return Projects
+            .Where(project => project.Kind == ProjectNodeKind.Project
+                              && string.Equals(project.ProjectName, projectName, StringComparison.Ordinal))
+            .SelectMany(project => project.Children)
+            .Where(group => group.Kind == ProjectNodeKind.WorkbookGroup)
+            .SelectMany(group => group.Children)
+            .FirstOrDefault(child => child.Kind == ProjectNodeKind.Workbook
+                                     && string.Equals(child.Name, fileName, StringComparison.OrdinalIgnoreCase));
+    }
+
     /// <summary>The page table key for the workbook reader, which has no sidebar entry.</summary>
     public const string WorkbookPageKey = "工作簿";
 
@@ -302,6 +349,9 @@ public sealed class WorkspaceViewModel : ObservableObject
                 await workspace.LoadProjectsAsync();
             });
         }
+
+        // Opening a workbook from the file browser goes to the reader rather than to Excel.
+        files.WorkbookOpener = workspace.TryOpenWorkbookFile;
 
         workspace.Session = session;
         workspace.Account = session.User;

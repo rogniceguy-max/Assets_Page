@@ -70,6 +70,7 @@
              trigger reads the workspace rather than the row's own data, because a row is a
              ProjectNode and knows nothing about the sidebar. -->
         <Style x:Key="ProjectNodeRow" TargetType="Button" BasedOn="{StaticResource Button.Nav}">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Style.Triggers>
                 <DataTrigger Binding="{Binding DataContext.IsSidebarExpanded, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="False">
                     <Setter Property="HorizontalContentAlignment" Value="Center" />
@@ -86,12 +87,20 @@
                     Command="{Binding DataContext.ActivateProjectNodeCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                     CommandParameter="{Binding}" ToolTip="{Binding Name}"
                     AutomationProperties.Name="{Binding Name}">
-                <StackPanel Orientation="Horizontal">
-                    <controls:LucideIcon Icon="{Binding Icon}" Width="16" Height="16" Stroke="{DynamicResource Brush.Text.Secondary}" />
-                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis">
+                <!-- A Grid with a star column, not a horizontal StackPanel: a StackPanel
+                     offers its children infinite width, so TextTrimming never has anything to
+                     trim against and a long workbook name stretches the sidebar instead. -->
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <controls:LucideIcon Grid.Column="0" Icon="{Binding Icon}" Width="16" Height="16"
+                                         VerticalAlignment="Center" Stroke="{DynamicResource Brush.Text.Secondary}" />
+                    <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis"
+                               VerticalAlignment="Center" Margin="10,0,0,0">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
-                                <Setter Property="Margin" Value="10,0,0,0" />
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding DataContext.IsSidebarExpanded, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="False">
                                         <Setter Property="Visibility" Value="Collapsed" />
@@ -100,7 +109,7 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
-                </StackPanel>
+                </Grid>
             </Button>
         </HierarchicalDataTemplate>
         <ContextMenu x:Key="AccountMenu">
@@ -189,8 +198,17 @@
                 </TextBlock>
 
                 <ScrollViewer Grid.Row="4" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <!-- Horizontal scrolling off, so a long name is trimmed rather than
+                         widening the sidebar. The scrollbar style is applied here because the
+                         TreeView builds its own ScrollViewer and does not inherit one from the
+                         ListBox styles — without it the sidebar showed the default Windows
+                         scrollbar, which looks nothing like the rest of the app. -->
                     <TreeView ItemsSource="{Binding Projects}" ItemTemplate="{StaticResource ProjectNodeTemplate}"
-                              Background="Transparent" BorderThickness="0" Padding="0">
+                              Background="Transparent" BorderThickness="0" Padding="0"
+                              ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <TreeView.Resources>
+                            <Style TargetType="ScrollBar" BasedOn="{StaticResource ScrollBar.FileArea}" />
+                        </TreeView.Resources>
                         <TreeView.ItemContainerStyle>
                             <Style TargetType="TreeViewItem">
                                 <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />

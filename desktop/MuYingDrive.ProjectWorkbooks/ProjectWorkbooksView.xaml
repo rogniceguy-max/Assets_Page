@@ -107,7 +107,12 @@
   <StackPanel Grid.Row="0"><TextBlock Text="{Binding SelectedProject.Name, TargetNullValue=工作簿}" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,16"/>
    <TextBlock Text="{Binding Error}" Foreground="{DynamicResource Brush.Status.Danger}" Margin="0,0,0,8"/>
    <Button Content="重新加载" Click="OnRefresh" HorizontalAlignment="Left" IsEnabled="{Binding Ready}" Visibility="{Binding CanReload, Converter={StaticResource BoolVisibility}}"/>
-   <ProgressBar Height="3" IsIndeterminate="True" Visibility="{Binding Busy, Converter={StaticResource BoolVisibility}}" Margin="0,0,0,8"/>
+   <!-- HOST ADJUSTMENT. The bar used to be bound straight to Busy, so switching to a
+        workbook drew a violet line for a single frame before the content arrived: at that
+        speed the bar is an artifact, not information. It now waits before appearing, and
+        says something only when the work actually takes a moment. -->
+   <ProgressBar Height="3" IsIndeterminate="True" Margin="0,0,0,8"
+                local:DelayedVisibility.IsBusy="{Binding Busy}"/>
   </StackPanel>
   <StackPanel Grid.Row="1" Visibility="{Binding HasPendingOperation, Converter={StaticResource BoolVisibility}}" IsEnabled="{Binding Ready}" Margin="0,0,0,12">
    <TextBlock Text="{Binding PendingText}"/><WrapPanel Margin="0,6,0,0"><Button Content="重试这次操作" Click="OnRetryPending"/><Button Content="取消待确认操作" Click="OnCancelPending"/></WrapPanel>
