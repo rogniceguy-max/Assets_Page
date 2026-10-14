@@ -1,52 +1,59 @@
-# project_workbooks — what is vendored, what the host supplies
+# Project workbook storage
 
 ## Provenance
 
-Two files are copied **verbatim** from the source-handoff package:
+`projects_api.py` and `workflow_services.py` began as copies from `codex/project-workbooks` at
+`8ad6ba2` (`handoff/project-workbooks/backend/`). They now contain local route and contract
+extensions for SQLite workbooks, row editing, image display names, and live change events.
 
-| File | Source |
-|---|---|
-| `projects_api.py` | `codex/project-workbooks` @ `8ad6ba2`, `handoff/project-workbooks/backend/projects_api.py` |
-| `workflow_services.py` | same commit, `handoff/project-workbooks/backend/workflow_services.py` |
+## Authoritative storage
 
-They are kept byte-identical on purpose: the package was delivered as a frozen snapshot, and
-keeping them unchanged means a future diff against the package is one command rather than a
-review. **Do not edit them.** Host behaviour goes in the adapters below, or in
-`../project_workbooks_http.py`.
+`sqlite_store.py` is the active workbook and workflow service wired by `server.py`. The SQLite
+database lives in the V2 service data directory. It is opened only by the backend; WPF clients
+read and write through the authenticated API. SQLite WAL permits concurrent readers and
+serializes short writes. XLSX is used for legacy import, explicit import, and export snapshots;
+it is no longer the live collaborative table.
 
-## What was deliberately not taken
+The database stores projects, workbooks, sheets, rows, per-field versions, image metadata,
+asset folders, selection history, filesystem move journals, and a durable project event log.
+Workbook, sheet, row, folder, and image IDs remain stable when their display names or parent
+folder paths change. Workbook and sheet renames update labels only, with independent name
+versions so concurrent renames conflict without reacting to unrelated row edits. Asset
+category/name edits move the associated directory through the privileged helper, then update
+folder and image paths in SQLite while retaining image IDs. A destination conflict does not
+overwrite existing files.
 
-`workflow_store.py`, `image_relations.py`, `review_store.py`, `migrate_reviews_v2_to_v3.sql`,
-`images_schema.sql`, `reviews_schema.sql`, `reviews_v3_schema.sql`, `workflow_schema.sql`.
+Image display names are also separate from their physical filenames. Renaming an image updates
+only `image_assets.display_name`; the file bytes, physical filename, and relative path stay put.
+The display-name field has its own version, so simultaneous renames return a conflict instead of
+silently overwriting one another. Search matches both display and physical names. Moving an asset
+directory changes image paths without changing image IDs or display names.
 
-They implement editing, review and image-state storage — none of which the read-only first cut
-uses — and they were never compiled or run by their author. When an editing cut arrives, bring
-them in with the schema work they need rather than copying them in as decoration.
+Legacy `成员批注一` … `成员批注六` columns are import/export compatibility data, not editable
+SQLite table fields. Their labels and XLSX serialization live in `xlsx_compat.py`; imported
+values remain attached to their source rows so an explicit export can preserve them. Newly
+created SQLite rows do not contain these fields. To convert a saved workbook API JSON snapshot
+manually, run from `backend/v2`:
 
-## What this package needs from the host
+```powershell
+python -m project_workbooks.xlsx_compat document.json output.xlsx
+```
 
-`projects_api.py` defines the routes and the JSON shapes and nothing else: it hands every
-question to protocols it is given. Four things must exist before anything works.
+Every committed workbook or metadata write appends a project event in its SQLite transaction.
+The authenticated SSE route delivers those events to open WPF clients, which re-read the affected
+data and keep local drafts. On a normal single backend instance, a connected client refreshes
+after the write commits; reconnecting clients resume from their last event sequence.
 
-| Protocol | Where | Host implementation |
-|---|---|---|
-| `Security` | `projects_api.py` | `nas_adapter.NasSecurity` |
-| `WorkbookServices` (owns `document`) | `projects_api.py` | `nas_adapter.NasWorkbookServices` |
-| `WorkflowServices` (owns `projects`, `list_files`) | `workflow_services.py` | `nas_adapter.NasWorkflowServices` |
-| the xlsx projector | — | `projector.py` |
+New projects create the logical `节拍表` and `资产表` workbooks in SQLite. Both start with an
+empty sheet and the UI provides explicit row creation. Existing project XLSX files are imported
+once; when the privileged helper is configured, the originals are retained under the hidden
+`.legacy-workbooks` directory.
 
-Two protocols, not one: `document` is on `WorkbookServices` and `projects`/`list_files` are on
-`WorkflowServices`, and `ProjectsApi` takes the former as a required positional. There is no
-configuration in which "open a workbook" is served by the workflow adapter.
+## Host integration
 
-Passing `None` where a protocol belongs is the package's own way of saying "not implemented" —
-the routes then answer 503 `STORAGE_UNAVAILABLE`. That is what the eleven methods this cut does
-not implement do, and it is correct behaviour rather than a gap.
-
-## Scope of the first cut
-
-Read-only: **choose a project → list its workbook files → open one and read every sheet.**
-Creating templates, importing revisions and exporting are out of scope and answer 503.
-
-`do_PUT` is not wired into the host: this cut registers no mutating route, and the client issues
-only GETs for these three calls.
+`server.py` injects `SqliteProjectWorkbookStore` as the active workbook and workflow service,
+wraps review operations to map imported legacy IDs, and uses `project_helper.py` for project
+creation and safe asset-folder moves. Authentication remains supplied by the existing V2 host.
+Image indexing reads files already present in project asset folders. Image upload, thumbnail
+generation, full host ACL policy, and production rollout remain host responsibilities and are
+not implemented by this store.

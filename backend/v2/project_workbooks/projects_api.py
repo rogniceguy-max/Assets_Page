@@ -5,6 +5,7 @@ import json
 import re
 import io
 import time
+import threading
 from tempfile import SpooledTemporaryFile
 from dataclasses import dataclass, field
 from typing import Any, BinaryIO, Mapping, Protocol
@@ -150,6 +151,17 @@ def optional_text(value: Any, maximum: int) -> str | None:
     return value
 
 
+def asset_component(value: Any, maximum: int, label: str) -> str | None:
+    text = optional_text(value, maximum)
+    if text is None:
+        return None
+    if (text in {".", ".."} or any(character in text for character in "/\\")
+            or any(ord(character) < 32 or ord(character) == 127 for character in text)
+            or len(text.encode("utf-8")) > 200):
+        raise invalid(f"{label}不能包含路径分隔符或控制字符。")
+    return text or None
+
+
 def origins_payload(value: Any, file_id: str, row_id: str) -> list[dict[str, str]]:
     if not isinstance(value, list) or len(value) > 100:
         raise invalid("来源最多 100 项。")
@@ -280,6 +292,7 @@ class ProjectsApi:
         self.security, self.services = security, services
         self.reviews = reviews
         self.workflow, self.scene_reviews = workflow, scene_reviews
+        self._event_stream_slots = threading.BoundedSemaphore(12)
         if type(upload_limit) is not int or upload_limit < 1:
             raise ValueError("upload_limit must be a positive integer")
         self.upload_limit = upload_limit
@@ -382,6 +395,22 @@ class ProjectsApi:
                 if not body:
                     raise ApiFault(422, "INVALID_IMAGE", "图片为空。")
                 return json_response(201, svc.upload_image(actor, filename(headers), media_type, body))
+        if len(parts) == 3 and parts[0] == "image-assets" and parts[2] == "name" and method == "PUT":
+            value = object_body(headers, body)
+            if query or set(value) != {"expected_version", "display_name"}:
+                raise invalid()
+            rename = getattr(self._workflow(), "rename_image", None)
+            if rename is None:
+                raise ApiFault(503, "STORAGE_UNAVAILABLE", "图片重命名尚未接入。")
+            return json_response(200, rename(actor, parts[1], review_version(value["expected_version"]),
+                                              value["display_name"]))
+        if len(parts) == 2 and parts[0] == "image-assets" and method == "GET":
+            if query:
+                raise invalid()
+            get_image = getattr(self._workflow(), "image_metadata", None)
+            if get_image is None:
+                raise ApiFault(503, "STORAGE_UNAVAILABLE", "素材读取尚未接入。")
+            return json_response(200, get_image(actor, parts[1]))
         if len(parts) == 3 and parts[0] == "image-assets" and parts[2] == "content" and method == "GET":
             query = parse_qs(parsed.query, keep_blank_values=True)
             if set(query) - {"thumbnail"} or query.get("thumbnail", ["true"]) not in (["true"], ["false"]):
@@ -392,6 +421,42 @@ class ProjectsApi:
             return binary_response(svc.image_content(actor, parts[1], thumbnail))
         # Reserved static names must never fall through as workbook IDs.
         if parts and parts[0] not in {"create", "import", "image-assets", "projects"}:
+            if len(parts) == 2 and parts[1] == "name" and method == "PUT":
+                value = object_body(headers, body)
+                if query or set(value) != {"expected_name_version", "display_name"}:
+                    raise invalid()
+                rename = getattr(self._workflow(), "rename_workbook", None)
+                if rename is None:
+                    raise ApiFault(503, "STORAGE_UNAVAILABLE", "工作簿重命名尚未接入。")
+                return json_response(200, rename(actor, parts[0],
+                    review_version(value["expected_name_version"]), value["display_name"]))
+            if len(parts) == 4 and parts[1] == "sheets" and parts[3] == "name" and method == "PUT":
+                value = object_body(headers, body)
+                if query or set(value) != {"expected_name_version", "display_name"}:
+                    raise invalid()
+                rename = getattr(self._workflow(), "rename_sheet", None)
+                if rename is None:
+                    raise ApiFault(503, "STORAGE_UNAVAILABLE", "工作表重命名尚未接入。")
+                return json_response(200, rename(actor, parts[0], parts[2],
+                    review_version(value["expected_name_version"]), value["display_name"]))
+            if len(parts) == 2 and parts[1] in {"scene-rows", "asset-rows"} and method == "POST":
+                value = object_body(headers, body)
+                if query or set(value) != {"sheet_id"}:
+                    raise invalid()
+                creator = getattr(self._workflow(), "add_scene_row" if parts[1] == "scene-rows" else "add_asset_row", None)
+                if creator is None:
+                    raise ApiFault(503, "STORAGE_UNAVAILABLE", "新增表格行尚未接入。")
+                return json_response(201, creator(actor, parts[0], review_target(value["sheet_id"], allow_general=False)))
+            if len(parts) == 3 and parts[1] in {"scene-rows", "asset-rows"} and method == "DELETE":
+                value = object_body(headers, body)
+                if query or set(value) != {"expected_version"}:
+                    raise invalid()
+                delete = getattr(self._workflow(), "delete_row", None)
+                if delete is None:
+                    raise ApiFault(503, "STORAGE_UNAVAILABLE", "删除表格行尚未接入。")
+                kind = "scene_beats" if parts[1] == "scene-rows" else "asset_review"
+                return json_response(200, delete(actor, parts[0], parts[2],
+                    review_version(value["expected_version"]), kind))
             if len(parts) >= 4 and parts[1] in {"asset-rows", "scene-rows"} and parts[3] in {"reviews", "review-summaries"}:
                 return self._review_route(actor, method, parts, parsed.query, headers, body)
             if len(parts) == 1 and method == "GET":
@@ -423,16 +488,36 @@ class ProjectsApi:
                 value = object_body(headers, body, SCENE_JSON_LIMIT)
                 if query:
                     raise invalid()
-                if len(parts) == 3 and set(value) == {"expected_version", "label_level", "breakdown_plan"}:
+                base_fields = {"expected_version", "label_level", "breakdown_plan"}
+                versioned_fields = {"expected_versions", "label_level", "breakdown_plan"}
+                combined_fields = {"expected_version", "expected_versions", "label_level", "breakdown_plan"}
+                if len(parts) == 3 and set(value) in (base_fields, versioned_fields, combined_fields):
                     if value["label_level"] not in (None, "红", "黄", "绿"):
                         raise invalid()
+                    expected = value.get("expected_versions", value.get("expected_version"))
+                    if isinstance(expected, dict):
+                        if set(expected) != {"label_level", "breakdown_plan"} or any(
+                                type(item) is not int or item < 1 for item in expected.values()):
+                            raise invalid("字段版本无效。")
+                    else:
+                        expected = review_version(expected)
                     return json_response(200, self._workflow().update_scene(actor, parts[0], parts[2],
-                        review_version(value["expected_version"]), value["label_level"],
+                        expected, value["label_level"],
                         optional_text(value["breakdown_plan"], 20000)))
+                if len(parts) == 4 and parts[3] == "story-content" and set(value) == {"expected_version", "story_content"}:
+                    return json_response(200, self._workflow().update_story_content(actor, parts[0], parts[2],
+                        review_version(value["expected_version"]), optional_text(value["story_content"], 20000)))
                 if len(parts) == 4 and parts[3] == "origins" and set(value) == {"expected_version", "origins"}:
                     return json_response(200, self._workflow().update_origins(actor, parts[0], parts[2],
                         review_version(value["expected_version"]), origins_payload(value["origins"], parts[0], parts[2])))
                 raise invalid()
+            if len(parts) == 3 and parts[1] == "asset-rows" and method == "PUT":
+                value = object_body(headers, body)
+                if query or set(value) != {"expected_version", "category", "name"}:
+                    raise invalid()
+                return json_response(200, self._workflow().update_asset_row(actor, parts[0], parts[2],
+                    review_version(value["expected_version"]), asset_component(value["category"], 200, "类别"),
+                    asset_component(value["name"], 500, "名称")))
             if len(parts) == 4 and parts[1] == "asset-rows" and parts[3] == "images" and method == "PUT":
                 value = object_body(headers, body)
                 has_reason = "selection_reason" in value
@@ -548,6 +633,8 @@ class ProjectsApi:
         """
         if not self.owns(handler.path):
             return False
+        if handler.command == "GET" and urlsplit(handler.path).path.rstrip("/") == ROOT + "/events":
+            return self._event_stream(handler)
         original_timeout = handler.connection.gettimeout()
         try:
             headers = {key.lower(): value for key, value in handler.headers.items()}
@@ -560,7 +647,7 @@ class ProjectsApi:
             if is_upload:
                 self._workflow()  # Fail before reading a large body when adapter is missing.
             is_scene_update = handler.command == "PUT" and re.fullmatch(
-                re.escape(ROOT) + r"/[^/]+/scene-rows/[^/]+(?:/origins)?/?", urlsplit(handler.path).path) is not None
+                re.escape(ROOT) + r"/[^/]+/scene-rows/[^/]+(?:/(?:origins|story-content))?/?", urlsplit(handler.path).path) is not None
             limit = self.upload_limit if is_upload else (SCENE_JSON_LIMIT if is_scene_update else JSON_LIMIT)
             raw_length = lengths[0] if lengths else ("0" if handler.command in {"GET", "DELETE"} else "")
             if not re.fullmatch(r"[0-9]{1,12}", raw_length):
@@ -635,4 +722,107 @@ class ProjectsApi:
                     handler.connection.settimeout(original_timeout)
                 except OSError:
                     pass  # Socket already closed; no host state remains to restore.
+        return True
+
+    def _event_stream(self, handler: Any) -> bool:
+        if not self._event_stream_slots.acquire(blocking=False):
+            body = error_response(ApiFault(503, "EVENT_STREAM_BUSY", "实时更新连接已满，请稍后自动重试。"))
+            handler.send_response(body.status)
+            for key, value in body.headers.items():
+                handler.send_header(key, value)
+            handler.send_header("Content-Length", str(len(body.body)))
+            handler.send_header("Retry-After", "5")
+            handler.send_header("Connection", "close")
+            handler.end_headers(); handler.wfile.write(body.body)
+            handler.close_connection = True
+            return True
+        try:
+            return self._event_stream_impl(handler)
+        finally:
+            self._event_stream_slots.release()
+
+    def _event_stream_impl(self, handler: Any) -> bool:
+        """Authenticated Server-Sent Events feed; notifications follow committed writes."""
+        original_timeout = handler.connection.gettimeout()
+        headers = {key.lower(): value for key, value in handler.headers.items()}
+        try:
+            actor = self.security.authenticate(headers)
+            parsed = urlsplit(handler.path)
+            query = query_values(parsed.query)
+            if set(query) - {"project_id", "after"} or "project_id" not in query:
+                raise invalid("实时更新需要项目范围。")
+            project_id = review_target(query["project_id"][0], allow_general=False)
+            workflow = self._workflow()
+            if not all(hasattr(workflow, name) for name in ("latest_event_sequence", "wait_for_events")):
+                raise ApiFault(503, "STORAGE_UNAVAILABLE", "实时更新服务暂不可用。")
+            workflow.list_files(actor, project_id)  # Project and directory availability are checked before streaming.
+            last_event = headers.get("last-event-id")
+            after_values = query.get("after")
+            raw_cursor = after_values[0] if after_values else last_event
+            if raw_cursor is None:
+                cursor = workflow.latest_event_sequence(project_id)
+                send_ready = True
+            elif re.fullmatch(r"[0-9]{1,19}", raw_cursor):
+                cursor = int(raw_cursor)
+                send_ready = False
+            else:
+                raise invalid("实时更新游标无效。")
+            if cursor < 0 or cursor > 2**63 - 1:
+                raise invalid("实时更新游标无效。")
+        except ApiFault as error:
+            response = error_response(error)
+            handler.send_response(response.status)
+            for key, value in response.headers.items():
+                handler.send_header(key, value)
+            handler.send_header("Content-Length", str(len(response.body)))
+            handler.send_header("Connection", "close")
+            handler.end_headers()
+            handler.wfile.write(response.body)
+            handler.close_connection = True
+            return True
+        except Exception:
+            response = error_response(ApiFault(503, "STORAGE_UNAVAILABLE", "实时更新服务暂不可用。"))
+            handler.send_response(response.status)
+            for key, value in response.headers.items():
+                handler.send_header(key, value)
+            handler.send_header("Content-Length", str(len(response.body)))
+            handler.send_header("Connection", "close")
+            handler.end_headers()
+            handler.wfile.write(response.body)
+            handler.close_connection = True
+            return True
+
+        handler.send_response(200)
+        handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        handler.send_header("Cache-Control", "no-cache, no-transform")
+        handler.send_header("X-Accel-Buffering", "no")
+        handler.send_header("Connection", "keep-alive")
+        handler.end_headers()
+
+        def write_event(event_id: int, event_name: str, payload: Any) -> None:
+            message = (f"id: {event_id}\nevent: {event_name}\ndata: "
+                       + json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n\n")
+            handler.wfile.write(message.encode("utf-8"))
+            handler.wfile.flush()
+
+        try:
+            handler.connection.settimeout(20)
+            if send_ready:
+                write_event(cursor, "ready", {"sequence": cursor})
+            while not handler.close_connection:
+                events = workflow.wait_for_events(project_id, cursor, timeout=10.0)
+                if not events:
+                    handler.wfile.write(b": keep-alive\n\n")
+                    handler.wfile.flush()
+                    continue
+                for event in events:
+                    cursor = int(event["sequence"])
+                    write_event(cursor, "change", event)
+        except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
+            handler.close_connection = True
+        finally:
+            try:
+                handler.connection.settimeout(original_timeout)
+            except OSError:
+                pass
         return True

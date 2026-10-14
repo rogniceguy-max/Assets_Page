@@ -1,7 +1,5 @@
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Media;
 
 namespace MuYingDrive.ProjectWorkbooks;
 
@@ -38,6 +36,8 @@ public sealed class SceneDetailsPanel : UserControl
     private SceneRowItem _item;
     private string _savedPlan;
     private string _savedLevel;
+    private long _expectedPlanVersion;
+    private long _expectedLevelVersion;
     private bool _busy;
     private bool _needsReload;
 
@@ -55,6 +55,8 @@ public sealed class SceneDetailsPanel : UserControl
         _resources = resources;
         _savedPlan = item.Row.BreakdownPlan ?? "";
         _savedLevel = item.Row.LabelLevel ?? "未标注";
+        _expectedPlanVersion = item.Row.FieldVersions.GetValueOrDefault("breakdown_plan", item.Row.Version);
+        _expectedLevelVersion = item.Row.FieldVersions.GetValueOrDefault("label_level", item.Row.Version);
         Heading = $"场景 {item.Row.SceneNumber} · 节拍 {item.Row.BeatNumber}";
 
         var root = new Grid { Margin = new Thickness(14) };
@@ -174,13 +176,6 @@ public sealed class SceneDetailsPanel : UserControl
                 card.SetResourceReference(Border.BorderBrushProperty, "Brush.Border.Subtle");
 
                 var cardStack = new StackPanel();
-                var thumb = item.LinkedThumbnails.FirstOrDefault(t => t.Asset.Name.Contains(asset.Name));
-                if (thumb != null)
-                {
-                    var img = new Image { Height = 80, Stretch = Stretch.Uniform, Margin = new Thickness(0, 0, 0, 6) };
-                    BindingOperations.SetBinding(img, Image.SourceProperty, new Binding(nameof(ImageItem.Preview)) { Source = thumb });
-                    cardStack.Children.Add(img);
-                }
                 var headerText = new TextBlock
                 {
                     Text = $"[{asset.Category}] {asset.Name}",
@@ -218,11 +213,21 @@ public sealed class SceneDetailsPanel : UserControl
         {
             if (_needsReload) { _status.Text = "请先重新加载并核对，草稿仍保留。"; return; }
             var label = _level.SelectedItem as string;
-            _item.Row = await _model.Service.UpdateSceneAsync(_fileId, _item.Row.Id, new UpdateSceneRequest(_item.Row.Version, label == "未标注" ? null : label, _plan.Text));
+            _item.Row = await _model.Service.UpdateSceneAsync(_fileId, _item.Row.Id,
+                new UpdateSceneRequest(_item.Row.Version, label == "未标注" ? null : label, _plan.Text)
+                {
+                    ExpectedVersions = new Dictionary<string, long>
+                    {
+                        ["label_level"] = _expectedLevelVersion,
+                        ["breakdown_plan"] = _expectedPlanVersion,
+                    }
+                });
             // Only a successful save advances the local baseline. A version refresh never does.
             // Input typed while this request was pending remains unsaved and will trigger close protection.
             _savedPlan = _item.Row.BreakdownPlan ?? "";
             _savedLevel = _item.Row.LabelLevel ?? "未标注";
+            _expectedPlanVersion = _item.Row.FieldVersions.GetValueOrDefault("breakdown_plan", _item.Row.Version);
+            _expectedLevelVersion = _item.Row.FieldVersions.GetValueOrDefault("label_level", _item.Row.Version);
             _model.SceneChanged(); _status.Text = "已保存。";
         }));
         _saveButton.Margin = new Thickness(0, 0, 8, 0);
@@ -234,6 +239,8 @@ public sealed class SceneDetailsPanel : UserControl
             var latest = document.Sheets.SelectMany(sheet => sheet.SceneRows).SingleOrDefault(row => row.Id == _item.Row.Id)
                 ?? throw new System.IO.InvalidDataException("原节拍已不存在，请关闭后重新打开工作簿。");
             _item.Row = latest; _plan.IsReadOnly = false; _level.IsEnabled = true; _model.SceneChanged();
+            _expectedPlanVersion = latest.FieldVersions.GetValueOrDefault("breakdown_plan", latest.Version);
+            _expectedLevelVersion = latest.FieldVersions.GetValueOrDefault("label_level", latest.Version);
             _serverPlan.Text = $"服务器当前等级：{latest.LabelLevel ?? "未标注"}\n服务器当前规划：{latest.BreakdownPlan}";
             _needsReload = false; reload.Visibility = Visibility.Collapsed;
             _body.BringIntoView();
@@ -250,6 +257,41 @@ public sealed class SceneDetailsPanel : UserControl
     /// <summary>True when the panel holds input the server has not accepted.</summary>
     public bool HasDraft => !string.Equals(_plan.Text, _savedPlan, StringComparison.Ordinal)
         || !string.Equals(_level.SelectedItem as string ?? "未标注", _savedLevel, StringComparison.Ordinal);
+
+    public void ApplyRemote(SceneRow previous, SceneRow row)
+    {
+        if (_busy || row.Id != _item.Row.Id) return;
+        var old = previous;
+        var planDraft = _plan.Text;
+        var levelDraft = _level.SelectedItem as string ?? "未标注";
+        var planDirty = !string.Equals(planDraft, _savedPlan, StringComparison.Ordinal);
+        var levelDirty = !string.Equals(levelDraft, _savedLevel, StringComparison.Ordinal);
+        var planChanged = !string.Equals(row.BreakdownPlan, old.BreakdownPlan, StringComparison.Ordinal);
+        var levelChanged = !string.Equals(row.LabelLevel, old.LabelLevel, StringComparison.Ordinal);
+        if (!planDirty)
+        {
+            _savedPlan = row.BreakdownPlan ?? "";
+            _expectedPlanVersion = row.FieldVersions.GetValueOrDefault("breakdown_plan", row.Version);
+            _plan.Text = _savedPlan;
+        }
+        else if (!planChanged)
+            _expectedPlanVersion = row.FieldVersions.GetValueOrDefault("breakdown_plan", row.Version);
+        if (!levelDirty)
+        {
+            _savedLevel = row.LabelLevel ?? "未标注";
+            _expectedLevelVersion = row.FieldVersions.GetValueOrDefault("label_level", row.Version);
+            _level.SelectedItem = _savedLevel;
+        }
+        else if (!levelChanged)
+            _expectedLevelVersion = row.FieldVersions.GetValueOrDefault("label_level", row.Version);
+        if ((planDirty && planChanged) || (levelDirty && levelChanged))
+        {
+            _needsReload = true;
+            _reload.Visibility = Visibility.Visible;
+            _serverPlan.Text = $"服务器当前等级：{row.LabelLevel ?? "未标注"}\n服务器当前规划：{row.BreakdownPlan}";
+            _status.Text = "其他人修改了当前字段；你的草稿已保留，请重新加载并核对。";
+        }
+    }
 
     /// <summary>
     /// The successor to the window's Closing handler: true when it is safe to take the panel

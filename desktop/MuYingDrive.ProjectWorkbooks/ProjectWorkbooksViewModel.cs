@@ -2,6 +2,9 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
@@ -14,7 +17,7 @@ public abstract class ObservableModel : INotifyPropertyChanged
 }
 public sealed class ImageItem(ImageAsset asset, ImageSource? preview, string? error = null) : ObservableModel
 {
-    public ImageAsset Asset { get; } = asset;
+    public ImageAsset Asset { get; private set; } = asset;
     private ImageSource? _preview = preview;
     public ImageSource? Preview { get => _preview; private set { _preview = value; Changed(); } }
     public string Name => Asset.Name;
@@ -23,6 +26,11 @@ public sealed class ImageItem(ImageAsset asset, ImageSource? preview, string? er
     public string? Error { get => _error; private set { _error = value; Changed(); } }
     internal bool Loading { get; set; }
     public void SetPreview(ImageSource? source, string? error = null) { Preview = source; Error = error; }
+    public void UpdateAsset(ImageAsset asset)
+    {
+        Asset = asset;
+        Changed(nameof(Asset)); Changed(nameof(Name)); Changed(nameof(Details));
+    }
     private ReviewSummary? _summary;
     public string SummaryText => _summary is { } summary
         ? $"好 {summary.Good} · 不好 {summary.Bad} · 评论 {summary.CommentCount}" : "好 ? · 不好 ? · 评论 ?";
@@ -30,9 +38,57 @@ public sealed class ImageItem(ImageAsset asset, ImageSource? preview, string? er
 }
 public sealed class AssetRowItem(AssetRow row, ImageItem? selected, IReadOnlyList<ImageItem> candidates) : ObservableModel
 {
-    public AssetRow Row { get; } = row;
-    public ImageItem? Selected { get; } = selected;
-    public IReadOnlyList<ImageItem> Candidates { get; } = candidates;
+    private AssetRow _row = row;
+    private long _expectedIdentityVersion = row.FieldVersions.GetValueOrDefault("category_name", row.Version);
+    public long ExpectedIdentityVersion => _expectedIdentityVersion;
+    public AssetRow Row
+    {
+        get => _row;
+        set
+        {
+            _row = value; _expectedIdentityVersion = value.FieldVersions.GetValueOrDefault("category_name", value.Version);
+            CategoryDraft = value.Category; NameDraft = value.Name;
+            Changed();
+        }
+    }
+    private string? _categoryDraft = row.Category;
+    public string? CategoryDraft { get => _categoryDraft; set { _categoryDraft = value; Changed(); } }
+    private string? _nameDraft = row.Name;
+    public string? NameDraft { get => _nameDraft; set { _nameDraft = value; Changed(); } }
+    private bool _isSaving;
+    public bool IsSaving { get => _isSaving; internal set { _isSaving = value; Changed(); } }
+    public ImageItem? Selected { get; private set; } = selected;
+    public IReadOnlyList<ImageItem> Candidates { get; private set; } = candidates;
+    public void UpdateFrom(AssetRow row)
+    {
+        Row = row;
+        Selected = row.SelectedImage == null ? null : new ImageItem(row.SelectedImage, null);
+        Candidates = row.CandidateImages.Select(asset => new ImageItem(asset, null)).ToList();
+        Changed(nameof(Selected)); Changed(nameof(Candidates));
+    }
+    public void ApplyRemote(AssetRow row)
+    {
+        var categoryDraft = CategoryDraft;
+        var nameDraft = NameDraft;
+        var dirty = !string.Equals(categoryDraft, Row.Category, StringComparison.Ordinal)
+            || !string.Equals(nameDraft, Row.Name, StringComparison.Ordinal);
+        var identityChanged = !string.Equals(row.Category, Row.Category, StringComparison.Ordinal)
+            || !string.Equals(row.Name, Row.Name, StringComparison.Ordinal);
+        _row = row;
+        if (!dirty || !identityChanged)
+        {
+            _expectedIdentityVersion = row.FieldVersions.GetValueOrDefault("category_name", row.Version);
+            CategoryDraft = dirty ? categoryDraft : row.Category;
+            NameDraft = dirty ? nameDraft : row.Name;
+        }
+        else
+        {
+            CategoryDraft = categoryDraft; NameDraft = nameDraft;
+        }
+        Selected = row.SelectedImage == null ? null : new ImageItem(row.SelectedImage, null);
+        Candidates = row.CandidateImages.Select(asset => new ImageItem(asset, null)).ToList();
+        Changed(nameof(Row)); Changed(nameof(Selected)); Changed(nameof(Candidates));
+    }
     internal bool SummaryLoading { get; set; }
     internal bool SummaryLoaded { get; set; }
     private ReviewSummary? _generalSummary;
@@ -48,21 +104,49 @@ public sealed class AssetRowItem(AssetRow row, ImageItem? selected, IReadOnlyLis
 public sealed class SceneRowItem(SceneRow row) : ObservableModel
 {
     private SceneRow _row = row;
-    public SceneRow Row { get => _row; set { _row = value; Changed(); Changed(nameof(StoryPreview)); Changed(nameof(PlanPreview)); } }
+    private long _storyExpectedVersion = row.FieldVersions.GetValueOrDefault("story_content", row.Version);
+    public long StoryExpectedVersion => _storyExpectedVersion;
+    public SceneRow Row
+    {
+        get => _row;
+        set
+        {
+            _row = value;
+            _storyExpectedVersion = value.FieldVersions.GetValueOrDefault("story_content", value.Version);
+            StoryContentDraft = value.StoryContent;
+            Changed(); Changed(nameof(StoryPreview)); Changed(nameof(PlanPreview));
+        }
+    }
+    private string? _storyContentDraft = row.StoryContent;
+    public string? StoryContentDraft { get => _storyContentDraft; set { _storyContentDraft = value; Changed(); } }
+    private bool _isSaving;
+    public bool IsSaving { get => _isSaving; internal set { _isSaving = value; Changed(); } }
     public string StoryPreview => Row.StoryContent ?? "";
     public string PlanPreview => Row.BreakdownPlan ?? "";
+    public void ApplyRemote(SceneRow row)
+    {
+        var draft = StoryContentDraft;
+        var dirty = !string.Equals(draft, Row.StoryContent, StringComparison.Ordinal);
+        var storyChanged = !string.Equals(row.StoryContent, Row.StoryContent, StringComparison.Ordinal);
+        _row = row;
+        if (!dirty || !storyChanged)
+        {
+            _storyExpectedVersion = row.FieldVersions.GetValueOrDefault("story_content", row.Version);
+            StoryContentDraft = dirty ? draft : row.StoryContent;
+        }
+        else StoryContentDraft = draft;
+        Changed(nameof(Row)); Changed(nameof(StoryPreview)); Changed(nameof(PlanPreview));
+    }
     private string _discussionText = "讨论 ?";
     public string DiscussionText { get => _discussionText; set { _discussionText = value; Changed(); } }
     internal bool SummaryLoaded { get; set; }
     internal bool SummaryLoading { get; set; }
     public ObservableCollection<LinkedAsset> LinkedAssets { get; } = [];
-    public ObservableCollection<ImageItem> LinkedThumbnails { get; } = [];
     public bool HasLinkedAssets => LinkedAssets.Count > 0;
 
     public void ResolveLinkedAssets(IEnumerable<AssetRowItem> assets)
     {
         LinkedAssets.Clear();
-        LinkedThumbnails.Clear();
         var content = string.Join(" ", Row.StoryContent, Row.CastContext, Row.SceneContext);
         if (string.IsNullOrWhiteSpace(content)) return;
 
@@ -74,15 +158,10 @@ public sealed class SceneRowItem(SceneRow row) : ObservableModel
             {
                 var linked = new LinkedAsset(asset.Row.Category ?? "角色", name, asset.Row.Appearance, asset.Selected?.Asset ?? asset.Row.CandidateImages.FirstOrDefault());
                 LinkedAssets.Add(linked);
-                if (asset.Selected != null)
-                {
-                    LinkedThumbnails.Add(asset.Selected);
-                }
             }
         }
         Changed(nameof(HasLinkedAssets));
         Changed(nameof(LinkedAssets));
-        Changed(nameof(LinkedThumbnails));
     }
 }
 public sealed record GenericCellItem(string Label, string? Value);
@@ -107,7 +186,16 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
     public ObservableCollection<ProjectFile> Files { get; } = [];
     public ObservableCollection<ProjectInfo> Projects { get; } = [];
     private ProjectInfo? _selectedProject;
-    public ProjectInfo? SelectedProject { get => _selectedProject; set { _selectedProject = value; Changed(); } }
+    public ProjectInfo? SelectedProject
+    {
+        get => _selectedProject;
+        set
+        {
+            if (ReferenceEquals(_selectedProject, value)) return;
+            _selectedProject = value; Changed();
+            if (value != null) EnsureLiveUpdates(value.Id);
+        }
+    }
     public ObservableCollection<SheetItem> Sheets { get; } = [];
     private bool _busy;
     public bool Busy { get => _busy; private set { _busy = value; Changed(); Changed(nameof(Ready)); } }
@@ -134,6 +222,13 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
             item.Row.BreakdownPlan, item.Row.SceneContext, item.Row.CastContext).Contains(Search, StringComparison.OrdinalIgnoreCase)));
     private readonly SemaphoreSlim _thumbnailGate = new(4);
     private readonly Dictionary<string, ImageSource> _thumbnailCache = new(StringComparer.Ordinal);
+    private CancellationTokenSource? _liveUpdatesCts;
+    private Task? _liveUpdatesTask;
+    private TaskCompletionSource<bool>? _liveUpdatesReady;
+    private string? _liveUpdatesProjectId;
+    private long? _lastEventSequence;
+    public bool ApplyingRemoteUpdate { get; private set; }
+    public event Action<SceneRow, SceneRow>? SceneRowChanging;
     public PendingWorkbookOperation? PendingOperation { get; private set; }
     public string PendingText => PendingOperation == null ? "" : $"待确认：{PendingOperation.Description}。可继续重试这次操作。";
     public bool HasPendingOperation => PendingOperation != null;
@@ -164,6 +259,15 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         catch (Exception ex) { Error = ex is WorkbookApiException or InvalidDataException ? ex.Message : "操作未完成，请检查连接后重新加载。"; }
         finally { Busy = false; }
     }
+    public async Task ExecuteInlineAsync(Func<Task> action)
+    {
+        Error = null;
+        try { await action(); }
+        catch (WorkbookApiException ex) when (ex.StatusCode == 409)
+        { Error = "内容已变更，本次未覆盖。请重新加载并核对后再操作。"; }
+        catch (OperationCanceledException) { Error = "请求已取消或超时。请重新加载确认结果后再操作。"; }
+        catch (Exception ex) { Error = ex is WorkbookApiException or InvalidDataException ? ex.Message : "操作未完成，请检查连接后重新加载。"; }
+    }
     public async Task RefreshFilesAsync()
     {
         if (SelectedProject == null) { Files.Clear(); return; }
@@ -182,10 +286,13 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
     /// </remarks>
     public Func<bool>? ConfirmLeaving { get; set; }
     public Action? ProjectFilesChanged { get; set; }
+    public event Action<ImageAsset>? ProjectImageChanged;
 
     public async Task OpenAsync(ProjectFile file)
     {
         if (ConfirmLeaving?.Invoke() == false) return;
+        if (!string.IsNullOrWhiteSpace(file.ProjectId)) await EnsureLiveUpdatesAsync(file.ProjectId);
+        var sequenceBeforeLoad = _lastEventSequence;
         var document = await Service.OpenAsync(file.Id);
         var sheets = new List<SheetItem>();
         foreach (var source in document.Sheets)
@@ -199,10 +306,163 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         Document = document;
         Sheets.Clear(); foreach (var sheet in sheets) Sheets.Add(sheet);
         SelectedSheet = Sheets.FirstOrDefault(s => s.IsScene || s.IsAsset) ?? Sheets.FirstOrDefault();
+        if (Document.File.ProjectId == file.ProjectId && _lastEventSequence != sequenceBeforeLoad)
+            await RefreshCurrentDocumentAsync(CancellationToken.None);
         if (file.TemplateKind == "scene_beats")
         {
             _ = LoadProjectAssetsAsync();
         }
+    }
+
+    private async Task EnsureLiveUpdatesAsync(string projectId)
+    {
+        if (string.Equals(_liveUpdatesProjectId, projectId, StringComparison.Ordinal)
+            && _liveUpdatesReady is { } currentReady)
+        {
+            try { await currentReady.Task.WaitAsync(TimeSpan.FromSeconds(5)); } catch { }
+            return;
+        }
+        _liveUpdatesCts?.Cancel();
+        _liveUpdatesProjectId = projectId;
+        _lastEventSequence = null;
+        _liveUpdatesCts = new CancellationTokenSource();
+        _liveUpdatesReady = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _liveUpdatesTask = RunLiveUpdatesAsync(projectId, _liveUpdatesCts.Token);
+        try { await _liveUpdatesReady.Task.WaitAsync(TimeSpan.FromSeconds(5)); } catch { }
+    }
+
+    private async Task RunLiveUpdatesAsync(string projectId, CancellationToken ct)
+    {
+        var retry = TimeSpan.FromSeconds(1);
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await foreach (var change in Service.SubscribeProjectEventsAsync(projectId, _lastEventSequence, ct))
+                {
+                    if (change.EventKind == "ready")
+                    {
+                        if (Document?.File.ProjectId == projectId)
+                            await OnUiAsync(() => RefreshCurrentDocumentAsync(ct));
+                        _lastEventSequence = change.Sequence;
+                        _liveUpdatesReady?.TrySetResult(true);
+                        continue;
+                    }
+                    retry = TimeSpan.FromSeconds(1);
+                    await OnUiAsync(() => HandleProjectChangeAsync(projectId, change, ct));
+                    _lastEventSequence = change.Sequence;
+                }
+                throw new EndOfStreamException("实时更新连接已关闭。");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+            catch
+            {
+                _liveUpdatesReady?.TrySetResult(false);
+                try { await Task.Delay(retry, ct); } catch (OperationCanceledException) { break; }
+                retry = TimeSpan.FromSeconds(Math.Min(15, retry.TotalSeconds * 2));
+            }
+        }
+    }
+
+    private Task OnUiAsync(Func<Task> action)
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher == null || dispatcher.CheckAccess()) return action();
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        dispatcher.BeginInvoke(new Action(async () =>
+        {
+            try { await action(); completion.TrySetResult(true); }
+            catch (Exception error) { completion.TrySetException(error); }
+        }));
+        return completion.Task;
+    }
+
+    private async Task HandleProjectChangeAsync(string projectId, ProjectChangeEvent change, CancellationToken ct)
+    {
+        if (!string.Equals(SelectedProject?.Id, projectId, StringComparison.Ordinal)) return;
+        await RefreshProjectFilesFromEventAsync(projectId, ct);
+        if (change.EntityKind == "image")
+        {
+            try { ProjectImageChanged?.Invoke(await Service.GetProjectImageAsync(change.EntityId, ct)); }
+            catch { /* A stale or removed image must not break the project change feed. */ }
+            if (Document?.File.ProjectId == projectId)
+            {
+                if (Document.File.TemplateKind == "scene_beats") await LoadProjectAssetsAsync(ct);
+                else await RefreshCurrentDocumentAsync(ct);
+            }
+            return;
+        }
+        if (Document?.File.Id == change.WorkbookId)
+            await RefreshCurrentDocumentAsync(ct);
+        else if (Document?.File.ProjectId == projectId && Document.File.TemplateKind == "scene_beats")
+            _ = LoadProjectAssetsAsync(ct);
+    }
+
+    private async Task RefreshProjectFilesFromEventAsync(string projectId, CancellationToken ct)
+    {
+        var files = await Service.ListProjectFilesAsync(projectId, ct);
+        Files.Clear(); foreach (var file in files) Files.Add(file);
+        ProjectFilesChanged?.Invoke();
+    }
+
+    private async Task RefreshCurrentDocumentAsync(CancellationToken ct)
+    {
+        if (Document is not { } current) return;
+        var document = await Service.OpenAsync(current.File.Id, ct);
+        var sceneItems = Sheets.SelectMany(sheet => sheet.Scenes).ToDictionary(item => item.Row.Id, StringComparer.Ordinal);
+        var assetItems = Sheets.SelectMany(sheet => sheet.Assets).ToDictionary(item => item.Row.Id, StringComparer.Ordinal);
+        var selectedSheetId = SelectedSheet?.Sheet.Id;
+        var refreshedSheets = new List<SheetItem>();
+        foreach (var source in document.Sheets)
+        {
+            var sheet = new SheetItem(source);
+            sheet.Scenes.Clear(); sheet.Assets.Clear();
+            foreach (var row in source.SceneRows)
+            {
+                if (sceneItems.TryGetValue(row.Id, out var existing))
+                {
+                    SceneRowChanging?.Invoke(existing.Row, row);
+                    existing.ApplyRemote(row);
+                    sheet.Scenes.Add(existing);
+                }
+                else sheet.Scenes.Add(new SceneRowItem(row));
+            }
+            foreach (var row in source.AssetRows)
+            {
+                if (assetItems.TryGetValue(row.Id, out var existing))
+                {
+                    existing.ApplyRemote(row);
+                    sheet.Assets.Add(existing);
+                }
+                else
+                {
+                    var item = MakeRow(row); sheet.Assets.Add(item);
+                }
+            }
+            refreshedSheets.Add(sheet);
+        }
+        ApplyingRemoteUpdate = true;
+        try
+        {
+            Document = document;
+            Sheets.Clear(); foreach (var sheet in refreshedSheets) Sheets.Add(sheet);
+            SelectedSheet = refreshedSheets.FirstOrDefault(sheet => sheet.Sheet.Id == selectedSheetId)
+                ?? refreshedSheets.FirstOrDefault(sheet => sheet.IsScene || sheet.IsAsset)
+                ?? refreshedSheets.FirstOrDefault();
+            SceneChanged();
+        }
+        finally { ApplyingRemoteUpdate = false; }
+    }
+
+    public Task RefreshOpenDocumentAsync() => RefreshCurrentDocumentAsync(CancellationToken.None);
+
+    public void StopLiveUpdates()
+    {
+        _liveUpdatesCts?.Cancel();
+        _liveUpdatesCts?.Dispose();
+        _liveUpdatesCts = null;
+        _liveUpdatesReady = null;
+        _liveUpdatesProjectId = null;
     }
 
     public ObservableCollection<AssetRowItem> ProjectAssets { get; } = [];
@@ -223,7 +483,6 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
                 {
                     var item = MakeRow(row);
                     assetRows.Add(item);
-                    if (item.Selected != null) _ = EnsureThumbnailAsync(item.Selected, ct);
                 }
             }
             ProjectAssets.Clear();
@@ -250,16 +509,67 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         if (created != null) SelectedSheet = created;
     }
 
+    public async Task AddSceneRowAsync()
+    {
+        var sheet = SelectedSheet;
+        if (Document == null || sheet == null || !sheet.IsScene) return;
+        var row = await Service.CreateSceneRowAsync(Document.File.Id, sheet.Sheet.Id);
+        sheet.Scenes.Add(new SceneRowItem(row));
+        SceneChanged();
+    }
+
+    public async Task AddAssetRowAsync()
+    {
+        var sheet = SelectedSheet;
+        if (Document == null || sheet == null || !sheet.IsAsset) return;
+        var row = await Service.CreateAssetRowAsync(Document.File.Id, sheet.Sheet.Id);
+        var item = MakeRow(row);
+        sheet.Assets.Add(item);
+        if (ProjectAssets.All(asset => asset.Row.Id != row.Id)) ProjectAssets.Add(item);
+        foreach (var scene in Sheets.SelectMany(candidate => candidate.Scenes))
+            scene.ResolveLinkedAssets(ProjectAssets);
+        SceneChanged();
+    }
+
+    public async Task DeleteSceneRowAsync(SceneRowItem item)
+    {
+        if (Document == null || !item.Row.CanEdit) return;
+        await Service.DeleteRowAsync(Document.File.Id, item.Row.Id, "scene-rows", item.Row.Version);
+        foreach (var sheet in Sheets) sheet.Scenes.Remove(item);
+        SceneChanged();
+    }
+
+    public async Task DeleteAssetRowAsync(AssetRowItem item)
+    {
+        if (Document == null || !item.Row.CanEdit) return;
+        await Service.DeleteRowAsync(Document.File.Id, item.Row.Id, "asset-rows", item.Row.Version);
+        foreach (var sheet in Sheets) sheet.Assets.Remove(item);
+        for (var index = ProjectAssets.Count - 1; index >= 0; index--)
+            if (ProjectAssets[index].Row.Id == item.Row.Id) ProjectAssets.RemoveAt(index);
+        foreach (var scene in Sheets.SelectMany(sheet => sheet.Scenes))
+            scene.ResolveLinkedAssets(ProjectAssets);
+        SceneChanged();
+    }
+
     public void OpenAssetFolder(AssetRowItem item)
     {
         if (SelectedProject == null) return;
         var shareRoot = ShareRoot ?? "\\\\192.168.1.153\\Assets";
-        var category = string.IsNullOrWhiteSpace(item.Row.Category) ? "角色" : item.Row.Category;
-        var name = string.IsNullOrWhiteSpace(item.Row.Name) ? "未命名" : item.Row.Name;
-        var folderPath = Path.Combine(shareRoot, "Project", SelectedProject.Name, category, name);
+        var relative = item.Row.AssetFolderPath;
+        if (string.IsNullOrWhiteSpace(relative))
+        {
+            var category = string.IsNullOrWhiteSpace(item.Row.Category) ? "角色" : item.Row.Category;
+            var name = string.IsNullOrWhiteSpace(item.Row.Name) ? "未命名" : item.Row.Name;
+            relative = Path.Combine(category, name);
+        }
+        var folderPath = Path.Combine(shareRoot, "Project", SelectedProject.Name, relative);
         try
         {
-            if (!Directory.Exists(folderPath)) Directory.CreateDirectory(folderPath);
+            if (!Directory.Exists(folderPath))
+            {
+                Error = "素材目录尚未创建。请先填写并保存资产类别和名称。";
+                return;
+            }
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
                 FileName = folderPath,
@@ -274,6 +584,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
     public void Back()
     {
         if (ConfirmLeaving?.Invoke() == false) return;
+        StopLiveUpdates();
         Document = null; SelectedSheet = null; Sheets.Clear();
     }
     public async Task<ImageItem> MakeImageAsync(ImageAsset image)
@@ -337,9 +648,52 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         if (ids.Count > 100) throw new InvalidDataException("每行最多保留 100 张备选图片。");
         var sheet = SelectedSheet;
         var updated = await Service.UpdateImagesAsync(Document.File.Id, item.Row.Id,
-            new UpdateImagesRequest(item.Row.Version, selectedId, ids, reason));
+            new UpdateImagesRequest(item.Row.FieldVersions.GetValueOrDefault("image_selection", 1), selectedId, ids, reason));
         // Replace only after server success. A conflict never mutates local references and never retries.
         var index = sheet.Assets.IndexOf(item);
         if (index >= 0) sheet.Assets[index] = MakeRow(updated);
+    }
+    public async Task UpdateStoryContentAsync(SceneRowItem item)
+    {
+        if (Document == null) return;
+        if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行的权限。");
+        if (item.IsSaving || string.Equals(item.StoryContentDraft, item.Row.StoryContent, StringComparison.Ordinal)) return;
+        var fileId = Document.File.Id;
+        var current = item.Row;
+        item.IsSaving = true;
+        try
+        {
+            item.Row = await Service.UpdateStoryContentAsync(fileId, current.Id,
+                new UpdateStoryContentRequest(item.StoryExpectedVersion, item.StoryContentDraft));
+            SceneChanged();
+        }
+        finally { item.IsSaving = false; }
+    }
+    public async Task UpdateAssetFieldsAsync(AssetRowItem item)
+    {
+        if (Document == null) return;
+        if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行的权限。");
+        if (item.IsSaving || (string.Equals(item.CategoryDraft, item.Row.Category, StringComparison.Ordinal)
+            && string.Equals(item.NameDraft, item.Row.Name, StringComparison.Ordinal))) return;
+        var fileId = Document.File.Id;
+        item.IsSaving = true;
+        try
+        {
+            var updated = await Service.UpdateAssetRowAsync(fileId, item.Row.Id,
+                new UpdateAssetRowRequest(item.ExpectedIdentityVersion, item.CategoryDraft, item.NameDraft));
+            item.UpdateFrom(updated);
+            var assetFile = Files.FirstOrDefault(file => file.TemplateKind == "asset_review");
+            if (assetFile?.Id == fileId)
+            {
+                foreach (var projectAsset in ProjectAssets.Where(asset => asset.Row.Id == updated.Id && !ReferenceEquals(asset, item)))
+                {
+                    projectAsset.UpdateFrom(updated);
+                }
+            }
+            foreach (var scene in Sheets.SelectMany(candidate => candidate.Scenes))
+                scene.ResolveLinkedAssets(ProjectAssets);
+            SceneChanged();
+        }
+        finally { item.IsSaving = false; }
     }
 }

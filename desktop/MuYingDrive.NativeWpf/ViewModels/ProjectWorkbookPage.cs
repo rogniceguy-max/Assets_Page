@@ -148,6 +148,7 @@ public sealed class ProjectWorkbookPage : IDisposable
 
     public void Dispose()
     {
+        ViewModel.StopLiveUpdates();
         // Disposing the client cancels anything still in flight for this account.
         _http.Dispose();
     }

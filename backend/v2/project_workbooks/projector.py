@@ -1,4 +1,4 @@
-"""Turns an .xlsx on the NAS into the document shape the workbook contract expects.
+"""Turns an imported XLSX into the document shape the workbook contract expects.
 
 The handoff package contains no spreadsheet code at all — by design: it declares the routes
 and the JSON shapes and leaves every question about real workbooks to the host. This is that
@@ -13,25 +13,25 @@ Three rules govern everything here, and all three come from the contract:
   blank, the scene and cast context we have no extractor for — the answer is null, not a guess.
   An unrecognised difficulty is left unmapped and reported rather than being coerced into the
   nearest colour.
-* **The text is the text.** Story content is copied byte for byte, newlines included. It is
-  read-only material; summarising or trimming it here would be a silent edit.
+* **The text is the text.** Reads preserve story content and newlines; edits happen only through
+  explicit row-write routes and are guarded by a persisted row version.
 
-Parsing is done per request, with no cross-request cache. These are live files a team edits
-over SMB, so any cache is a staleness liability, and the measured cost is small: the 31-sheet,
-209-beat master projects to about 0.27 MiB.
+This parser runs only at an XLSX import or legacy-migration boundary. SQLite remains the live
+store after conversion, so clients never read a shared XLSX file while editing.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import zipfile
 from base64 import urlsafe_b64encode
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Mapping
 
 # openpyxl pulls defusedxml in when it is installed; the deployment pins it. Imported here so
-# a developer machine without it still works on trusted local files, which is the only kind
-# this module reads — the read-only cut has no upload path.
+# a developer machine without it still works on trusted local files. Uploaded workbooks pass
+# through the host's archive and size validation before this projector reads them.
 try:  # pragma: no cover - environment dependent
     from defusedxml import defuse_stdlib
 
@@ -42,6 +42,7 @@ except ImportError:  # pragma: no cover - environment dependent
 import openpyxl  # noqa: E402  (must follow defuse_stdlib)
 
 from .projects_api import ApiFault  # noqa: E402
+from .xlsx_compat import NOTE_ALIASES, NOTE_LABELS  # noqa: E402
 
 MAX_FILE_BYTES = 64 * 1024 * 1024
 MAX_ZIP_ENTRIES = 2000
@@ -71,12 +72,6 @@ ASSET_ALIASES = {
     "形态": "variant",
     "版本": "variant",
 }
-# The six legacy note columns, in the order the contract expects them. Matched by name so a
-# workbook that reorders its columns still maps correctly.
-NOTE_LABELS = ["成员批注一", "成员批注二", "成员批注三", "成员批注四", "成员批注五", "成员批注六"]
-NOTE_ALIASES = {label: label for label in NOTE_LABELS}
-NOTE_ALIASES.update({f"成员批注{n}": NOTE_LABELS[n - 1] for n in range(1, 7)})
-
 LABEL_LEVELS = {"红", "黄", "绿"}
 
 _ZERO_WIDTH = "　"
@@ -101,12 +96,14 @@ def classify(path: Path) -> str:
         workbook.close()
 
 
-def project_document(path: Path, *, file_id: str, name: str, project_id: str, version: int = 1) -> dict[str, Any]:
+def project_document(path: Path, *, file_id: str, name: str, project_id: str, version: int = 1,
+                     row_version_resolver: Callable[[Mapping[str, str]], Mapping[str, int]] | None = None) -> dict[str, Any]:
     """Reads every sheet of ``path`` into a ``WorkbookDocument``."""
     workbook = _load(path)
     try:
         sheets: list[dict[str, Any]] = []
         notices: list[str] = []
+        row_fingerprints: dict[str, str] = {}
         recognised = 0
 
         for index, title in enumerate(workbook.sheetnames):
@@ -119,11 +116,11 @@ def project_document(path: Path, *, file_id: str, name: str, project_id: str, ve
 
             recognised += 1
             if classification.kind == "scene_beats":
-                sheets.append(_scene_sheet(sheet_id, title, worksheet, classification, notices))
+                sheets.append(_scene_sheet(sheet_id, title, worksheet, classification, notices, row_fingerprints))
             else:
                 sheets.append(_asset_sheet(sheet_id, title, worksheet, classification,
                                            project_dir=path.parent if path else None,
-                                           project_id=project_id))
+                                           project_id=project_id, row_fingerprints=row_fingerprints))
 
             # Any column the classifier did not claim is data the contract says must not vanish.
             # It cannot ride along on the recognised sheet — the client only renders generic
@@ -134,6 +131,13 @@ def project_document(path: Path, *, file_id: str, name: str, project_id: str, ve
                     _safe_id(f"{title}·未识别列"), f"{title}·未识别列", worksheet,
                     notices, only_columns=leftover))
                 notices.append(f"工作表「{title}」有 {len(leftover)} 列未识别，已单独列出。")
+
+        if row_version_resolver is not None:
+            row_versions = row_version_resolver(row_fingerprints)
+            for sheet in sheets:
+                for kind in ("scene_rows", "asset_rows"):
+                    for row in sheet[kind]:
+                        row["version"] = row_versions.get(row["id"], 1)
 
         return {
             "file": {
@@ -216,6 +220,15 @@ def _leftover_columns(worksheet, classification: Classification) -> list[int]:
             if header and column not in claimed]
 
 
+def row_fingerprint(row_id: str, row: Any, replacements: Mapping[int, Any] | None = None) -> str:
+    """Stable fingerprint for every cell value in one editable workbook row."""
+    replacements = replacements or {}
+    values = tuple(("s" if isinstance(replacements[index], str) else "n", replacements[index])
+                   if index in replacements else (cell.data_type, cell.value)
+                   for index, cell in enumerate(row))
+    return hashlib.sha256(repr((row_id, values)).encode("utf-8", "surrogatepass")).hexdigest()
+
+
 def _normalize(value: Any) -> str:
     if value is None:
         return ""
@@ -228,7 +241,8 @@ def _normalize(value: Any) -> str:
 # --------------------------------------------------------------------------------------------
 
 
-def _scene_sheet(sheet_id: str, title: str, worksheet, classification: Classification, notices: list[str]) -> dict:
+def _scene_sheet(sheet_id: str, title: str, worksheet, classification: Classification, notices: list[str],
+                 row_fingerprints: dict[str, str]) -> dict:
     rows = []
     for row_number, row in enumerate(worksheet.iter_rows(min_row=classification.header_row + 1), start=classification.header_row + 1):
         if row_number - classification.header_row > MAX_SHEET_ROWS:
@@ -236,6 +250,7 @@ def _scene_sheet(sheet_id: str, title: str, worksheet, classification: Classific
         if not any(cell.value not in (None, "") for cell in row):
             continue
         row_id = f"{sheet_id}#{row_number}"
+        row_fingerprints[row_id] = row_fingerprint(row_id, row)
         rows.append({
             "id": row_id,
             "version": 1,
@@ -269,8 +284,39 @@ def _encode_asset_id(project_id: str, rel_path: str) -> str:
     return urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
+def _asset_images(project_dir: Path | None, project_id: str, category: str | None,
+                  name: str | None, variant: str | None) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    candidates: list[dict[str, Any]] = []
+    if project_dir is None or not category or not name:
+        return None, candidates
+    asset_folder = (project_dir / category / name).resolve()
+    try:
+        asset_folder.relative_to(project_dir.resolve())
+    except ValueError:
+        return None, candidates
+    if not asset_folder.is_dir():
+        return None, candidates
+    for entry in sorted(asset_folder.iterdir(), key=lambda item: item.name):
+        if entry.is_file() and entry.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+            rel_path = f"{category}/{name}/{entry.name}"
+            candidates.append({
+                "id": _encode_asset_id(project_id, rel_path),
+                "name": entry.name,
+                "media_type": "image/png" if entry.suffix.lower() == ".png" else "image/jpeg",
+                "width": 0,
+                "height": 0,
+                "project_id": project_id,
+                "category": category,
+                "variant": variant,
+                "revision_label": None,
+            })
+    selected = next((image for image in candidates if name in image["name"]), candidates[0]) if candidates else None
+    return selected, candidates
+
+
 def _asset_sheet(sheet_id: str, title: str, worksheet, classification: Classification,
-                 project_dir: Path | None = None, project_id: str = "") -> dict:
+                 project_dir: Path | None = None, project_id: str = "",
+                 row_fingerprints: dict[str, str] | None = None) -> dict:
     rows = []
     for row_number, row in enumerate(worksheet.iter_rows(min_row=classification.header_row + 1), start=classification.header_row + 1):
         if not any(cell.value not in (None, "") for cell in row):
@@ -283,9 +329,18 @@ def _asset_sheet(sheet_id: str, title: str, worksheet, classification: Classific
         candidate_images = []
         selected_image = None
 
+        row_id = f"{sheet_id}#{row_number}"
+        if row_fingerprints is not None:
+            row_fingerprints[row_id] = row_fingerprint(row_id, row)
+
         if project_dir is not None and category and name:
-            asset_folder = project_dir / category / name
-            if asset_folder.is_dir():
+            asset_folder = (project_dir / category / name).resolve()
+            try:
+                asset_folder.relative_to(project_dir.resolve())
+                safe_asset_folder = True
+            except ValueError:
+                safe_asset_folder = False
+            if safe_asset_folder and asset_folder.is_dir():
                 for entry in sorted(asset_folder.iterdir(), key=lambda e: e.name):
                     if entry.is_file() and entry.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
                         rel_path = f"{category}/{name}/{entry.name}"
@@ -305,7 +360,7 @@ def _asset_sheet(sheet_id: str, title: str, worksheet, classification: Classific
                     selected_image = next((img for img in candidate_images if name in img["name"]), candidate_images[0])
 
         rows.append({
-            "id": f"{sheet_id}#{row_number}",
+            "id": row_id,
             "version": 1,
             "category": category,
             "name": name,

@@ -44,6 +44,14 @@ class ProjectProvisioner:
     def create_project(self, name: str) -> dict[str, Any]:
         return self._request({"operation": "create_project", "name": name})
 
+    def move_asset_folder(self, project_name: str, source_path: str, target_path: str) -> dict[str, Any]:
+        return self._request({"operation": "move_asset_folder", "project_name": project_name,
+                              "source_path": source_path, "target_path": target_path})
+
+    def archive_legacy_workbook(self, project_name: str, file_name: str, sha256: str) -> dict[str, Any]:
+        return self._request({"operation": "archive_legacy_workbook", "project_name": project_name,
+                              "file_name": file_name, "sha256": sha256})
+
     def add_sheet(self, project_name: str, file_name: str, sheet_name: str) -> dict[str, Any]:
         return self._request({
             "operation": "add_sheet",
@@ -113,10 +121,11 @@ class ProjectSpaceService:
     """The two project-space routes the client has today."""
 
     def __init__(self, root: Path | None, session: Any,
-                 provisioner: ProjectProvisioner | None = None):
+                 provisioner: ProjectProvisioner | None = None, catalog: Any = None):
         self._root = root
         self._session = session
         self._provisioner = provisioner or ProjectProvisioner(None)
+        self._catalog = catalog
 
     @property
     def configured(self) -> bool:
@@ -135,15 +144,16 @@ class ProjectSpaceService:
         return self._session(token)
 
     def list_projects(self, actor: Any) -> list[dict[str, str]]:
-        """Every directory in the project root, identified by inode.
-
-        The same scan the workbook route uses, imported rather than re-implemented: the two
-        must agree on what a project is, and a second copy is how they stop agreeing. The
-        inode is the id because it survives a rename, which is the thing users are invited
-        to do to a project.
-        """
+        """Every project directory, assigned a stable SQLite ID independent of its name."""
         if self._root is None:
             raise ApiError(503, "STORAGE_UNAVAILABLE", "项目目录暂不可用。")
+        if self._catalog is not None:
+            try:
+                return self._catalog.projects(actor)
+            except Exception as error:
+                if isinstance(error, ApiError):
+                    raise
+                raise ApiError(503, "STORAGE_UNAVAILABLE", "项目目录暂不可用。") from error
         try:
             directories = _project_directories(self._root)
         except Exception as error:
@@ -164,8 +174,14 @@ class ProjectSpaceService:
             status = 409 if error.code == "NAME_TAKEN" else 422 if error.code == "INVALID_NAME" else 500
             raise ApiError(status, error.code, str(error)) from error
 
-        # Read the id back from the directory rather than inventing one: the client joins
-        # on this value, so it has to be the same number a later listing will report.
+        if self._catalog is not None:
+            try:
+                return self._catalog.register_created_project(str(result.get("name") or name))
+            except Exception as error:
+                raise ApiError(503, "PROJECT_DATABASE_UNAVAILABLE",
+                    "项目文件夹已创建，但表格数据库暂不可用；刷新项目列表后可重试初始化。") from error
+
+        # Legacy fallback for hosts without the SQLite workbook catalog.
         after = self.list_projects(actor)
         created = next((item for item in after if item["name"] == result.get("name")), None)
         if created is None:

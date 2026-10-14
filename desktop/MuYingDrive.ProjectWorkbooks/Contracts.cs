@@ -5,12 +5,14 @@ namespace MuYingDrive.ProjectWorkbooks;
 public sealed record ProjectInfo(string Id, string Name);
 public sealed record ProjectFile(string Id, string Name, string TemplateKind, long Version)
 {
+    public long NameVersion { get; init; } = 1;
     public string? ProjectId { get; init; }
     public string? RevisionOf { get; init; }
     public string? RevisionLabel { get; init; }
 }
 public sealed record ImageAsset(string Id, string Name, string MediaType, int Width, int Height)
 {
+    public long Version { get; init; } = 1;
     public string? ProjectId { get; init; }
     public string? Category { get; init; }
     public string? Variant { get; init; }
@@ -21,6 +23,8 @@ public sealed record AssetRow(string Id, long Version, string? Category, string?
     ImageAsset? SelectedImage, List<ImageAsset> CandidateImages)
 {
     public string? Variant { get; init; }
+    public string? AssetFolderPath { get; init; }
+    public Dictionary<string, long> FieldVersions { get; init; } = [];
     public bool CanEdit { get; init; }
 }
 public sealed record LegacyNote(string Label, string? Text, string? SourceCell);
@@ -28,6 +32,7 @@ public sealed record SceneOrigin(string FileId, string RowId);
 public sealed record SceneRow(string Id, long Version, string? SceneNumber, string? BeatNumber,
     string? StoryContent, string? LabelLevel, string? BreakdownPlan)
 {
+    public Dictionary<string, long> FieldVersions { get; init; } = [];
     public List<LegacyNote> LegacyNotes { get; init; } = [];
     public string? SceneContext { get; init; }
     public string? CastContext { get; init; }
@@ -37,11 +42,19 @@ public sealed record SceneRow(string Id, long Version, string? SceneNumber, stri
 public sealed record GenericColumn(string Key, string Label);
 public sealed record GenericRow(string Id, Dictionary<string, string?> Cells);
 public sealed record WorkbookSheet(string Id, string Name, string Kind, List<AssetRow> AssetRows,
-    List<SceneRow> SceneRows, List<GenericColumn> Columns, List<GenericRow> GenericRows);
+    List<SceneRow> SceneRows, List<GenericColumn> Columns, List<GenericRow> GenericRows)
+{
+    public long NameVersion { get; init; } = 1;
+}
 public sealed record WorkbookDocument(ProjectFile File, List<WorkbookSheet> Sheets, string Fidelity, List<string> Notices);
 public sealed record UpdateImagesRequest(long ExpectedVersion, string? SelectedImageId, List<string> CandidateImageIds,
     string? SelectionReason = null);
-public sealed record UpdateSceneRequest(long ExpectedVersion, string? LabelLevel, string? BreakdownPlan);
+public sealed record UpdateSceneRequest(long ExpectedVersion, string? LabelLevel, string? BreakdownPlan)
+{
+    public Dictionary<string, long>? ExpectedVersions { get; init; }
+}
+public sealed record UpdateStoryContentRequest(long ExpectedVersion, string? StoryContent);
+public sealed record UpdateAssetRowRequest(long ExpectedVersion, string? Category, string? Name);
 public sealed record UpdateSceneOriginsRequest(long ExpectedVersion, List<SceneOrigin> Origins);
 public sealed record SelectionHistoryEntry(string Id, string? PreviousImageId, string? ImageId,
     string UserName, DateTimeOffset CreatedAt, string? Reason);
@@ -60,7 +73,9 @@ public sealed record ReviewVoteRequest(string ImageId, string? Verdict);
 public sealed record AddReviewCommentRequest(string? ImageId, string Text);
 public sealed record EditReviewCommentRequest(long ExpectedVersion, string Text);
 public sealed record ResolveCommentRequest(long ExpectedVersion, bool Resolved, string? ResolutionNote);
-public sealed record AddSheetResponse(bool Ok, string SheetName, string? FileName = null);
+public sealed record AddSheetResponse(bool Ok, string SheetName, string? FileName = null, string? Id = null);
+public sealed record ProjectChangeEvent(long Sequence, string ProjectId, string WorkbookId, string EntityKind,
+    string EntityId, List<string> ChangedFields, string? CreatedAt = null, string? EventKind = null);
 public sealed record LinkedAsset(string Category, string Name, string? Appearance, ImageAsset? Image);
 
 public interface IProjectWorkbookService
@@ -69,6 +84,7 @@ public interface IProjectWorkbookService
     string OperationScope { get; }
     Task<IReadOnlyList<ProjectInfo>> ListProjectsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<ProjectFile>> ListProjectFilesAsync(string projectId, CancellationToken ct = default);
+    IAsyncEnumerable<ProjectChangeEvent> SubscribeProjectEventsAsync(string projectId, long? afterSequence = null, CancellationToken ct = default);
     Task<ProjectFile> CreateInProjectAsync(string projectId, string templateKind, string operationId, CancellationToken ct = default);
     Task<ProjectFile> ImportRevisionAsync(string projectId, string fileName, Stream source, string operationId,
         string? revisionOf = null, CancellationToken ct = default);
@@ -77,9 +93,18 @@ public interface IProjectWorkbookService
     Task ExportCurrentAsync(string fileId, long expectedVersion, string destination, CancellationToken ct = default);
     Task<ImageSearchPage> SearchImagesAsync(string projectId, string? q = null, string? category = null,
         string? cursor = null, int pageSize = 40, CancellationToken ct = default);
+    Task<ImageAsset> GetProjectImageAsync(string imageId, CancellationToken ct = default);
     Task<ImageAsset> UploadProjectImageAsync(string projectId, string fileName, string mediaType, Stream source, CancellationToken ct = default);
+    Task<ImageAsset> RenameImageAsync(string imageId, long expectedVersion, string displayName, CancellationToken ct = default);
     Task<AddSheetResponse> AddSheetAsync(string fileId, string sheetName, CancellationToken ct = default);
+    Task<ProjectFile> RenameWorkbookAsync(string fileId, long expectedNameVersion, string displayName, CancellationToken ct = default);
+    Task RenameSheetAsync(string fileId, string sheetId, long expectedNameVersion, string displayName, CancellationToken ct = default);
+    Task<SceneRow> CreateSceneRowAsync(string fileId, string sheetId, CancellationToken ct = default);
+    Task<AssetRow> CreateAssetRowAsync(string fileId, string sheetId, CancellationToken ct = default);
+    Task DeleteRowAsync(string fileId, string rowId, string rowKind, long expectedVersion, CancellationToken ct = default);
     Task<SceneRow> UpdateSceneAsync(string fileId, string rowId, UpdateSceneRequest request, CancellationToken ct = default);
+    Task<SceneRow> UpdateStoryContentAsync(string fileId, string rowId, UpdateStoryContentRequest request, CancellationToken ct = default);
+    Task<AssetRow> UpdateAssetRowAsync(string fileId, string rowId, UpdateAssetRowRequest request, CancellationToken ct = default);
     Task<SceneRow> UpdateSceneOriginsAsync(string fileId, string rowId, UpdateSceneOriginsRequest request, CancellationToken ct = default);
     Task<IReadOnlyList<SelectionHistoryEntry>> GetSelectionHistoryAsync(string fileId, string rowId, CancellationToken ct = default);
     Task<IReadOnlyList<ReviewSummary>> GetReviewSummariesForRowAsync(string fileId, string rowId, string rowKind, CancellationToken ct = default);

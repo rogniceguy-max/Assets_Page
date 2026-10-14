@@ -66,7 +66,9 @@ public sealed class SceneOriginsWindow : Window
             if (!current.Row.CanEdit) throw new System.IO.InvalidDataException("当前账号没有修改来源的权限。");
             if (selectedItems.Count > 100) throw new System.IO.InvalidDataException("最多关联 100 个来源。");
             if (selectedItems.Any(choice => choice.Origin.FileId == fileId)) throw new System.IO.InvalidDataException("来源必须来自其他修订，不能关联当前文件中的行。");
-            current.Row = await model.Service.UpdateSceneOriginsAsync(fileId, current.Row.Id, new UpdateSceneOriginsRequest(current.Row.Version, selectedItems.Select(c => c.Origin).ToList()));
+            current.Row = await model.Service.UpdateSceneOriginsAsync(fileId, current.Row.Id,
+                new UpdateSceneOriginsRequest(current.Row.FieldVersions.GetValueOrDefault("origins", current.Row.Version),
+                    selectedItems.Select(c => c.Origin).ToList()));
             savedOrigins = current.Row.Origins.ToHashSet();
             status.Text = "已保存。";
         })));

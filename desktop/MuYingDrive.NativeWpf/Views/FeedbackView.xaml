@@ -9,66 +9,118 @@
    <BooleanToVisibilityConverter x:Key="Visible" />
   </ResourceDictionary>
  </UserControl.Resources>
- <Grid Margin="24,20">
-  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-  <Grid>
-   <TextBlock Text="反馈" FontSize="{StaticResource Typography.FontSize.PageTitle}" FontWeight="SemiBold" VerticalAlignment="Center"/>
-   <Button HorizontalAlignment="Right" Style="{StaticResource Button.Primary}" Click="NewFeedback_Click" AutomationProperties.Name="新建反馈">
-    <StackPanel Orientation="Horizontal"><controls:LucideIcon Icon="Plus" Width="16" Height="16" Stroke="{DynamicResource Brush.Text.OnAccent}"/><TextBlock Text="新建反馈" Foreground="{DynamicResource Brush.Text.OnAccent}" Margin="8,0,0,0"/></StackPanel>
-   </Button>
-  </Grid>
-  <StackPanel Grid.Row="1" Margin="0,12,0,8">
-   <TextBlock Text="正在加载……" Foreground="{DynamicResource Brush.Text.Secondary}" Visibility="{Binding IsBusy, Converter={StaticResource Visible}}" AutomationProperties.LiveSetting="Polite"/>
-   <TextBlock Text="{Binding Message}" TextWrapping="Wrap" Foreground="{DynamicResource Brush.Text.Secondary}" AutomationProperties.LiveSetting="Polite"/>
-  </StackPanel>
-  <Grid Grid.Row="2">
-   <Grid.Style><Style TargetType="Grid"><Style.Triggers><DataTrigger Binding="{Binding IsDetail}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers></Style></Grid.Style>
-   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-   <Grid Margin="0,0,0,12">
-    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-    <TextBox Text="{Binding Query, UpdateSourceTrigger=PropertyChanged}" MaxLength="100" Style="{StaticResource TextBox.Search}" AutomationProperties.Name="搜索问题或建议" ToolTip="搜索问题或建议">
+ <Grid Margin="24,19,24,20">
+  <Grid.RowDefinitions>
+   <RowDefinition Height="36"/>
+   <RowDefinition Height="Auto"/>
+   <RowDefinition Height="Auto"/>
+   <RowDefinition Height="*"/>
+   <RowDefinition Height="Auto"/>
+  </Grid.RowDefinitions>
+
+  <Grid Grid.Row="0" Margin="0,0,12,0">
+   <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+   <Grid>
+    <Grid.Style>
+     <Style TargetType="Grid">
+      <Style.Triggers><DataTrigger Binding="{Binding IsDetail}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>
+     </Style>
+    </Grid.Style>
+    <TextBox Text="{Binding Query, UpdateSourceTrigger=PropertyChanged}" MaxLength="100" Style="{StaticResource TextBox.Base}"
+             Padding="11,0" Height="36" VerticalContentAlignment="Center" AutomationProperties.Name="搜索问题或建议" ToolTip="搜索问题或建议">
      <TextBox.InputBindings><KeyBinding Key="Enter" Command="{Binding SearchCommand}"/></TextBox.InputBindings>
     </TextBox>
     <TextBlock Text="搜索问题或建议……" IsHitTestVisible="False" Margin="12,0" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}">
-     <TextBlock.Style><Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Query}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+     <TextBlock.Style>
+      <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+       <Setter Property="Visibility" Value="Collapsed"/>
+       <Style.Triggers><DataTrigger Binding="{Binding Query}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers>
+      </Style>
+     </TextBlock.Style>
     </TextBlock>
-    <Button Grid.Column="1" Content="搜索" Command="{Binding SearchCommand}" Margin="8,0,0,0"/>
-    <Button Grid.Column="2" Command="{Binding RefreshCommand}" Margin="8,0,0,0" ToolTip="刷新反馈" AutomationProperties.Name="刷新反馈"><controls:LucideIcon Icon="RefreshCw" Width="16" Height="16" Stroke="{DynamicResource Brush.Text.Secondary}"/></Button>
    </Grid>
-   <WrapPanel Grid.Row="1" Margin="0,0,0,8">
-    <Button Content="全部" Command="{Binding FilterCommand}" CommandParameter="all" Style="{StaticResource Button.Compact}" Margin="0,0,8,4"/>
-    <Button Content="问题反馈" Command="{Binding FilterCommand}" CommandParameter="problem" Style="{StaticResource Button.Compact}" Margin="0,0,8,4"/>
-    <Button Content="功能建议" Command="{Binding FilterCommand}" CommandParameter="suggestion" Style="{StaticResource Button.Compact}" Margin="0,0,8,4"/>
-   </WrapPanel>
-   <StackPanel Grid.Row="2">
-    <WrapPanel Visibility="{Binding CanManage, Converter={StaticResource Visible}}" Margin="0,0,0,8">
+   <Button Grid.Column="1" Margin="16,0,0,0" Padding="11,0" Height="36" Style="{StaticResource Button.Primary}"
+           Click="NewFeedback_Click" AutomationProperties.Name="新建反馈">
+    <StackPanel Orientation="Horizontal">
+     <controls:LucideIcon Icon="Plus" Width="16" Height="16" Stroke="{DynamicResource Brush.Text.OnAccent}"/>
+     <TextBlock Text="新建反馈" Foreground="{DynamicResource Brush.Text.OnAccent}" Margin="8,0,0,0"/>
+    </StackPanel>
+   </Button>
+  </Grid>
+
+  <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,12,0,0">
+   <StackPanel.Style>
+    <Style TargetType="StackPanel">
+     <Style.Triggers><DataTrigger Binding="{Binding IsDetail}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>
+    </Style>
+   </StackPanel.Style>
+   <Button Content="全部" Width="72" Height="32" Padding="0" Command="{Binding FilterCommand}" CommandParameter="all" Style="{StaticResource Button.Compact}" Margin="0,0,8,0"/>
+   <Button Content="问题反馈" Width="88" Height="32" Padding="0" Command="{Binding FilterCommand}" CommandParameter="problem" Style="{StaticResource Button.Compact}" Margin="0,0,8,0"/>
+   <Button Content="功能建议" Width="88" Height="32" Padding="0" Command="{Binding FilterCommand}" CommandParameter="suggestion" Style="{StaticResource Button.Compact}"/>
+  </StackPanel>
+
+  <StackPanel Grid.Row="2">
+   <TextBlock Text="正在加载……" Foreground="{DynamicResource Brush.Text.Secondary}"
+              Visibility="{Binding IsBusy, Converter={StaticResource Visible}}" Margin="0,8,0,0" AutomationProperties.LiveSetting="Polite"/>
+   <TextBlock Text="{Binding Message}" TextWrapping="Wrap" Foreground="{DynamicResource Brush.Text.Secondary}"
+              Margin="0,8,0,0" AutomationProperties.LiveSetting="Polite">
+    <TextBlock.Style>
+     <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+      <Style.Triggers><DataTrigger Binding="{Binding Message}" Value=""><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>
+     </Style>
+    </TextBlock.Style>
+   </TextBlock>
+   <StackPanel>
+    <StackPanel.Style>
+     <Style TargetType="StackPanel">
+      <Setter Property="Visibility" Value="Collapsed"/>
+      <Style.Triggers><DataTrigger Binding="{Binding CanManage}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger>
+       <DataTrigger Binding="{Binding IsDetail}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>
+     </Style>
+    </StackPanel.Style>
+    <WrapPanel Margin="0,8,0,0">
      <Button Content="公开" Command="{Binding ScopeCommand}" CommandParameter="public" Style="{StaticResource Button.Compact}" Margin="0,0,8,0"/>
      <Button Content="待审核" Command="{Binding ScopeCommand}" CommandParameter="pending" Style="{StaticResource Button.Compact}" Margin="0,0,8,0"/>
      <Button Content="已隐藏" Command="{Binding ScopeCommand}" CommandParameter="hidden" Style="{StaticResource Button.Compact}"/>
     </WrapPanel>
-    <TextBlock Text="{Binding FilterLabel}" Foreground="{DynamicResource Brush.Text.Secondary}" Margin="0,0,0,8"/>
+    <TextBlock Text="{Binding FilterLabel}" Foreground="{DynamicResource Brush.Text.Secondary}" Margin="0,8,0,0"/>
    </StackPanel>
-   <Grid Grid.Row="3">
-    <ListBox ItemsSource="{Binding Items}" Style="{StaticResource ListBox.Base}" AutomationProperties.Name="公开匿名反馈列表">
-     <ListBox.ItemTemplate><DataTemplate>
-      <Button Command="{Binding DataContext.OpenCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" Style="{StaticResource Feedback.Row}">
-       <Grid>
-        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-        <StackPanel><TextBlock Text="{Binding Title}" FontWeight="Medium" TextWrapping="Wrap"/><TextBlock Text="{Binding Summary}" Foreground="{DynamicResource Brush.Text.Secondary}" FontSize="{StaticResource Typography.FontSize.Caption}" Margin="0,6,12,0"/></StackPanel>
-        <TextBlock Grid.Column="1" Text="{Binding StatusLabel}" Foreground="{DynamicResource Brush.Text.Secondary}" Margin="12,0,0,0" VerticalAlignment="Center"/>
-       </Grid>
-      </Button>
-     </DataTemplate></ListBox.ItemTemplate>
-    </ListBox>
-    <TextBlock Text="暂无符合条件的反馈。可以提交一个问题或功能建议。" TextWrapping="Wrap" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}" Visibility="{Binding IsEmpty, Converter={StaticResource Visible}}"/>
-   </Grid>
-   <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
-    <Button Content="上一页" Command="{Binding PageCommand}" CommandParameter="previous" Style="{StaticResource Button.Compact}"/>
-    <TextBlock Text="{Binding PageLabel}" VerticalAlignment="Center" Margin="12,0"/>
-    <Button Content="下一页" Command="{Binding PageCommand}" CommandParameter="next" Style="{StaticResource Button.Compact}"/>
-   </StackPanel>
+  </StackPanel>
+
+  <Grid Grid.Row="3">
+   <Grid.Style>
+    <Style TargetType="Grid">
+     <Style.Triggers><DataTrigger Binding="{Binding IsDetail}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>
+    </Style>
+   </Grid.Style>
+   <ListBox ItemsSource="{Binding Items}" Style="{StaticResource ListBox.Base}" AutomationProperties.Name="公开匿名反馈列表">
+    <ListBox.ItemTemplate><DataTemplate>
+     <Button Command="{Binding DataContext.OpenCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" Style="{StaticResource Feedback.Row}">
+      <Grid>
+       <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+       <StackPanel>
+        <TextBlock Text="{Binding Title}" FontWeight="Medium" TextWrapping="Wrap"/>
+        <TextBlock Text="{Binding Summary}" Foreground="{DynamicResource Brush.Text.Secondary}" FontSize="{StaticResource Typography.FontSize.Caption}" Margin="0,6,12,0"/>
+       </StackPanel>
+       <TextBlock Grid.Column="1" Text="{Binding StatusLabel}" Foreground="{DynamicResource Brush.Text.Secondary}" Margin="12,0,0,0" VerticalAlignment="Center"/>
+      </Grid>
+     </Button>
+    </DataTemplate></ListBox.ItemTemplate>
+   </ListBox>
   </Grid>
-  <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Visibility="{Binding IsDetail, Converter={StaticResource Visible}}">
+
+  <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,12">
+   <StackPanel.Style>
+    <Style TargetType="StackPanel">
+     <Style.Triggers><DataTrigger Binding="{Binding IsDetail}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>
+    </Style>
+   </StackPanel.Style>
+   <Button Content="上一页" Width="72" Height="32" Command="{Binding PageCommand}" CommandParameter="previous" Style="{StaticResource Button.Compact}"/>
+   <TextBlock Text="{Binding PageLabel}" VerticalAlignment="Center" Margin="12,0,15,0"/>
+   <Button Content="下一页" Width="72" Height="32" Command="{Binding PageCommand}" CommandParameter="next" Style="{StaticResource Button.Compact}"/>
+  </StackPanel>
+
+  <ScrollViewer Grid.Row="2" Grid.RowSpan="3" VerticalScrollBarVisibility="Auto" Visibility="{Binding IsDetail, Converter={StaticResource Visible}}">
    <StackPanel>
     <Button Content="返回列表" Command="{Binding BackCommand}" HorizontalAlignment="Left" Style="{StaticResource Button.Ghost}" Margin="0,0,0,12"/>
     <TextBlock Text="{Binding Detail.Title}" TextWrapping="Wrap" FontSize="{StaticResource Typography.FontSize.PageTitle}" FontWeight="SemiBold"/>
@@ -89,5 +141,25 @@
     </StackPanel>
    </StackPanel>
   </ScrollViewer>
+
+  <Grid Grid.RowSpan="5" IsHitTestVisible="False">
+   <Grid.Style>
+    <Style TargetType="Grid">
+     <Setter Property="Visibility" Value="Collapsed"/>
+     <Style.Triggers>
+      <MultiDataTrigger>
+       <MultiDataTrigger.Conditions>
+        <Condition Binding="{Binding IsEmpty}" Value="True"/>
+        <Condition Binding="{Binding IsDetail}" Value="False"/>
+       </MultiDataTrigger.Conditions>
+       <Setter Property="Visibility" Value="Visible"/>
+      </MultiDataTrigger>
+     </Style.Triggers>
+    </Style>
+   </Grid.Style>
+   <TextBlock Text="暂无符合条件的反馈。可以提交一个问题或功能建议。" TextWrapping="Wrap"
+              HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"
+              Foreground="{DynamicResource Brush.Text.Secondary}" Margin="0,4,0,0"/>
+  </Grid>
  </Grid>
 </UserControl>

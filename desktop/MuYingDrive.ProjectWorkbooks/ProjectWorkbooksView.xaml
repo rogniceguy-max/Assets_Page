@@ -39,11 +39,50 @@
   </Style>
   <Style TargetType="Button" BasedOn="{StaticResource Button.Secondary}"/>
   <Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/></Style>
+  <Style x:Key="TextBox.WorkbookSelectable" TargetType="TextBox" BasedOn="{StaticResource TextBox.Base}">
+   <Setter Property="MinHeight" Value="0"/><Setter Property="Padding" Value="0"/>
+   <Setter Property="Background" Value="Transparent"/><Setter Property="BorderBrush" Value="Transparent"/>
+   <Setter Property="BorderThickness" Value="0"/><Setter Property="IsReadOnly" Value="True"/>
+   <Setter Property="IsReadOnlyCaretVisible" Value="False"/><Setter Property="IsTabStop" Value="False"/>
+   <Setter Property="FocusVisualStyle" Value="{x:Null}"/><Setter Property="TextWrapping" Value="Wrap"/>
+   <Setter Property="AcceptsReturn" Value="True"/><Setter Property="SelectionBrush" Value="{DynamicResource Brush.Accent.Primary}"/>
+   <Setter Property="SelectionOpacity" Value="0.28"/>
+   <Setter Property="Template"><Setter.Value>
+    <ControlTemplate TargetType="TextBox">
+     <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"
+                   HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden" SnapsToDevicePixels="True"/>
+    </ControlTemplate>
+   </Setter.Value></Setter>
+  </Style>
+  <Style x:Key="TextBox.WorkbookInlineEditor" TargetType="TextBox" BasedOn="{StaticResource TextBox.WorkbookSelectable}">
+   <Setter Property="IsReadOnly" Value="False"/><Setter Property="IsTabStop" Value="True"/>
+   <Setter Property="BorderThickness" Value="1"/><Setter Property="Padding" Value="4,2"/>
+   <Setter Property="Template"><Setter.Value>
+    <ControlTemplate TargetType="TextBox">
+     <Border x:Name="Chrome" Background="Transparent" BorderBrush="Transparent"
+             BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="3">
+      <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"
+                    HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden" SnapsToDevicePixels="True"/>
+     </Border>
+     <ControlTemplate.Triggers>
+      <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Brush.Border.Subtle}"/></Trigger>
+      <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Brush.Accent.Primary}"/></Trigger>
+      <DataTrigger Binding="{Binding Row.CanEdit}" Value="False"><Setter Property="IsReadOnly" Value="True"/><Setter Property="IsTabStop" Value="False"/></DataTrigger>
+      <DataTrigger Binding="{Binding IsSaving}" Value="True"><Setter Property="IsReadOnly" Value="True"/></DataTrigger>
+     </ControlTemplate.Triggers>
+    </ControlTemplate>
+   </Setter.Value></Setter>
+  </Style>
   <Style x:Key="Cell" TargetType="Border"><Setter Property="Padding" Value="10"/>
    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Subtle}"/><Setter Property="BorderThickness" Value="0,0,1,0"/>
   </Style>
   <DataTemplate x:Key="SceneRowTemplate">
-   <Border Loaded="OnRowLoaded" MouseLeftButtonUp="OnSceneRowClick" KeyDown="OnSceneRowKeyDown" Focusable="True" ToolTip="查看批注" AutomationProperties.Name="节拍行，按回车查看批注" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" Margin="0,0,0,8" Background="{DynamicResource Brush.Surface.Panel}">
+   <Border Loaded="OnRowLoaded" MouseLeftButtonUp="OnSceneRowClick" KeyDown="OnSceneRowKeyDown" ContextMenuOpening="OnRowContextMenuOpening" Focusable="True" ToolTip="查看批注" AutomationProperties.Name="节拍行，按回车查看批注" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" Margin="0,0,0,8" Background="{DynamicResource Brush.Surface.Panel}">
+    <Border.ContextMenu>
+     <ContextMenu>
+      <MenuItem Header="删除节拍行" IsEnabled="{Binding PlacementTarget.DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ContextMenu}}" Click="OnDeleteRow"/>
+     </ContextMenu>
+    </Border.ContextMenu>
     <StackPanel>
      <Border Padding="10" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="0,0,0,1">
       <Grid>
@@ -53,62 +92,110 @@
         <ColumnDefinition Width="2*"/>
         <ColumnDefinition Width="1*"/>
        </Grid.ColumnDefinitions>
-       <TextBlock Grid.Column="0" Margin="0,0,10,0"><Run Text="场景号  " Foreground="{DynamicResource Brush.Text.Secondary}"/><Run Text="{Binding Row.SceneNumber}"/></TextBlock>
-       <TextBlock Grid.Column="1" Margin="0,0,10,0"><Run Text="节拍号  " Foreground="{DynamicResource Brush.Text.Secondary}"/><Run Text="{Binding Row.BeatNumber}"/></TextBlock>
-       <TextBlock Grid.Column="2" Margin="0,0,10,0" TextTrimming="CharacterEllipsis"><Run Text="拆分规划  " Foreground="{DynamicResource Brush.Text.Secondary}"/><Run Text="{Binding Row.BreakdownPlan}"/></TextBlock>
-       <TextBlock Grid.Column="3"><Run Text="制作难度  " Foreground="{DynamicResource Brush.Text.Secondary}"/><Run Text="{Binding Row.LabelLevel}"/></TextBlock>
+       <Grid Grid.Column="0" Margin="0,0,10,0"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <TextBlock Text="场景号  " Foreground="{DynamicResource Brush.Text.Secondary}" VerticalAlignment="Center"/>
+        <TextBox Grid.Column="1" Text="{Binding Row.SceneNumber}" Style="{StaticResource TextBox.WorkbookSelectable}"/>
+       </Grid>
+       <Grid Grid.Column="1" Margin="0,0,10,0"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <TextBlock Text="节拍号  " Foreground="{DynamicResource Brush.Text.Secondary}" VerticalAlignment="Center"/>
+        <TextBox Grid.Column="1" Text="{Binding Row.BeatNumber}" Style="{StaticResource TextBox.WorkbookSelectable}"/>
+       </Grid>
+       <Grid Grid.Column="2" Margin="0,0,10,0"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <TextBlock Text="拆分规划  " Foreground="{DynamicResource Brush.Text.Secondary}" VerticalAlignment="Center"/>
+        <TextBox Grid.Column="1" Text="{Binding Row.BreakdownPlan}" Style="{StaticResource TextBox.WorkbookSelectable}" TextWrapping="NoWrap"/>
+       </Grid>
+       <Grid Grid.Column="3"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <TextBlock Text="制作难度  " Foreground="{DynamicResource Brush.Text.Secondary}" VerticalAlignment="Center"/>
+        <TextBox Grid.Column="1" Text="{Binding Row.LabelLevel}" Style="{StaticResource TextBox.WorkbookSelectable}"/>
+       </Grid>
       </Grid>
      </Border>
      <StackPanel Margin="10">
-      <TextBlock Text="故事内容" Style="{DynamicResource Typography.Caption}"/><TextBlock Text="{Binding Row.StoryContent}" TextWrapping="Wrap"/>
+      <TextBlock Text="故事内容" Style="{DynamicResource Typography.Caption}"/>
+      <TextBox Text="{Binding StoryContentDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+               Style="{StaticResource TextBox.WorkbookInlineEditor}" Tag="story-content"
+               LostFocus="OnInlineFieldLostFocus" PreviewKeyDown="OnInlineFieldKeyDown"
+               ToolTip="单击编辑；按 Ctrl+Enter 保存，按 Esc 取消；可拖选复制。"/>
      </StackPanel>
     </StackPanel>
    </Border>
   </DataTemplate>
   <DataTemplate x:Key="AssetRowTemplate">
-   <Border Loaded="OnRowLoaded" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" Margin="0,0,0,8" Background="{DynamicResource Brush.Surface.Panel}">
-    <local:ResponsiveColumnsPanel Weights="0.8,1,1,2,3" Breakpoint="760">
-     <Border Style="{StaticResource Cell}"><StackPanel><TextBlock Text="类别" Style="{DynamicResource Typography.Caption}"/><TextBlock Text="{Binding Row.Category}"/></StackPanel></Border>
-     <Border Style="{StaticResource Cell}"><StackPanel><TextBlock Text="名称 / 形态" Style="{DynamicResource Typography.Caption}"/><TextBlock Text="{Binding Row.Name}"/><TextBlock Text="{Binding Row.Variant}" Foreground="{DynamicResource Brush.Text.Secondary}"/><Button Click="OnGeneralReview" Margin="0,12,0,6" Padding="4"><TextBlock Text="{Binding GeneralSummaryText}" TextWrapping="Wrap"/></Button><Button Content="比较图片" Click="OnCompareRow"/><Button Content="选定历史" Click="OnSelectionHistory"/><Button Content="打开文件夹" Click="OnOpenAssetFolder" ToolTip="在文件管理器中打开此资产目录"/></StackPanel></Border>
-     <Border Style="{StaticResource Cell}"><StackPanel><TextBlock Text="出场" Style="{DynamicResource Typography.Caption}"/><TextBlock Text="{Binding Row.Appearance}"/></StackPanel></Border>
-     <Border Style="{StaticResource Cell}" AllowDrop="True" Tag="selected" DragOver="OnImageDragOver" Drop="OnImageDrop">
-      <StackPanel><TextBlock Text="选定" Style="{DynamicResource Typography.Caption}"/>
-       <Button Click="OnPreviewSelected" Padding="0" HorizontalAlignment="Stretch" ToolTip="查看大图">
-        <Grid Height="110"><TextBlock Text="拖入一张图片" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Selected}" Value="{x:Null}"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock><Image Source="{Binding Selected.Preview}" Stretch="Uniform"/></Grid>
-       </Button><TextBlock Text="{Binding Selected.Name}"/><TextBlock Text="{Binding Selected.Error}" Foreground="{DynamicResource Brush.Text.Secondary}"/>
-       <TextBlock Text="{Binding Selected.SummaryText}" FontSize="11" Margin="0,4,0,8" Foreground="{DynamicResource Brush.Text.Secondary}"/>
-       <WrapPanel IsEnabled="{Binding Row.CanEdit}"><Button Content="选择图片" Tag="selected" Click="OnPickImages"/><Button Content="清空" Click="OnClearSelected"/></WrapPanel>
+   <Border Loaded="OnRowLoaded" ContextMenuOpening="OnRowContextMenuOpening" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
+           CornerRadius="{StaticResource CornerRadius.Control}" MinHeight="164" Margin="0,0,0,8"
+           Background="{DynamicResource Brush.Surface.Panel}">
+    <Border.ContextMenu>
+     <ContextMenu>
+      <MenuItem Header="删除资产行" IsEnabled="{Binding PlacementTarget.DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ContextMenu}}" Click="OnDeleteRow"/>
+     </ContextMenu>
+    </Border.ContextMenu>
+    <local:ResponsiveColumnsPanel Weights="0.70,1.08,1.05,1.20,2.05,0.92" Breakpoint="760">
+     <Border Style="{StaticResource Cell}">
+      <StackPanel>
+       <TextBlock Text="类别" Style="{DynamicResource Typography.Caption}" TextAlignment="Center"/>
+       <TextBox Text="{Binding CategoryDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                Style="{StaticResource TextBox.WorkbookInlineEditor}" Tag="asset-category"
+                LostFocus="OnInlineFieldLostFocus" PreviewKeyDown="OnInlineFieldKeyDown" AcceptsReturn="False"
+                ToolTip="单击编辑；按 Enter 或点击其他位置保存；按 Esc 取消；可拖选复制。"/>
       </StackPanel>
      </Border>
-     <Border Style="{StaticResource Cell}" AllowDrop="True" Tag="candidates" DragOver="OnImageDragOver" Drop="OnImageDrop">
-      <StackPanel><TextBlock Text="备选" Style="{DynamicResource Typography.Caption}"/>
-       <ItemsControl ItemsSource="{Binding Candidates}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
-        <ItemsControl.ItemTemplate><DataTemplate>
-         <StackPanel Width="100" Margin="0,0,8,8">
-          <Button Click="OnPreviewCandidate" Padding="0" ToolTip="查看大图"><Image Source="{Binding Preview}" Width="88" Height="72" Stretch="Uniform"/></Button>
-          <TextBlock Text="{Binding Name}" FontSize="11"/><TextBlock Text="{Binding Error}" FontSize="11"/>
-          <TextBlock Text="{Binding SummaryText}" FontSize="11" Margin="0,4,0,6" Foreground="{DynamicResource Brush.Text.Secondary}"/>
-          <Button Content="设为选定" Click="OnUseCandidate" FontSize="11" Padding="4" IsEnabled="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}}"/>
-          <Button Content="移除" Click="OnRemoveCandidate" FontSize="11" Padding="4" IsEnabled="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}}"/>
-         </StackPanel>
-        </DataTemplate></ItemsControl.ItemTemplate>
-       </ItemsControl>
-       <Button Content="添加备选" Tag="candidates" Click="OnPickImages" HorizontalAlignment="Left" IsEnabled="{Binding Row.CanEdit}"/>
+     <Border Style="{StaticResource Cell}">
+      <StackPanel>
+       <TextBlock Text="名称 / 形态" Style="{DynamicResource Typography.Caption}" TextAlignment="Center"/>
+       <TextBox Text="{Binding NameDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                Style="{StaticResource TextBox.WorkbookInlineEditor}" Tag="asset-name"
+                LostFocus="OnInlineFieldLostFocus" PreviewKeyDown="OnInlineFieldKeyDown" AcceptsReturn="False"
+                ToolTip="单击编辑；按 Enter 或点击其他位置保存；按 Esc 取消；可拖选复制。"/>
+       <TextBox Text="{Binding Row.Variant}" Style="{StaticResource TextBox.WorkbookSelectable}" Foreground="{DynamicResource Brush.Text.Secondary}"/>
       </StackPanel>
+     </Border>
+     <Border Style="{StaticResource Cell}">
+      <StackPanel>
+       <TextBlock Text="出场" Style="{DynamicResource Typography.Caption}" TextAlignment="Center"/>
+       <TextBox Text="{Binding Row.Appearance}" Style="{StaticResource TextBox.WorkbookSelectable}"/>
+      </StackPanel>
+     </Border>
+     <Border Style="{StaticResource Cell}">
+      <StackPanel>
+       <TextBlock Text="选定图片" Style="{DynamicResource Typography.Caption}" TextAlignment="Center"/>
+       <TextBlock Text="{Binding Selected.Name, TargetNullValue=未选择}" TextTrimming="CharacterEllipsis"
+                  ToolTip="{Binding Selected.Name}" Margin="0,2,0,8"/>
+       <Button Content="选择图片" Tag="selected" Click="OnPickImages" IsEnabled="{Binding Row.CanEdit}"/>
+       <Button Content="清除选定" Click="OnClearSelected" IsEnabled="{Binding Row.CanEdit}" Margin="0,6,0,0"/>
+      </StackPanel>
+     </Border>
+     <Border Style="{StaticResource Cell}">
+      <DockPanel>
+       <StackPanel DockPanel.Dock="Top">
+        <TextBlock Text="备选图片" Style="{DynamicResource Typography.Caption}" TextAlignment="Center"/>
+        <Button Content="添加备选" Tag="candidates" Click="OnPickImages" IsEnabled="{Binding Row.CanEdit}" Margin="0,0,0,6"/>
+       </StackPanel>
+       <ScrollViewer MaxHeight="136" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <ItemsControl ItemsSource="{Binding Candidates}">
+         <ItemsControl.ItemTemplate><DataTemplate>
+          <Grid Margin="0,2,0,2">
+           <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+           <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip="{Binding Name}"/>
+           <Button Grid.Column="1" Content="选定" Click="OnUseCandidate" Padding="5,2" MinWidth="44" Margin="4,0,0,0"
+                   IsEnabled="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}}"/>
+           <Button Grid.Column="2" Content="移除" Click="OnRemoveCandidate" Padding="5,2" MinWidth="44" Margin="4,0,0,0"
+                   IsEnabled="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}}"/>
+          </Grid>
+         </DataTemplate></ItemsControl.ItemTemplate>
+        </ItemsControl>
+       </ScrollViewer>
+      </DockPanel>
+     </Border>
+     <Border Style="{StaticResource Cell}" BorderThickness="0">
+      <TextBlock Text="评审" Style="{DynamicResource Typography.Caption}" TextAlignment="Center"/>
      </Border>
     </local:ResponsiveColumnsPanel>
    </Border>
   </DataTemplate>
  </UserControl.Resources>
- <Grid Margin="24,20,24,22">
-  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-  <Grid Grid.Row="0" Margin="0,0,0,16">
-   <TextBlock Text="{Binding Document.File.Name}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"
-              Visibility="{Binding IsOpen, Converter={StaticResource BoolVisibility}}"/>
-   <TextBlock Text="工作簿" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"
-              Visibility="{Binding IsHome, Converter={StaticResource BoolVisibility}}"/>
-  </Grid>
-  <StackPanel Grid.Row="1">
+ <Grid Margin="24,19,24,22">
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+  <StackPanel Grid.Row="0">
    <ProgressBar Height="3" IsIndeterminate="True" Margin="0,0,0,8" Visibility="Collapsed"
                 local:DelayedVisibility.IsBusy="{Binding Busy}"/>
    <TextBlock Text="{Binding Error}" Foreground="{DynamicResource Brush.Status.Danger}" Margin="0,0,0,8"
@@ -119,7 +206,7 @@
     <TextBlock Text="{Binding PendingText}"/><WrapPanel Margin="0,6,0,0"><Button Content="重试这次操作" Click="OnRetryPending"/><Button Content="取消待确认操作" Click="OnCancelPending"/></WrapPanel>
    </StackPanel>
   </StackPanel>
-  <Grid Grid.Row="2" IsEnabled="{Binding Ready}">
+  <Grid Grid.Row="1" IsEnabled="{Binding Ready}">
    <Grid Visibility="{Binding IsHome, Converter={StaticResource BoolVisibility}}" AllowDrop="True" DragOver="OnWorkbookDragOver" Drop="OnWorkbookDrop" Background="Transparent">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
     <!-- The gap below the button row: without it the first file card sat right against the
@@ -133,9 +220,14 @@
     <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
      <ItemsControl ItemsSource="{Binding Files}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
       <ItemsControl.ItemTemplate><DataTemplate>
-       <Button Click="OnOpenFile" Width="200" Height="130" Margin="0,0,12,12" HorizontalContentAlignment="Stretch">
-        <StackPanel><TextBlock Text="▦" FontSize="35" Foreground="{DynamicResource Brush.Accent.Primary}" Margin="0,0,0,12"/><TextBlock Text="{Binding Name}" TextWrapping="Wrap"/><TextBlock Text="XLSX 工作簿" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}"/></StackPanel>
-       </Button>
+       <Border Width="200" Height="130" Margin="0,0,12,12" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" CornerRadius="8">
+        <Grid>
+         <Button Click="OnOpenFile" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" Padding="12,10,12,8">
+          <StackPanel VerticalAlignment="Center"><TextBlock Text="▦" FontSize="31" Foreground="{DynamicResource Brush.Accent.Primary}" Margin="0,0,0,8"/><TextBlock Text="{Binding Name}" TextWrapping="Wrap"/><TextBlock Text="工作簿" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}"/></StackPanel>
+         </Button>
+         <Button Content="重命名" Click="OnRenameWorkbook" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,5,5,0" Padding="5,2" FontSize="11" ToolTip="只修改工作簿显示名称"/>
+        </Grid>
+       </Border>
       </DataTemplate></ItemsControl.ItemTemplate>
      </ItemsControl>
     </ScrollViewer>
@@ -144,18 +236,38 @@
     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <StackPanel>
-     <WrapPanel Margin="0,0,0,12"><ComboBox ItemsSource="{Binding Sheets}" SelectedItem="{Binding SelectedSheet}" MinWidth="140" MaxWidth="280" Margin="0,0,12,0">
+      <WrapPanel Margin="0,0,0,16"><ComboBox ItemsSource="{Binding Sheets}" SelectedItem="{Binding SelectedSheet}" MinWidth="140" MaxWidth="280" Margin="0,0,12,0">
        <ComboBox.ItemTemplate>
         <DataTemplate>
          <TextBlock Text="{Binding Name}"/>
         </DataTemplate>
        </ComboBox.ItemTemplate>
       </ComboBox>
-      <Button Content="+ 新增集数" Click="OnAddEpisode" Margin="0,0,12,0" Padding="8,4"
+      <Button Content="+ 新增节拍" Click="OnAddSceneRow" Margin="0,0,8,0" Padding="8,4"
+              Visibility="{Binding SelectedSheet.IsScene, Converter={StaticResource BoolVisibility}}"
+              ToolTip="在当前工作表新增一条节拍"/>
+      <Button Content="+ 新增资产" Click="OnAddAssetRow" Margin="0,0,8,0" Padding="8,4"
+              Visibility="{Binding SelectedSheet.IsAsset, Converter={StaticResource BoolVisibility}}"
+              ToolTip="在当前工作表新增一条资产"/>
+      <Button Content="+ 新增集数" Click="OnAddEpisode" Margin="0,0,8,0" Padding="8,4"
               Visibility="{Binding SelectedSheet.IsScene, Converter={StaticResource BoolVisibility}}"
               ToolTip="为当前节拍表新增一集"/>
+      <Button Content="重命名工作表" Click="OnRenameSheet" Margin="0,0,12,0" Padding="8,4"
+              ToolTip="只修改工作表显示名称"/>
       <TextBox Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}" Width="200" Padding="6" ToolTip="搜索节拍正文、场景、编号或规划" Background="{DynamicResource Brush.Surface.Panel}" Foreground="{DynamicResource Brush.Text.Primary}"/>
-      <ComboBox ItemsSource="{Binding LevelFilters}" SelectedItem="{Binding LevelFilter}" MinWidth="100" Margin="12,0,0,0" ToolTip="制作难度筛选"/>
+      <ComboBox ItemsSource="{Binding LevelFilters}" SelectedItem="{Binding LevelFilter}" Width="150" Margin="12,0,0,0" ToolTip="制作难度筛选"
+                Visibility="{Binding SelectedSheet.IsScene, Converter={StaticResource BoolVisibility}}">
+       <ComboBox.ItemTemplate>
+        <DataTemplate>
+         <TextBlock x:Name="LevelFilterLabel" Text="{Binding}"/>
+         <DataTemplate.Triggers>
+          <DataTrigger Binding="{Binding}" Value="全部等级">
+           <Setter TargetName="LevelFilterLabel" Property="Text" Value="制作难度"/>
+          </DataTrigger>
+         </DataTemplate.Triggers>
+        </DataTemplate>
+       </ComboBox.ItemTemplate>
+      </ComboBox>
      </WrapPanel>
     </StackPanel>
     <ScrollViewer x:Name="WorkbookScroll" Grid.Row="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" ScrollChanged="OnWorkbookScroll">
@@ -164,7 +276,7 @@
       <ItemsControl ItemsSource="{Binding DataContext.VisibleScenes, RelativeSource={RelativeSource AncestorType=UserControl}}" ItemTemplate="{StaticResource SceneRowTemplate}" Visibility="{Binding IsScene, Converter={StaticResource BoolVisibility}}"/>
       <ItemsControl ItemsSource="{Binding GenericRows}" Visibility="{Binding IsGeneric, Converter={StaticResource BoolVisibility}}">
        <ItemsControl.ItemTemplate><DataTemplate><Border BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" Padding="12" Margin="0,0,0,8">
-        <ItemsControl ItemsSource="{Binding Cells}"><ItemsControl.ItemTemplate><DataTemplate><StackPanel Margin="0,0,0,12"><TextBlock Text="{Binding Label}" Style="{DynamicResource Typography.Caption}"/><TextBlock Text="{Binding Value}"/></StackPanel></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+        <ItemsControl ItemsSource="{Binding Cells}"><ItemsControl.ItemTemplate><DataTemplate><StackPanel Margin="0,0,0,12"><TextBox Text="{Binding Label}" Style="{StaticResource TextBox.WorkbookSelectable}"/><TextBox Text="{Binding Value}" Style="{StaticResource TextBox.WorkbookSelectable}"/></StackPanel></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
        </Border></DataTemplate></ItemsControl.ItemTemplate>
       </ItemsControl>
      </StackPanel>

@@ -20,12 +20,11 @@ namespace MuYingDrive.NativeWpf.ViewModels;
 public sealed class WorkspaceViewModel : ObservableObject
 {
     /// <summary>
-    /// The navigation entries that are the file browser pointed somewhere else rather than
-    /// pages of their own. Selecting one has to move the browser, not just swap the content:
-    /// setting the content alone would leave the previous scope's listing on screen under
+    /// Navigation entries in the workspace's space section. Selecting one has to activate its
+    /// scope or gallery as well as swap the content, or the previous view would remain under
     /// the new title.
     /// </summary>
-    private static readonly HashSet<string> BrowserKeys = new(StringComparer.Ordinal)
+    private static readonly HashSet<string> SpaceKeys = new(StringComparer.Ordinal)
     {
         "图片", "视频", "个人空间"
     };
@@ -87,7 +86,7 @@ public sealed class WorkspaceViewModel : ObservableObject
         MarkSelected();
         // The browser entries have to actually be activated, or the workspace opens showing
         // a browser that has never been pointed anywhere.
-        if (first is not null && BrowserKeys.Contains(first.Key)) _ = _selectSpaceAsync(first.Key);
+        if (first is not null && SpaceKeys.Contains(first.Key)) _ = _selectSpaceAsync(first.Key);
     }
 
     /// <summary>Activating a row in the 项目 tree.</summary>
@@ -235,6 +234,7 @@ public sealed class WorkspaceViewModel : ObservableObject
         CurrentContent = browser;
         MarkSelected();
         OnPropertyChanged(nameof(PageTitle));
+        _onPageActivated?.Invoke("browser");
     }
 
     /// <summary>Shows a page that exists without a sidebar entry of its own.</summary>
@@ -257,7 +257,6 @@ public sealed class WorkspaceViewModel : ObservableObject
         MainViewModel main, DriveSession session, NasClientSettings settings)
     {
         var transfers = new TransferViewModel(session.User.Id);
-        var files = new FilesViewModel(session, settings, transfers);
         var feedback = new FeedbackViewModel(session, settings);
 
         // Built per sign-in and disposed with the workspace: the workbook library scopes its
@@ -268,11 +267,11 @@ public sealed class WorkspaceViewModel : ObservableObject
         var projectWorkbooks = main.ApiClient is { } api
             ? new ProjectWorkbookPage(api, session.SessionToken, session.User.Id)
             : null;
+        var projectImages = projectWorkbooks is null ? null : new ProjectImagesViewModel(projectWorkbooks);
+        var files = new FilesViewModel(session, settings, transfers);
 
-        // The sidebar. 图片, 视频 and 个人空间 are the same file browser pointed at three
-        // different scopes; 传输 and 反馈 are pages of their own. The department spaces this
-        // replaces are still reachable at the SMB and ACL layer — only the entries are gone,
-        // which is what makes this reversible.
+        // 图片 is a gallery of images linked from asset-table rows. 视频 and 个人空间 remain
+        // file-browser scopes; 传输 and 反馈 are separate pages.
         var chrome = new WorkspaceChrome(
             [
                 new WorkspaceNavItem("图片", "图片", "Image"),
@@ -291,8 +290,7 @@ public sealed class WorkspaceViewModel : ObservableObject
 
         var pages = new Dictionary<string, object>(StringComparer.Ordinal)
         {
-            // One instance under three keys: they differ by scope, not by page.
-            ["图片"] = files,
+            ["图片"] = (object?)projectImages ?? files,
             ["视频"] = files,
             ["个人空间"] = files,
             ["传输"] = transfers,
@@ -304,18 +302,37 @@ public sealed class WorkspaceViewModel : ObservableObject
 
         var workspace = new WorkspaceViewModel(
             main, chrome, pages,
-            key => { files.ActivateNavigation(key); return Task.CompletedTask; },
+            key =>
+            {
+                if (projectImages is null || key != "图片") files.ActivateNavigation(key);
+                return Task.CompletedTask;
+            },
             () => main.SignOutAsync(session),
             transfers, feedback,
             disposeExtra: projectWorkbooks is null
                 ? null
-                : () => { projectWorkbooks.Dispose(); return ValueTask.CompletedTask; },
-            onPageActivated: key => { if (key == "反馈") _ = feedback.EnsureLoadedAsync(); });
+                : () =>
+                {
+                    projectImages?.Dispose();
+                    projectWorkbooks.Dispose();
+                    return ValueTask.CompletedTask;
+                },
+            onPageActivated: key =>
+            {
+                if (key == "反馈") _ = feedback.EnsureLoadedAsync();
+                if (key == "图片") projectImages?.ShowAllProjects();
+                else projectImages?.Deactivate();
+            });
 
         workspace._projectWorkbooksPage = projectWorkbooks;
+        projectImages?.ShowAllProjects();
         if (projectWorkbooks is not null)
         {
-            projectWorkbooks.ProjectFilesChanged = () => _ = workspace.LoadProjectsAsync();
+            projectWorkbooks.ProjectFilesChanged = () =>
+            {
+                _ = workspace.LoadProjectsAsync();
+                if (projectImages is { IsLoaded: true, IsActive: true }) _ = projectImages.LoadAsync();
+            };
         }
 
         workspace.ProjectNodeActivator = node =>
@@ -336,12 +353,16 @@ public sealed class WorkspaceViewModel : ObservableObject
                     _ = workspace.LoadProjectsAsync();
                     break;
                 case ProjectNodeKind.MediaGroup:
-                    files.OpenProjectMedia(
-                        node.ProjectName,
-                        node.Name == ProjectNavigation.ImageGroupName
-                            ? SpaceMediaKind.Images
-                            : SpaceMediaKind.Videos);
-                    workspace.ShowBrowser(files);
+                    if (node.Name == ProjectNavigation.ImageGroupName && projectImages is not null)
+                    {
+                        workspace.ShowBrowser(projectImages);
+                        projectImages.ShowProject(node.ProjectId, node.ProjectName);
+                    }
+                    else
+                    {
+                        files.OpenProjectMedia(node.ProjectName, SpaceMediaKind.Videos);
+                        workspace.ShowBrowser(files);
+                    }
                     break;
                 default:
                     files.OpenProject(node.ProjectName);
@@ -591,16 +612,15 @@ public sealed class WorkspaceViewModel : ObservableObject
     private void Navigate(string destination)
     {
         if (!_pages.TryGetValue(destination, out var page)) return;
-        var isBrowser = BrowserKeys.Contains(destination);
-        if (isBrowser) _selectedSpaceKey = destination;
+        var isSpace = SpaceKeys.Contains(destination);
+        if (isSpace) _selectedSpaceKey = destination;
         SelectedNavigation = destination;
         CurrentContent = page;
         MarkSelected();
         OnPropertyChanged(nameof(PageTitle));
-        // Re-pointing the browser is what makes 图片, 视频 and 个人空间 different from each
-        // other; they share one instance, so without this all three would show whichever
-        // scope was set last.
-        if (isBrowser) _ = _selectSpaceAsync(destination);
+        // The image gallery and file-browser scopes have different activation work, so each
+        // gets a chance to select its project scope before the page is shown.
+        if (isSpace) _ = _selectSpaceAsync(destination);
         // Some pages fetch on first display; without this the feedback list opened empty
         // until a filter was clicked.
         _onPageActivated?.Invoke(destination);

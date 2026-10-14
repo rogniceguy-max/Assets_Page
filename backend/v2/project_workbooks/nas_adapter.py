@@ -1,24 +1,28 @@
-"""The host half of the workbook contract: authentication, and the three read routes.
+"""The host half of the workbook contract: authentication, workbook reads and row edits.
 
 The vendored module declares routes and JSON shapes and asks the host for everything else
 through protocols. These are those protocols, backed by the project directory on the NAS.
 
-**Scope, stated plainly.** This serves the read-only first cut: list the projects, list a
-project's workbooks, open one. Every other protocol method raises 503, which is the contract's
-own way of saying "not implemented" — the client expects it and the package documents it. A
-fabricated success here would be worse than the error, so nothing is faked.
+**Scope, stated plainly.** This serves project/workbook reads and versioned edits to beat story
+text, beat level/planning, and asset category/name. Other workflow methods without a host
+implementation raise 503 rather than returning fabricated success.
 
 **What is not enforced yet.** The project root is served as one shared space: every signed-in
 employee sees the same projects. The filesystem permission of the service account is the only
-boundary, and per-user ACL filtering is part of a later cut. That is a real limitation, not an
-oversight, and it is why this cut is read-only.
+boundary, and per-user ACL filtering remains a host integration requirement.
 """
 from __future__ import annotations
 
 import base64
+import hashlib
+import io
+import os
 import posixpath
 import secrets
 import sqlite3
+import stat
+import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO, Mapping
@@ -33,6 +37,7 @@ NOT_IMPLEMENTED = "该功能尚未接入。"
 # Names the router reserves for its own sub-routes. A file id that collided with one would be
 # unreachable, so the encoder avoids producing them.
 RESERVED_IDS = {"create", "import", "image-assets", "projects", "reviews"}
+MAX_ROW_VERSION = 2**63 - 1
 
 
 def _not_implemented() -> ApiFault:
@@ -67,18 +72,240 @@ class NasSecurity:
         return principal
 
 
-class NasWorkbookServices:
-    """The ``WorkbookServices`` protocol: this cut answers ``document`` and refuses the rest."""
+class _RowVersionTransaction:
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self.connection = connection
+        self.committed = False
 
-    def __init__(self, root: Path) -> None:
+    def resolve(self, file_id: str, fingerprints: Mapping[str, str]) -> dict[str, int]:
+        rows = self.connection.execute(
+            "SELECT row_id, version, fingerprint FROM workbook_row_versions WHERE file_id = ?",
+            (file_id,)).fetchall()
+        existing = {row["row_id"]: row for row in rows}
+        versions: dict[str, int] = {}
+        for row_id, fingerprint in fingerprints.items():
+            record = existing.get(row_id)
+            if record is None:
+                version = 1
+                self.connection.execute(
+                    "INSERT INTO workbook_row_versions(file_id,row_id,version,fingerprint) VALUES(?,?,?,?)",
+                    (file_id, row_id, version, fingerprint))
+            elif record["fingerprint"] != fingerprint:
+                version = int(record["version"]) + 1
+                if version > MAX_ROW_VERSION:
+                    raise ApiFault(503, "VERSION_EXHAUSTED", "工作表版本已达到上限。")
+                self.connection.execute(
+                    "UPDATE workbook_row_versions SET version=?, fingerprint=? WHERE file_id=? AND row_id=?",
+                    (version, fingerprint, file_id, row_id))
+            else:
+                version = int(record["version"])
+            versions[row_id] = version
+        return versions
+
+    def check(self, file_id: str, row_id: str, expected_version: int, fingerprint: str) -> None:
+        record = self.connection.execute(
+            "SELECT version, fingerprint FROM workbook_row_versions WHERE file_id=? AND row_id=?",
+            (file_id, row_id)).fetchone()
+        if record is None:
+            current = 1
+            self.connection.execute(
+                "INSERT INTO workbook_row_versions(file_id,row_id,version,fingerprint) VALUES(?,?,?,?)",
+                (file_id, row_id, current, fingerprint))
+        elif record["fingerprint"] != fingerprint:
+            current = int(record["version"]) + 1
+            if current > MAX_ROW_VERSION:
+                raise ApiFault(503, "VERSION_EXHAUSTED", "工作表版本已达到上限。")
+            self.connection.execute(
+                "UPDATE workbook_row_versions SET version=?, fingerprint=? WHERE file_id=? AND row_id=?",
+                (current, fingerprint, file_id, row_id))
+            self.connection.commit()
+            self.committed = True
+            raise ApiFault(409, "CONFLICT", "该行已被修改，请重新加载并核对后再编辑。")
+        else:
+            current = int(record["version"])
+        if expected_version != current:
+            raise ApiFault(409, "CONFLICT", "该行已被修改，请重新加载并核对后再编辑。")
+
+    def save(self, file_id: str, row_id: str, fingerprint: str) -> int:
+        record = self.connection.execute(
+            "SELECT version FROM workbook_row_versions WHERE file_id=? AND row_id=?",
+            (file_id, row_id)).fetchone()
+        if record is None:
+            raise ApiFault(503, "VERSION_STATE_LOST", "工作簿版本状态不可用。")
+        version = int(record["version"]) + 1
+        if version > MAX_ROW_VERSION:
+            raise ApiFault(503, "VERSION_EXHAUSTED", "工作表版本已达到上限。")
+        self.connection.execute(
+            "UPDATE workbook_row_versions SET version=?, fingerprint=? WHERE file_id=? AND row_id=?",
+            (version, fingerprint, file_id, row_id))
+        return version
+
+
+class NasRowVersionStore:
+    """Persists optimistic row versions outside user-visible workbooks."""
+
+    def __init__(self, db_path: Path | str) -> None:
+        self.db_path = Path(db_path)
+
+    @contextmanager
+    def transaction(self):
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(self.db_path, timeout=30)
+        connection.row_factory = sqlite3.Row
+        transaction = _RowVersionTransaction(connection)
+        try:
+            connection.execute("PRAGMA busy_timeout=30000")
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS workbook_row_versions (
+                    file_id TEXT NOT NULL,
+                    row_id TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    fingerprint TEXT NOT NULL,
+                    PRIMARY KEY(file_id, row_id)
+                )
+            """)
+            connection.execute("BEGIN IMMEDIATE")
+            yield transaction
+            if not transaction.committed:
+                connection.commit()
+        except Exception:
+            if not transaction.committed:
+                connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+
+def _row_version_store(root: Path, store: NasRowVersionStore | None) -> NasRowVersionStore:
+    return store or NasRowVersionStore(root / ".project-workbook-row-versions.sqlite3")
+
+
+def _load_workbook_snapshot(path: Path):
+    import openpyxl
+    projector._validate_archive(path)
+    writable = None
+    try:
+        source = path.read_bytes()
+        writable = openpyxl.load_workbook(io.BytesIO(source), data_only=False)
+        projected = openpyxl.load_workbook(io.BytesIO(source), data_only=True, read_only=True)
+        return writable, projected, hashlib.sha256(source).hexdigest()
+    except Exception as error:
+        if writable is not None:
+            writable.close()
+        raise ApiFault(503, "WORKBOOK_UNAVAILABLE", "工作簿无法读取。") from error
+
+
+def _path_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _save_workbook_atomic(workbook: Any, path: Path, original_digest: str) -> None:
+    temporary = None
+    try:
+        original_stat = path.stat()
+        descriptor, temporary = tempfile.mkstemp(prefix=".pwb-", suffix=".xlsx", dir=path.parent)
+        os.close(descriptor)
+        workbook.save(temporary)
+        if hasattr(os, "chown"):
+            os.chown(temporary, original_stat.st_uid, original_stat.st_gid)
+        os.chmod(temporary, stat.S_IMODE(original_stat.st_mode))
+        with open(temporary, "r+b") as saved:
+            saved.flush()
+            os.fsync(saved.fileno())
+        if _path_digest(path) != original_digest:
+            raise ApiFault(409, "CONFLICT", "工作簿在保存期间已被修改，请重新加载并核对。")
+        os.replace(temporary, path)
+        temporary = None
+        try:
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            pass
+    except ApiFault:
+        raise
+    except Exception as error:
+        raise ApiFault(500, "SAVE_FAILED", "保存工作簿失败。") from error
+    finally:
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+
+def _target_row(workbook: Any, row_id: str, expected_kind: str):
+    try:
+        sheet_id, raw_row = row_id.rsplit("#", 1)
+        row_number = int(raw_row)
+    except (ValueError, AttributeError):
+        raise ApiFault(422, "INVALID_ROW_ID", "无效的行标识。") from None
+    if not sheet_id or row_number < 1:
+        raise ApiFault(422, "INVALID_ROW_ID", "无效的行标识。")
+    worksheet = next((sheet for sheet in workbook.worksheets
+                      if projector._safe_id(sheet.title) == sheet_id), None)
+    if worksheet is None:
+        raise ApiFault(404, "NOT_FOUND", "工作表不存在。")
+    classification = projector._classify_sheet(worksheet)
+    if classification.kind != expected_kind:
+        raise ApiFault(422, "INVALID_ROW", "该行不属于可编辑的工作表类型。")
+    max_row = worksheet.max_row or classification.header_row
+    if row_number <= classification.header_row or row_number > max(max_row + 1, classification.header_row + 1):
+        raise ApiFault(404, "NOT_FOUND", "工作表行不存在。")
+    row = list(worksheet.iter_rows(min_row=row_number, max_row=row_number))[0]
+    return worksheet, classification, row_number, row
+
+
+def _projected_row(worksheet: Any, classification: Any, row_id: str, version: int,
+                   kind: str, project_id: str, project_dir: Path) -> dict[str, Any]:
+    fingerprints: dict[str, str] = {}
+    if kind == "scene_beats":
+        projected = projector._scene_sheet(projector._safe_id(worksheet.title), worksheet.title,
+            worksheet, classification, [], fingerprints)["scene_rows"]
+    else:
+        projected = projector._asset_sheet(projector._safe_id(worksheet.title), worksheet.title,
+            worksheet, classification, project_dir=project_dir, project_id=project_id,
+            row_fingerprints=fingerprints)["asset_rows"]
+    result = next((row for row in projected if row["id"] == row_id), None)
+    if result is None:
+        raise ApiFault(404, "NOT_FOUND", "工作表行不存在。")
+    result["version"] = version
+    return result
+
+
+def _asset_component(value: Any, label: str) -> str | None:
+    if value is None:
+        return None
+    if (not isinstance(value, str) or len(value) > 200 or len(value.encode("utf-8", "surrogatepass")) > 200
+            or value in {".", ".."} or any(character in value for character in "/\\")
+            or any(ord(character) < 32 or ord(character) == 127 or 0xD800 <= ord(character) <= 0xDFFF
+                   for character in value)):
+        raise ApiFault(422, "INVALID_REQUEST", f"{label}无效。")
+    return value or None
+
+
+class NasWorkbookServices:
+    """The ``WorkbookServices`` protocol backed by the shared project directory."""
+
+    def __init__(self, root: Path, row_versions: NasRowVersionStore | None = None) -> None:
         self._root = root
+        self._row_versions = _row_version_store(root, row_versions)
 
     def document(self, actor: Any, file_id: str) -> dict[str, Any]:
         project_id, name = _decode_file_id(file_id)
         path = _resolve_file(self._root, project_id, name)
-        return projector.project_document(path, file_id=file_id, name=name, project_id=project_id)
+        with self._row_versions.transaction() as versions:
+            return projector.project_document(path, file_id=file_id, name=name, project_id=project_id,
+                row_version_resolver=lambda fingerprints: versions.resolve(file_id, fingerprints))
 
-    # --- editing and media: a later cut -------------------------------------------------
+    # --- remaining legacy and media endpoints -------------------------------------------
     def list_files(self, actor: Any) -> list[dict[str, Any]]:
         # The legacy no-project branch. The client always sends project_id, so this is
         # unreachable from the app; answering it would be inventing a second file listing.
@@ -120,9 +347,11 @@ class NasWorkbookServices:
 class NasWorkflowServices:
     """The ``WorkflowServices`` protocol."""
 
-    def __init__(self, root: Path, provisioner: Any = None) -> None:
+    def __init__(self, root: Path, provisioner: Any = None,
+                 row_versions: NasRowVersionStore | None = None) -> None:
         self._root = root
         self._provisioner = provisioner
+        self._row_versions = _row_version_store(root, row_versions)
 
     def projects(self, actor: Any) -> list[dict[str, Any]]:
         return [{"id": str(entry.stat().st_ino), "name": entry.name}
@@ -158,7 +387,7 @@ class NasWorkflowServices:
             status = 409 if code == "SHEET_EXISTS" else 422 if code in ("INVALID_SHEET_NAME", "INVALID_FILENAME") else 500
             raise ApiFault(status, code, str(error)) from error
 
-    # --- creating, importing and everything downstream: a later cut ----------------------
+    # --- creating, importing and other host-backed workflows ------------------------------
     def create(self, actor: Any, template_kind: str, project_id: str, operation_id: str) -> dict:
         from backend.v2.project_helper import (
             _template_bytes, BEAT_HEADERS, ASSET_HEADERS,
@@ -302,65 +531,80 @@ class NasWorkflowServices:
 
     def update_scene(self, actor: Any, file_id: str, row_id: str, expected_version: int,
                      label_level: Any, breakdown_plan: Any) -> dict:
-        import openpyxl
+        return self._update_scene_fields(actor, file_id, row_id, expected_version,
+            {"label_level": label_level, "breakdown_plan": breakdown_plan})
+
+    def update_story_content(self, actor: Any, file_id: str, row_id: str, expected_version: int,
+                             story_content: Any) -> dict:
+        return self._update_scene_fields(actor, file_id, row_id, expected_version,
+            {"story_content": story_content})
+
+    def _update_scene_fields(self, actor: Any, file_id: str, row_id: str, expected_version: int,
+                             changes: Mapping[str, Any]) -> dict:
         project_id, file_name = _decode_file_id(file_id)
         path = _resolve_file(self._root, project_id, file_name)
+        with self._row_versions.transaction() as versions:
+            workbook, projected_workbook, original_digest = _load_workbook_snapshot(path)
+            try:
+                worksheet, classification, row_number, _ = _target_row(workbook, row_id, "scene_beats")
+                projected_ws, projected_classification, _, projected_row = _target_row(projected_workbook, row_id, "scene_beats")
+                versions.check(file_id, row_id, expected_version,
+                    projector.row_fingerprint(row_id, projected_row))
+                fields = classification.fields
+                replacements = {}
+                for field, requested_value in changes.items():
+                    column = fields.get(field)
+                    if column is None:
+                        label = "故事内容" if field == "story_content" else "该节拍字段"
+                        raise ApiFault(422, "INVALID_ROW", f"该工作表没有{label}列。")
+                    value = requested_value or None
+                    worksheet.cell(row=row_number, column=column + 1, value=value)
+                    replacements[column] = value
+                fingerprint = projector.row_fingerprint(row_id, projected_row, replacements)
+                _save_workbook_atomic(workbook, path, original_digest)
+                version = versions.save(file_id, row_id, fingerprint)
+                result = _projected_row(projected_ws, projected_classification, row_id, version,
+                    "scene_beats", project_id, path.parent)
+                for field, requested_value in changes.items():
+                    result[field] = requested_value or None
+                return result
+            finally:
+                workbook.close()
+                projected_workbook.close()
 
-        try:
-            sheet_id, row_str = row_id.split("#")
-            row_num = int(row_str)
-        except Exception:
-            raise ApiFault(422, "INVALID_ROW_ID", "无效的行标识。")
-
-        try:
-            wb = openpyxl.load_workbook(path)
-        except Exception as error:
-            raise ApiFault(503, "WORKBOOK_UNAVAILABLE", "工作簿无法读取。") from error
-
-        try:
-            sheet_index = int(sheet_id[1:]) if sheet_id.startswith("s") else -1
-            if 0 <= sheet_index < len(wb.worksheets):
-                ws = wb.worksheets[sheet_index]
-            else:
-                ws = wb[sheet_id]
-        except Exception:
-            raise ApiFault(404, "NOT_FOUND", "工作表不存在。")
-
-        classification = projector._classify_sheet(ws)
-        label_col = classification.fields.get("label_level")
-        plan_col = classification.fields.get("breakdown_plan")
-
-        if label_col is not None:
-            ws.cell(row=row_num, column=label_col + 1, value=label_level if label_level else None)
-        if plan_col is not None:
-            ws.cell(row=row_num, column=plan_col + 1, value=breakdown_plan if breakdown_plan else None)
-
-        try:
-            wb.save(path)
-        except Exception as error:
-            raise ApiFault(500, "SAVE_FAILED", f"保存工作簿失败：{error}") from error
-
-        row_cells = list(ws.iter_rows(min_row=row_num, max_row=row_num))[0]
-        def _get(col):
-            if col is not None and col < len(row_cells):
-                val = row_cells[col].value
-                return str(val) if val is not None else None
-            return None
-
-        return {
-            "id": row_id,
-            "version": expected_version + 1,
-            "scene_number": _get(classification.fields.get("scene_number")),
-            "beat_number": _get(classification.fields.get("beat_number")),
-            "story_content": _get(classification.fields.get("story_content")),
-            "label_level": label_level,
-            "breakdown_plan": breakdown_plan,
-            "legacy_notes": [],
-            "scene_context": None,
-            "cast_context": None,
-            "origins": [],
-            "can_edit": True,
-        }
+    def update_asset_row(self, actor: Any, file_id: str, row_id: str, expected_version: int,
+                         category: Any, name: Any) -> dict:
+        project_id, file_name = _decode_file_id(file_id)
+        path = _resolve_file(self._root, project_id, file_name)
+        category = _asset_component(category, "类别")
+        name = _asset_component(name, "名称")
+        with self._row_versions.transaction() as versions:
+            workbook, projected_workbook, original_digest = _load_workbook_snapshot(path)
+            try:
+                worksheet, classification, row_number, _ = _target_row(workbook, row_id, "asset_review")
+                projected_ws, projected_classification, _, projected_row = _target_row(projected_workbook, row_id, "asset_review")
+                versions.check(file_id, row_id, expected_version,
+                    projector.row_fingerprint(row_id, projected_row))
+                category_col = classification.fields.get("category")
+                name_col = classification.fields.get("name")
+                if category_col is None or name_col is None:
+                    raise ApiFault(422, "INVALID_ROW", "该工作表没有类别和名称列。")
+                worksheet.cell(row=row_number, column=category_col + 1, value=category)
+                worksheet.cell(row=row_number, column=name_col + 1, value=name)
+                fingerprint = projector.row_fingerprint(row_id, projected_row,
+                    {category_col: category, name_col: name})
+                _save_workbook_atomic(workbook, path, original_digest)
+                version = versions.save(file_id, row_id, fingerprint)
+                result = _projected_row(projected_ws, projected_classification, row_id, version,
+                    "asset_review", project_id, path.parent)
+                result["category"], result["name"] = category, name
+                selected, candidates = projector._asset_images(path.parent, project_id, category, name,
+                    result.get("variant"))
+                result["selected_image"], result["candidate_images"] = selected, candidates
+                return result
+            finally:
+                workbook.close()
+                projected_workbook.close()
 
     def update_origins(self, actor: Any, file_id: str, row_id: str, expected_version: int,
                        origins: list[dict[str, str]]) -> dict:

@@ -6,7 +6,7 @@ namespace MuYingDrive.NativeWpf.ViewModels;
 /// <summary>What a row in the sidebar's 项目 tree stands for.</summary>
 public enum ProjectNodeKind
 {
-    /// <summary>A project. <c>Id</c> is the project directory's inode.</summary>
+    /// <summary>A project. <c>Id</c> is the stable identifier assigned by the project catalog.</summary>
     Project,
     /// <summary>The 工作簿 group under a project. Not itself openable.</summary>
     WorkbookGroup,
@@ -30,8 +30,8 @@ public enum ProjectNodeKind
 ///
 /// Two identities matter and they are not the same thing:
 /// <list type="bullet">
-/// <item><c>Id</c> — for a project, the directory's <b>inode</b>; for a workbook, the file id.
-/// These are the stable ones, and they are what the client joins on.</item>
+/// <item><c>Id</c> — for a project, a stable catalog identifier; for a workbook, a stable SQLite
+/// workbook identifier. These do not change when display names change.</item>
 /// <item><c>ProjectName</c> — the display name, which the user may change. It is carried
 /// because the media views enumerate the project's directory over SMB, and a directory is
 /// found by name. <b>A rename therefore breaks the media half of the tree until it is

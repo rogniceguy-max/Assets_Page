@@ -34,6 +34,7 @@ public sealed class ImagePickerWindow : Window
         _category = new ComboBox { ItemsSource = new[] { "全部类别", "角色", "场景" }, SelectedIndex = 0, Width = 120, Margin = new Thickness(8, 0, 8, 10) }; toolbar.Children.Add(_category);
         toolbar.Children.Add(WorkflowDialogs.Button("搜索", async (_, _) => await LoadAsync(reset: true)));
         toolbar.Children.Add(WorkflowDialogs.Button("加载下一页", async (_, _) => { if (_cursor != null) await LoadAsync(reset: false); }));
+        toolbar.Children.Add(WorkflowDialogs.Button("修改显示名称", async (_, _) => await RenameSelectedAsync()));
         _status = WorkflowDialogs.Text("先显示当前页素材信息，缩略图随后加载。", 12); DockPanel.SetDock(_status, Dock.Top); root.Children.Add(_status);
         var bottom = new WrapPanel(); DockPanel.SetDock(bottom, Dock.Bottom); root.Children.Add(bottom);
         bottom.Children.Add(WorkflowDialogs.Button("确认选择", (_, _) => { if (_busy) return;
@@ -55,7 +56,8 @@ public sealed class ImagePickerWindow : Window
         { var text = new FrameworkElementFactory(typeof(TextBlock)); text.SetBinding(TextBlock.TextProperty, new Binding(property)); text.SetValue(TextBlock.TextWrappingProperty, TextWrapping.Wrap); stack.AppendChild(text); }
         _list.ItemTemplate = new DataTemplate { VisualTree = stack }; root.Children.Add(_list);
         Loaded += async (_, _) => await LoadAsync(reset: true);
-        Closed += (_, _) => { _generation++; _queryLifetime?.Cancel(); _queryLifetime?.Dispose(); };
+        _model.ProjectImageChanged += OnProjectImageChanged;
+        Closed += (_, _) => { _model.ProjectImageChanged -= OnProjectImageChanged; _generation++; _queryLifetime?.Cancel(); _queryLifetime?.Dispose(); };
     }
     private async Task LoadAsync(bool reset)
     {
@@ -85,4 +87,38 @@ public sealed class ImagePickerWindow : Window
     }
     private async Task LoadThumbnailsAsync(IEnumerable<ImageItem> items, CancellationToken ct)
     { try { await Task.WhenAll(items.Select(image => _model.EnsureThumbnailAsync(image, ct))); } catch (OperationCanceledException) { } }
+
+    private async Task RenameSelectedAsync()
+    {
+        if (_busy) return;
+        if (SelectedImages.Count != 1)
+        {
+            _status.Text = "请选择一张图片，再修改它的显示名称。";
+            return;
+        }
+        var image = SelectedImages[0];
+        var before = image.Asset;
+        var name = WorkflowDialogs.Prompt(this, Resources, "修改图片显示名称",
+            "只修改素材列表中的显示名称，不会重命名磁盘文件。", before.Name, allowEmpty: false);
+        if (name == null || string.Equals(name, before.Name, StringComparison.Ordinal)) return;
+        try
+        {
+            _busy = true;
+            var renamed = await _model.Service.RenameImageAsync(before.Id, before.Version, name,
+                _queryLifetime?.Token ?? CancellationToken.None);
+            image.UpdateAsset(renamed);
+            _status.Text = "显示名称已保存；图片文件名和所在目录保持不变。";
+        }
+        catch (Exception ex)
+        {
+            _status.Text = ex is WorkbookApiException ? ex.Message : "修改图片显示名称失败，请稍后重试。";
+        }
+        finally { _busy = false; }
+    }
+
+    private void OnProjectImageChanged(ImageAsset asset)
+    {
+        var item = _images.FirstOrDefault(image => image.Asset.Id == asset.Id);
+        item?.UpdateAsset(asset);
+    }
 }

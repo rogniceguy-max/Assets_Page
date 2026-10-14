@@ -29,15 +29,13 @@ from .update_failure_reports import InvalidUpdateFailureReport, UpdateFailureRep
 from .visitor import VisitorReader, VisitorService
 from .visitor_http import dispatch as dispatch_visitor
 
-# The workbook routes need a spreadsheet library that nothing else in this service uses. If
-# it is absent they go unavailable rather than the service refusing to start: login, the
-# update channel and the download page have no dependency on any of this, and an API that
-# will not boot because one optional feature's dependency is missing is a far worse failure
-# than that one feature being offline. The routes then fall through to the host's 404.
+# The workbook routes need their SQLite store and XLSX import/export support. If the optional
+# workbook dependencies are absent, login and unrelated service routes still start normally.
 try:
     from .project_workbooks_http import dispatch as dispatch_project_workbooks
-    from .project_workbooks.nas_adapter import NasReviewServices, NasSecurity, NasWorkbookServices, NasWorkflowServices
+    from .project_workbooks.nas_adapter import NasReviewServices, NasSecurity
     from .project_workbooks.projects_api import ProjectsApi
+    from .project_workbooks.sqlite_store import StableReviewServices, SqliteProjectWorkbookStore
     # The project-space routes are the host's own, but they reuse the vendored package's
     # directory scan so the two cannot disagree about what a project is — which means they
     # share its spreadsheet dependency and go unavailable together with it.
@@ -47,7 +45,7 @@ except ImportError:
     dispatch_project_workbooks = None
     dispatch_project_spaces = None
     ProjectsApi = ProjectSpaceService = ProjectProvisioner = None
-    NasSecurity = NasWorkbookServices = NasWorkflowServices = NasReviewServices = None
+    NasSecurity = NasReviewServices = StableReviewServices = SqliteProjectWorkbookStore = None
 
 
 API_ROOT = "/api/v2"
@@ -766,27 +764,32 @@ def make_server(settings: Settings, app: V2Application) -> ThreadingHTTPServer:
     # requires an employee session with a maintainer id.
     feedback = FeedbackService(app.session, feedback_root, maintainers,
                                visitor_authenticate=visitor.has_session)
-    # Read-only first cut: `projects`, `list_files` and `document` are backed by the project
-    # directory; every other method on both protocols answers 503, which is the contract's own
-    # way of saying "not implemented". Unset means the module is not served at all and those
-    # paths fall through to the host's 404.
+    # The local SQLite database is authoritative for project tables. NAS directories retain
+    # project files and media; workbook clients read/write table rows only through this API.
     provisioner = ProjectProvisioner(settings.project_socket) if ProjectProvisioner is not None else None
     project_workbooks = None
+    workbook_store = None
     if settings.project_docs_root is not None and ProjectsApi is not None:
         review_db = Path(settings.database_path).parent / "project_reviews.db"
+        workbook_store = SqliteProjectWorkbookStore(settings.project_docs_root,
+            Path(settings.database_path).parent / "project_workbooks.db", provisioner=provisioner)
+        review_services = (StableReviewServices(NasReviewServices(review_db, row_kind="asset-rows"), workbook_store)
+                           if NasReviewServices is not None else None)
+        scene_review_services = (StableReviewServices(NasReviewServices(review_db, row_kind="scene-rows"), workbook_store)
+                                 if NasReviewServices is not None else None)
         project_workbooks = ProjectsApi(
             NasSecurity(app.session),
-            NasWorkbookServices(settings.project_docs_root),
-            workflow=NasWorkflowServices(settings.project_docs_root, provisioner=provisioner),
-            reviews=NasReviewServices(review_db, row_kind="asset-rows") if NasReviewServices is not None else None,
-            scene_reviews=NasReviewServices(review_db, row_kind="scene-rows") if NasReviewServices is not None else None)
+            workbook_store,
+            workflow=workbook_store,
+            reviews=review_services,
+            scene_reviews=scene_review_services)
     # Listing needs only the directory; creating needs the root helper. Unset socket means
     # listing still works and creating answers 503 with the reason, which is better than a
     # + that appears to work.
     project_spaces = None
     if settings.project_docs_root is not None and ProjectSpaceService is not None:
         project_spaces = ProjectSpaceService(
-            settings.project_docs_root, app.session, provisioner)
+            settings.project_docs_root, app.session, provisioner, catalog=workbook_store)
     server = V2HTTPServer((settings.bind_host, settings.port),
                           create_handler(app, update_releases_dir=settings.update_releases_dir,
                                          installer_dir=settings.installer_dir,

@@ -27,6 +27,7 @@ Two things are easy to get wrong here and are handled explicitly below:
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import shutil
 import socket
@@ -58,10 +59,8 @@ OWNER_GROUP = os.environ.get("MUYING_V2_PROJECT_OWNER_GROUP", "group_assets")
 DIRECTORY_MODE = 0o770
 FILE_MODE = 0o660
 
-# The two workbooks every project starts with. Sheet names are what a user sees in the
-# workbook reader; the header rows are what the projector classifies on. A beat sheet scores
-# by scene aliases and carries no asset field; an asset sheet carries 类别 and 名称, which is
-# what tips the projector from one to the other.
+# Retained labels for legacy import/export compatibility. New tables live in SQLite and this
+# helper no longer creates or edits XLSX workbooks.
 BEAT_SHEET_NAME = "节拍表"
 ASSET_SHEET_NAME = "资产表"
 
@@ -195,15 +194,7 @@ def _write_atomic(path: Path, data: bytes, mode: int) -> None:
 
 
 def create_project(request: dict[str, Any]) -> dict[str, Any]:
-    """Creates one project directory and its two default workbooks, or neither.
-
-    The atomicity the contract asks for (PROJECT_SPACE_V1.md: "失败时不得留下只有一张表的
-    半成品项目") is achieved by building the whole thing under a temporary name and renaming
-    it into place once every part exists. A rename within one directory is atomic, so a
-    project that appears at all is a project that is complete. The alternative — create then
-    clean up on failure — leaves a window where a crash strands exactly the half-built
-    project the contract forbids.
-    """
+    """Creates the project directory; workbook records are created in SQLite by the API."""
     name = _validate_name(request.get("name"))
 
     root = PROJECT_ROOT
@@ -227,20 +218,118 @@ def create_project(request: dict[str, Any]) -> dict[str, Any]:
         _apply_mode(staging, DIRECTORY_MODE)
         _apply_ownership(staging, owner_uid, owner_gid)
 
-        _write_atomic(staging / f"{BEAT_SHEET_NAME}.xlsx",
-                      _template_bytes(BEAT_HEADERS, BEAT_SHEET_NAME), FILE_MODE)
-        _write_atomic(staging / f"{ASSET_SHEET_NAME}.xlsx",
-                      _template_bytes(ASSET_HEADERS, ASSET_SHEET_NAME), FILE_MODE)
-        for created in staging.iterdir():
-            _apply_ownership(created, owner_uid, owner_gid)
-
-        # Everything exists; make it visible in one step.
+        # The privileged helper creates only the filesystem project root. SQLite tables are
+        # provisioned by the authenticated API immediately after this atomic directory rename.
         os.rename(staging, final)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
 
     return {"ok": True, "name": name, "path": str(final)}
+
+
+def move_asset_folder(request: dict[str, Any]) -> dict[str, Any]:
+    """Move one asset folder within a project without exposing project-root writes to V2."""
+    project_name = _validate_name(request.get("project_name"))
+    raw_source = request.get("source_path")
+    raw_target = request.get("target_path")
+
+    def checked_relative(raw: object, label: str) -> tuple[str, str]:
+        if not isinstance(raw, str) or raw.count("/") != 1 or "\\" in raw:
+            raise HelperFailure("INVALID_ASSET_PATH", f"{label}无效。")
+        category, name = raw.split("/", 1)
+        return _validate_name(category), _validate_name(name)
+
+    source_category, source_name = checked_relative(raw_source, "原素材目录")
+    target_category, target_name = checked_relative(raw_target, "目标素材目录")
+    root = PROJECT_ROOT
+    if not root.is_dir():
+        raise HelperFailure("ROOT_UNAVAILABLE", "项目根目录不可用，请联系管理员。")
+    project_dir = root / project_name
+    if not project_dir.is_dir() or project_dir.is_symlink():
+        raise HelperFailure("PROJECT_NOT_FOUND", "项目目录不存在。")
+
+    source = project_dir / source_category / source_name
+    target_parent = project_dir / target_category
+    target = target_parent / target_name
+    try:
+        source.resolve().relative_to(project_dir.resolve())
+        target.resolve(strict=False).relative_to(project_dir.resolve())
+    except ValueError:
+        raise HelperFailure("INVALID_ASSET_PATH", "素材目录路径无效。") from None
+
+    if os.path.lexists(target):
+        if not os.path.lexists(source) and target.is_dir() and not target.is_symlink():
+            # Idempotent retry after the directory move succeeded but the HTTP caller timed out.
+            return {"ok": True, "path": str(target), "already_moved": True}
+        raise HelperFailure("ASSET_FOLDER_EXISTS", "目标素材目录已存在，未覆盖任何文件。")
+
+    owner_uid, owner_gid = _ownership()
+    try:
+        if not target_parent.exists():
+            target_parent.mkdir(parents=False)
+            _apply_mode(target_parent, DIRECTORY_MODE)
+            _apply_ownership(target_parent, owner_uid, owner_gid)
+        if os.path.lexists(source):
+            if source.is_symlink() or not source.is_dir():
+                raise HelperFailure("INVALID_ASSET_PATH", "原素材目录无效。")
+            os.rename(source, target)
+            old_parent = source.parent
+            if old_parent != target_parent:
+                try:
+                    old_parent.rmdir()
+                except OSError:
+                    pass
+        else:
+            target.mkdir()
+            _apply_mode(target, DIRECTORY_MODE)
+            _apply_ownership(target, owner_uid, owner_gid)
+    except HelperFailure:
+        raise
+    except FileExistsError:
+        raise HelperFailure("ASSET_FOLDER_EXISTS", "目标素材目录已存在，未覆盖任何文件。") from None
+    except OSError:
+        raise HelperFailure("ASSET_MOVE_FAILED", "移动素材目录失败，原数据已保留。") from None
+    return {"ok": True, "path": str(target)}
+
+
+def archive_legacy_workbook(request: dict[str, Any]) -> dict[str, Any]:
+    """Hide an imported XLSX as a retained backup after its SQLite import commits."""
+    project_name = _validate_name(request.get("project_name"))
+    file_name = _validate_filename(request.get("file_name"))
+    expected_digest = request.get("sha256")
+    if not isinstance(expected_digest, str) or len(expected_digest) != 64 or any(c not in "0123456789abcdef" for c in expected_digest.lower()):
+        raise HelperFailure("INVALID_DIGEST", "工作簿校验值无效。")
+    project_dir = PROJECT_ROOT / project_name
+    source = project_dir / file_name
+    if not project_dir.is_dir() or project_dir.is_symlink() or not source.is_file() or source.is_symlink():
+        raise HelperFailure("SOURCE_NOT_FOUND", "旧工作簿不存在。")
+    if (project_dir / f"~${file_name}").exists():
+        raise HelperFailure("SOURCE_IN_USE", "旧工作簿仍在 Excel 中打开，关闭后再重试归档。")
+    digest = hashlib.sha256()
+    with source.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    if digest.hexdigest() != expected_digest.lower():
+        raise HelperFailure("SOURCE_CHANGED", "旧工作簿在导入期间发生变化，请重新加载后核对。")
+    archive_dir = project_dir / ".legacy-workbooks"
+    if not archive_dir.exists():
+        owner_uid, owner_gid = _ownership()
+        archive_dir.mkdir(mode=DIRECTORY_MODE)
+        _apply_mode(archive_dir, DIRECTORY_MODE)
+        _apply_ownership(archive_dir, owner_uid, owner_gid)
+    if archive_dir.is_symlink() or not archive_dir.is_dir():
+        raise HelperFailure("ARCHIVE_UNAVAILABLE", "旧工作簿归档目录无效。")
+    target = archive_dir / file_name
+    if os.path.lexists(target):
+        target = archive_dir / f"{source.stem}.{expected_digest[:12]}{source.suffix}"
+    if os.path.lexists(target):
+        raise HelperFailure("ARCHIVE_EXISTS", "归档文件已存在，原文件已保留。")
+    try:
+        os.rename(source, target)
+    except OSError:
+        raise HelperFailure("ARCHIVE_FAILED", "已导入数据库，但归档旧工作簿失败。") from None
+    return {"ok": True, "archive_name": target.name}
 
 
 def _validate_sheet_name(raw: object) -> str:
@@ -421,10 +510,12 @@ def handle_request(raw: bytes) -> dict[str, Any]:
         op = request.get("operation")
         if op == "create_project":
             return create_project(request)
-        if op == "add_sheet":
-            return add_sheet(request)
-        if op == "ensure_workbooks":
-            return ensure_workbooks(request)
+        if op == "move_asset_folder":
+            return move_asset_folder(request)
+        if op == "archive_legacy_workbook":
+            return archive_legacy_workbook(request)
+        if op in {"add_sheet", "ensure_workbooks"}:
+            raise HelperFailure("SQLITE_WORKBOOKS", "工作簿与工作表现在由 SQLite API 管理，不再直接写入 XLSX。")
         if op == "ensure_asset_folder":
             return ensure_asset_folder(request)
         return {"ok": False, "code": "UNKNOWN_OPERATION", "message": "项目操作不受支持。"}

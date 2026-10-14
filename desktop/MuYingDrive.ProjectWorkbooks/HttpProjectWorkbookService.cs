@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 
 namespace MuYingDrive.ProjectWorkbooks;
@@ -92,6 +93,14 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
         }
         if (count > max) throw new InvalidDataException($"文本最多允许 {max} 个字符。");
         return value;
+    }
+    private static void AssetComponent(string? value, string label)
+    {
+        LimitedText(value, 200);
+        if (value == null) return;
+        if (value is "." or ".." || value.IndexOfAny(['/', '\\']) >= 0
+            || value.Any(char.IsControl) || Encoding.UTF8.GetByteCount(value) > 200)
+            throw new InvalidDataException($"{label}不能包含路径分隔符或控制字符，且最多 200 字节。");
     }
     private static HttpContent JsonBody<T>(T value, int limit = 64 * 1024)
     {
@@ -215,6 +224,53 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
 
     public Task<IReadOnlyList<ProjectInfo>> ListProjectsAsync(CancellationToken ct = default) => ListAsync<ProjectInfo>("projects", ct);
     public Task<IReadOnlyList<ProjectFile>> ListProjectFilesAsync(string projectId, CancellationToken ct = default) => ListAsync<ProjectFile>("?project_id=" + Id(projectId), ct);
+    public async IAsyncEnumerable<ProjectChangeEvent> SubscribeProjectEventsAsync(string projectId,
+        long? afterSequence = null, [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var route = "events?project_id=" + Id(projectId);
+        if (afterSequence.HasValue)
+        {
+            if (afterSequence.Value < 0) throw new InvalidDataException("实时更新游标无效。");
+            route += "&after=" + afterSequence.Value.ToString(CultureInfo.InvariantCulture);
+        }
+        using var request = Request(HttpMethod.Get, route, null);
+        request.Headers.Accept.Clear(); request.Headers.Accept.ParseAdd("text/event-stream");
+        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        await EnsureSuccessAsync(response, ct);
+        await using var stream = await response.Content.ReadAsStreamAsync(ct);
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        string? eventName = null;
+        var data = new StringBuilder();
+        while (await reader.ReadLineAsync(ct) is { } line)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (line.Length == 0)
+            {
+                if (eventName == "ready" && data.Length > 0)
+                {
+                    using var document = JsonDocument.Parse(data.ToString());
+                    var sequence = document.RootElement.GetProperty("sequence").GetInt64();
+                    yield return new ProjectChangeEvent(sequence, projectId, "", "", "", [], EventKind: "ready");
+                }
+                else if (eventName == "change" && data.Length > 0)
+                {
+                    var change = JsonSerializer.Deserialize<ProjectChangeEvent>(data.ToString(), Json)
+                        ?? throw new InvalidDataException("实时更新消息为空。");
+                    yield return change with { EventKind = "change" };
+                }
+                eventName = null;
+                data.Clear();
+                continue;
+            }
+            if (line[0] == ':') continue;
+            if (line.StartsWith("event:", StringComparison.Ordinal)) eventName = line[6..].Trim();
+            else if (line.StartsWith("data:", StringComparison.Ordinal))
+            {
+                if (data.Length > 0) data.Append('\n');
+                data.Append(line[5..].TrimStart());
+            }
+        }
+    }
     public Task<ProjectFile> CreateInProjectAsync(string projectId, string templateKind, string operationId, CancellationToken ct = default)
     {
         _ = OperationScope;
@@ -251,10 +307,42 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
         ImageType(mediaType); _ = Id(projectId);
         return UploadAsync<ImageAsset>("image-assets", fileName, mediaType, source, new Dictionary<string, string> { ["X-Project-Id"] = projectId }, ct);
     }
+    public Task<ImageAsset> GetProjectImageAsync(string imageId, CancellationToken ct = default) =>
+        ReadAsync<ImageAsset>(HttpMethod.Get, "image-assets/" + Id(imageId), null, ct);
+    public Task<ImageAsset> RenameImageAsync(string imageId, long expectedVersion, string displayName, CancellationToken ct = default)
+    {
+        _ = Id(imageId); Version(expectedVersion); LimitedText(displayName, 200, nonEmpty: true);
+        if (displayName.IndexOfAny(['/', '\\']) >= 0 || displayName.Any(char.IsControl))
+            throw new InvalidDataException("图片显示名称不能包含路径分隔符或控制字符。");
+        return ReadAsync<ImageAsset>(HttpMethod.Put, "image-assets/" + Id(imageId) + "/name",
+            JsonBody(new { expected_version = expectedVersion, display_name = displayName }), ct);
+    }
     public Task<AddSheetResponse> AddSheetAsync(string fileId, string sheetName, CancellationToken ct = default)
     {
         LimitedText(sheetName, 31, nonEmpty: true);
         return ReadAsync<AddSheetResponse>(HttpMethod.Post, FileId(fileId) + "/sheets", JsonBody(new { sheet_name = sheetName }), ct);
+    }
+    public Task<ProjectFile> RenameWorkbookAsync(string fileId, long expectedNameVersion, string displayName, CancellationToken ct = default)
+    {
+        Version(expectedNameVersion); LimitedText(displayName, 128, nonEmpty: true);
+        return ReadAsync<ProjectFile>(HttpMethod.Put, FileId(fileId) + "/name",
+            JsonBody(new { expected_name_version = expectedNameVersion, display_name = displayName }), ct);
+    }
+    public Task RenameSheetAsync(string fileId, string sheetId, long expectedNameVersion, string displayName, CancellationToken ct = default)
+    {
+        _ = Id(sheetId); Version(expectedNameVersion); LimitedText(displayName, 31, nonEmpty: true);
+        return ReadAsync<JsonElement>(HttpMethod.Put, FileId(fileId) + "/sheets/" + Id(sheetId) + "/name",
+            JsonBody(new { expected_name_version = expectedNameVersion, display_name = displayName }), ct);
+    }
+    public Task<SceneRow> CreateSceneRowAsync(string fileId, string sheetId, CancellationToken ct = default) =>
+        ReadAsync<SceneRow>(HttpMethod.Post, FileId(fileId) + "/scene-rows", JsonBody(new { sheet_id = Id(sheetId) }), ct);
+    public Task<AssetRow> CreateAssetRowAsync(string fileId, string sheetId, CancellationToken ct = default) =>
+        ReadAsync<AssetRow>(HttpMethod.Post, FileId(fileId) + "/asset-rows", JsonBody(new { sheet_id = Id(sheetId) }), ct);
+    public async Task DeleteRowAsync(string fileId, string rowId, string rowKind, long expectedVersion, CancellationToken ct = default)
+    {
+        Version(expectedVersion);
+        await ReadAsync<JsonElement>(HttpMethod.Delete, RowRoute(fileId, rowId, rowKind),
+            JsonBody(new { expected_version = expectedVersion }), ct);
     }
     public Task<SceneRow> UpdateSceneAsync(string fileId, string rowId, UpdateSceneRequest request, CancellationToken ct = default)
     {
@@ -262,6 +350,18 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
         if (request.LabelLevel is not (null or "红" or "黄" or "绿")) throw new InvalidDataException("等级仅允许红、黄、绿或空。");
         LimitedText(request.BreakdownPlan, 20000);
         return ReadAsync<SceneRow>(HttpMethod.Put, RowRoute(fileId, rowId, "scene-rows"), JsonBody(request, 256 * 1024), ct);
+    }
+    public Task<SceneRow> UpdateStoryContentAsync(string fileId, string rowId, UpdateStoryContentRequest request, CancellationToken ct = default)
+    {
+        Version(request.ExpectedVersion); LimitedText(request.StoryContent, 20000);
+        return ReadAsync<SceneRow>(HttpMethod.Put, RowRoute(fileId, rowId, "scene-rows") + "/story-content",
+            JsonBody(request, 256 * 1024), ct);
+    }
+    public Task<AssetRow> UpdateAssetRowAsync(string fileId, string rowId, UpdateAssetRowRequest request, CancellationToken ct = default)
+    {
+        Version(request.ExpectedVersion);
+        AssetComponent(request.Category, "类别"); AssetComponent(request.Name, "名称");
+        return ReadAsync<AssetRow>(HttpMethod.Put, RowRoute(fileId, rowId, "asset-rows"), JsonBody(request), ct);
     }
     public Task<SceneRow> UpdateSceneOriginsAsync(string fileId, string rowId, UpdateSceneOriginsRequest request, CancellationToken ct = default)
     {

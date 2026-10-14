@@ -22,6 +22,7 @@ public partial class ProjectWorkbooksView : UserControl
         if (_loaded || DataContext is not ProjectWorkbooksViewModel) return;
         _loaded = true;
         Model.PropertyChanged += OnModelPropertyChanged;
+        Model.SceneRowChanging += OnSceneRowChanging;
         // One guard for every way out: closing the workbook from the page, refreshing it,
         // and the host's project tree opening a different one, which never asks this view.
         Model.ConfirmLeaving = TryLeaveScenePanel;
@@ -36,7 +37,25 @@ public partial class ProjectWorkbooksView : UserControl
     private void OnModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         if (e.PropertyName != nameof(ProjectWorkbooksViewModel.Document)) return;
+        if (Model.ApplyingRemoteUpdate)
+        {
+            // Sheets are replaced immediately after Document raises its notification. Check
+            // for a remotely deleted row after that replacement, while preserving any draft
+            // in the details panel until its normal leave confirmation succeeds.
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (_scenePanelItem != null
+                    && !Model.Sheets.SelectMany(sheet => sheet.Scenes).Any(row => row.Row.Id == _scenePanelItem.Row.Id))
+                    TryLeaveScenePanel();
+            }), DispatcherPriority.Background);
+            return;
+        }
         HideScenePanel();
+    }
+
+    private void OnSceneRowChanging(SceneRow previous, SceneRow current)
+    {
+        if (_scenePanelItem?.Row.Id == current.Id) _scenePanel?.ApplyRemote(previous, current);
     }
     private void AdoptHostTheme()
     {
@@ -71,7 +90,6 @@ public partial class ProjectWorkbooksView : UserControl
     }
     private static string[] Paths(DragEventArgs e) => e.Data.GetData(DataFormats.FileDrop) as string[] ?? [];
     private static bool IsWorkbook(string path) => string.Equals(Path.GetExtension(path), ".xlsx", StringComparison.OrdinalIgnoreCase);
-    private static bool IsImage(string path) => Path.GetExtension(path).ToLowerInvariant() is ".png" or ".jpg" or ".jpeg";
     private static void Drag(DragEventArgs e, Func<string, bool> accept)
     {
         var paths = Paths(e);
@@ -79,8 +97,6 @@ public partial class ProjectWorkbooksView : UserControl
         e.Handled = true;
     }
     private void OnWorkbookDragOver(object sender, DragEventArgs e) => Drag(e, IsWorkbook);
-    private void OnImageDragOver(object sender, DragEventArgs e)
-    { if (Row(sender) is { Row.CanEdit: true }) Drag(e, IsImage); else { e.Effects = DragDropEffects.None; e.Handled = true; } }
     private async void OnWorkbookDrop(object sender, DragEventArgs e)
     {
         e.Handled = true;
@@ -114,6 +130,19 @@ public partial class ProjectWorkbooksView : UserControl
     {
         if (((FrameworkElement)sender).DataContext is ProjectFile file) await Model.ExecuteAsync(() => Model.OpenAsync(file));
     }
+    private async void OnRenameWorkbook(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not ProjectFile file) return;
+        var nameVersion = file.NameVersion;
+        var name = WorkflowDialogs.Prompt(Window.GetWindow(this), Resources, "重命名工作簿",
+            "新的显示名称：", file.Name, false);
+        if (string.IsNullOrWhiteSpace(name) || string.Equals(name.Trim(), file.Name, StringComparison.Ordinal)) return;
+        await Model.ExecuteAsync(async () =>
+        {
+            await Model.Service.RenameWorkbookAsync(file.Id, nameVersion, name.Trim());
+            await Model.RefreshFilesAsync();
+        });
+    }
     private async void OnRefresh(object sender, RoutedEventArgs e) => await Model.ExecuteAsync(async () =>
     {
         if (Model.Document is { } document)
@@ -133,6 +162,21 @@ public partial class ProjectWorkbooksView : UserControl
         Model.ProjectFilesChanged?.Invoke();
     });
     private void OnBack(object sender, RoutedEventArgs e) => Model.Back();
+    private async void OnAddSceneRow(object sender, RoutedEventArgs e) => await Model.ExecuteAsync(Model.AddSceneRowAsync);
+    private async void OnAddAssetRow(object sender, RoutedEventArgs e) => await Model.ExecuteAsync(Model.AddAssetRowAsync);
+    private async void OnRenameSheet(object sender, RoutedEventArgs e)
+    {
+        if (Model.Document is not { } document || Model.SelectedSheet is not { } sheet) return;
+        var nameVersion = sheet.Sheet.NameVersion;
+        var name = WorkflowDialogs.Prompt(Window.GetWindow(this), Resources, "重命名工作表",
+            "新的显示名称：", sheet.Name, false);
+        if (string.IsNullOrWhiteSpace(name) || string.Equals(name.Trim(), sheet.Name, StringComparison.Ordinal)) return;
+        await Model.ExecuteAsync(async () =>
+        {
+            await Model.Service.RenameSheetAsync(document.File.Id, sheet.Sheet.Id, nameVersion, name.Trim());
+            await Model.RefreshOpenDocumentAsync();
+        });
+    }
     private async void OnAddEpisode(object sender, RoutedEventArgs e)
     {
         if (Model.Document is not { } document) return;
@@ -160,9 +204,11 @@ public partial class ProjectWorkbooksView : UserControl
     private async void OnDownload(object sender, RoutedEventArgs e)
     {
         if (Model.Document is not { } document) return;
-        var picker = new SaveFileDialog { Filter = "Excel 工作簿 (*.xlsx)|*.xlsx", DefaultExt = ".xlsx", FileName = Path.GetFileName(document.File.Name) };
+        var exportName = document.File.Name.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase)
+            ? document.File.Name : document.File.Name + ".xlsx";
+        var picker = new SaveFileDialog { Filter = "Excel 工作簿 (*.xlsx)|*.xlsx", DefaultExt = ".xlsx", FileName = Path.GetFileName(exportName) };
         if (picker.ShowDialog(Window.GetWindow(this)) == true) await Model.ExecuteAsync(async () =>
-            await Model.Service.DownloadOriginalToAsync(document.File.Id, picker.FileName));
+            await Model.Service.ExportCurrentAsync(document.File.Id, document.File.Version, picker.FileName));
     }
     private async void OnPickImages(object sender, RoutedEventArgs e)
     {
@@ -180,27 +226,6 @@ public partial class ProjectWorkbooksView : UserControl
                 selected ? row.Row.CandidateImages.Select(a => a.Id) : row.Row.CandidateImages.Select(a => a.Id).Concat(ids));
         });
     }
-    private async void OnImageDrop(object sender, DragEventArgs e)
-    {
-        e.Handled = true;
-        if (Row(sender) is not { } row) return;
-        if (!row.Row.CanEdit) return;
-        var paths = Paths(e); var selected = Equals(((FrameworkElement)sender).Tag, "selected");
-        await Model.ExecuteAsync(async () =>
-        {
-            if (paths.Length == 0 || paths.Any(path => !IsImage(path))) throw new InvalidDataException("请拖入 PNG 或 JPEG 图片。");
-            if (selected && paths.Length != 1) throw new InvalidDataException("选定只接收一张图片，请将多张图片拖入备选区。");
-            if (!selected && row.Row.CandidateImages.Count + paths.Length > 100) throw new InvalidDataException("每行最多保留 100 张备选图片。");
-            var assets = new List<ImageAsset>();
-            foreach (var path in paths)
-            {
-                await using var source = File.OpenRead(path);
-                assets.Add(await Model.Service.UploadProjectImageAsync(Model.Document?.File.ProjectId ?? RequireProject(), Path.GetFileName(path), Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" : "image/jpeg", source));
-            }
-            await UpdateImagesWithReasonAsync(row, selected ? assets.Single().Id : row.Row.SelectedImage?.Id,
-                selected ? row.Row.CandidateImages.Select(a => a.Id) : row.Row.CandidateImages.Select(a => a.Id).Concat(assets.Select(a => a.Id)));
-        });
-    }
     private async void OnClearSelected(object sender, RoutedEventArgs e)
     {
         if (Row(sender) is { } row) await Model.ExecuteAsync(() => UpdateImagesWithReasonAsync(row, null, row.Row.CandidateImages.Select(a => a.Id)));
@@ -215,10 +240,6 @@ public partial class ProjectWorkbooksView : UserControl
         if (Row(sender) is { } row && ((FrameworkElement)sender).DataContext is ImageItem image)
             await Model.ExecuteAsync(() => Model.UpdateImagesAsync(row, row.Row.SelectedImage?.Id, row.Row.CandidateImages.Where(a => a.Id != image.Asset.Id).Select(a => a.Id)));
     }
-    private async void OnPreviewSelected(object sender, RoutedEventArgs e)
-    { if (Row(sender) is { Selected: { } image } row) await ReviewAsync(row, image); }
-    private async void OnPreviewCandidate(object sender, RoutedEventArgs e)
-    { if (Row(sender) is { } row && ((FrameworkElement)sender).DataContext is ImageItem image) await ReviewAsync(row, image); }
     private async void OnGeneralReview(object sender, RoutedEventArgs e)
     { if (Row(sender) is { } row) await ReviewAsync(row, null); }
     private Task ReviewAsync(AssetRowItem row, ImageItem? image) => Model.ExecuteAsync(async () =>
@@ -318,6 +339,50 @@ public partial class ProjectWorkbooksView : UserControl
         });
     }
     private static SceneRowItem? Scene(object sender) => (sender as FrameworkElement)?.DataContext as SceneRowItem;
+    private async void OnInlineFieldLostFocus(object sender, RoutedEventArgs e)
+    {
+        if (sender is not TextBox box) return;
+        if (box.Tag as string == "story-content" && box.DataContext is SceneRowItem scene)
+        {
+            await Model.ExecuteInlineAsync(() => Model.UpdateStoryContentAsync(scene));
+            ScheduleViewport();
+        }
+        else if ((box.Tag is "asset-category" or "asset-name") && box.DataContext is AssetRowItem asset)
+        {
+            await Model.ExecuteInlineAsync(() => Model.UpdateAssetFieldsAsync(asset));
+            ScheduleViewport();
+        }
+    }
+    private async void OnInlineFieldKeyDown(object sender, KeyEventArgs e)
+    {
+        if (sender is not TextBox box || box.DataContext is not ObservableModel item) return;
+        if (e.Key == Key.Escape)
+        {
+            e.Handled = true;
+            if (item is SceneRowItem scene) scene.StoryContentDraft = scene.Row.StoryContent;
+            else if (item is AssetRowItem asset)
+            {
+                if (box.Tag as string == "asset-category") asset.CategoryDraft = asset.Row.Category;
+                else asset.NameDraft = asset.Row.Name;
+            }
+            return;
+        }
+        var storyCommit = box.Tag as string == "story-content" && e.Key == Key.Enter
+            && Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
+        var assetCommit = (box.Tag is "asset-category" or "asset-name") && e.Key == Key.Enter;
+        if (!storyCommit && !assetCommit) return;
+        e.Handled = true;
+        if (item is SceneRowItem sceneItem)
+        {
+            await Model.ExecuteInlineAsync(() => Model.UpdateStoryContentAsync(sceneItem));
+            ScheduleViewport();
+        }
+        else if (item is AssetRowItem assetItem)
+        {
+            await Model.ExecuteInlineAsync(() => Model.UpdateAssetFieldsAsync(assetItem));
+            ScheduleViewport();
+        }
+    }
     private static bool FromRowControl(DependencyObject? source, DependencyObject row)
     {
         while (source != null && source != row)
@@ -332,6 +397,40 @@ public partial class ProjectWorkbooksView : UserControl
     {
         if (e.Handled || FromRowControl(e.OriginalSource as DependencyObject, (DependencyObject)sender)) return;
         e.Handled = true; ((FrameworkElement)sender).Focus(); OnSceneDetails(sender, e);
+    }
+    private void OnRowContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        if (sender is not FrameworkElement row || row.ContextMenu is not { } menu) return;
+        e.Handled = true;
+        menu.PlacementTarget = row;
+        menu.Placement = PlacementMode.MousePoint;
+        menu.IsOpen = true;
+    }
+    private async void OnDeleteRow(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem menuItem || menuItem.Parent is not ContextMenu menu
+            || menu.PlacementTarget is not FrameworkElement row) return;
+
+        if (row.DataContext is SceneRowItem scene)
+        {
+            if (!scene.Row.CanEdit) return;
+            var label = $"节拍行 {scene.Row.SceneNumber ?? "?"} / {scene.Row.BeatNumber ?? "?"}";
+            if (MessageBox.Show(Window.GetWindow(this),
+                    $"确定从工作簿中移除“{label}”吗？\n该行会从所有人的工作簿隐藏；图片和文件夹不会删除，评审数据会保留在数据库中。当前没有恢复入口。",
+                    "删除节拍行", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+            if (_scenePanelItem?.Row.Id == scene.Row.Id && !TryLeaveScenePanel()) return;
+            await Model.ExecuteAsync(() => Model.DeleteSceneRowAsync(scene));
+        }
+        else if (row.DataContext is AssetRowItem asset)
+        {
+            if (!asset.Row.CanEdit) return;
+            var label = string.Join(" / ", new[] { asset.Row.Category, asset.Row.Name }.Where(value => !string.IsNullOrWhiteSpace(value)));
+            if (string.IsNullOrWhiteSpace(label)) label = "未命名资产行";
+            if (MessageBox.Show(Window.GetWindow(this),
+                    $"确定从工作簿中移除“{label}”吗？\n该行会从所有人的工作簿隐藏；图片和文件夹不会删除，评审数据会保留在数据库中。当前没有恢复入口。",
+                    "删除资产行", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+            await Model.ExecuteAsync(() => Model.DeleteAssetRowAsync(asset));
+        }
     }
     private void OnSceneRowKeyDown(object sender, KeyEventArgs e)
     {

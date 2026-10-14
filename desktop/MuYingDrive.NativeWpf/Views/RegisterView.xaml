@@ -28,11 +28,6 @@
                 <PasswordBox Style="{StaticResource PasswordBox.Base}" infra:PasswordBoxAssistant.BoundPassword="{Binding ConfirmPassword, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                              AutomationProperties.Name="确认密码" Margin="0,0,0,16" />
 
-                <TextBlock Text="所属部门" FontSize="{StaticResource Typography.FontSize.Label}" Foreground="{DynamicResource Brush.Text.Secondary}" Margin="0,0,0,8" />
-                <ComboBox Style="{StaticResource ComboBox.Base}" ItemsSource="{Binding Departments}"
-                          SelectedItem="{Binding SelectedDepartment, UpdateSourceTrigger=PropertyChanged}"
-                          AutomationProperties.Name="所属部门" />
-
                 <TextBlock Text="{Binding ErrorMessage}" Foreground="{DynamicResource Brush.Status.Danger}"
                            TextWrapping="Wrap" Margin="0,12,0,0" AutomationProperties.LiveSetting="Polite" />
 

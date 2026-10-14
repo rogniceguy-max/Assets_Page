@@ -1,0 +1,91 @@
+<UserControl x:Class="MuYingDrive.NativeWpf.Views.ProjectImagesView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{DynamicResource Brush.Surface.Canvas}">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        <DataTemplate x:Key="ProjectAssetImageTemplate">
+            <Border Width="236" Margin="0,0,12,12" Padding="10"
+                    Background="{DynamicResource Brush.Surface.Panel}"
+                    BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
+                    CornerRadius="{StaticResource CornerRadius.Card}">
+                <StackPanel>
+                    <Grid Height="164" Background="{DynamicResource Brush.Surface.Subtle}">
+                        <Image Source="{Binding Preview}" Stretch="Uniform" />
+                        <TextBlock Text="{Binding PreviewStatus}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource Brush.Text.Secondary}" TextWrapping="Wrap" TextAlignment="Center" Margin="12">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Preview}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
+                    <TextBlock Text="{Binding Asset.Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                               ToolTip="{Binding Asset.Name}" Margin="0,9,0,2" />
+                    <TextBlock Text="{Binding AssetLabel}" Foreground="{DynamicResource Brush.Text.Secondary}"
+                               TextWrapping="Wrap" />
+                    <DockPanel Margin="0,8,0,0">
+                        <TextBlock Text="{Binding RelationshipLabel}" Foreground="{DynamicResource Brush.Accent.Primary}"
+                                   FontSize="{StaticResource Typography.FontSize.Caption}" />
+                        <TextBlock Text="{Binding ProjectName}" Foreground="{DynamicResource Brush.Text.Secondary}"
+                                   FontSize="{StaticResource Typography.FontSize.Caption}" HorizontalAlignment="Right" />
+                    </DockPanel>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <Grid Margin="24,19,24,22">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <Grid Grid.Row="0" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock Text="{Binding ScopeTitle}" FontSize="{StaticResource Typography.FontSize.PageTitle}"
+                           FontWeight="SemiBold" />
+                <TextBlock Text="只显示资产表中已选定或列入备选的图片。" Foreground="{DynamicResource Brush.Text.Secondary}"
+                           Margin="0,5,0,0" />
+            </StackPanel>
+            <Button Grid.Column="1" Content="刷新" Click="OnRefresh" VerticalAlignment="Center"
+                    IsEnabled="{Binding CanRefresh}" />
+        </Grid>
+        <StackPanel Grid.Row="1" Margin="0,0,0,10">
+            <ProgressBar Height="3" IsIndeterminate="True">
+                <ProgressBar.Style>
+                    <Style TargetType="ProgressBar" BasedOn="{StaticResource {x:Type ProgressBar}}">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsLoading}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ProgressBar.Style>
+            </ProgressBar>
+            <TextBlock Text="{Binding Error}" Foreground="{DynamicResource Brush.Status.Danger}"
+                       Margin="0,5,0,0" Visibility="{Binding HasError, Converter={StaticResource BoolToVisibility}}" />
+        </StackPanel>
+        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <Grid>
+                <ItemsControl ItemsSource="{Binding Items}" ItemTemplate="{StaticResource ProjectAssetImageTemplate}">
+                    <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                </ItemsControl>
+                <TextBlock Text="{Binding EmptyMessage}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                           Foreground="{DynamicResource Brush.Text.Secondary}" TextAlignment="Center" Margin="20"
+                           Visibility="{Binding ShowEmpty, Converter={StaticResource BoolToVisibility}}" />
+            </Grid>
+        </ScrollViewer>
+        <Button Grid.Row="3" Content="加载更多图片" Click="OnLoadMore" HorizontalAlignment="Center" Margin="0,12,0,0"
+                Visibility="{Binding HasMore, Converter={StaticResource BoolToVisibility}}" />
+    </Grid>
+</UserControl>
