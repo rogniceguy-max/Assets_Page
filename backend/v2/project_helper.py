@@ -167,6 +167,18 @@ def _apply_ownership(path: Path, uid: int, gid: int) -> None:
     os.chown(path, uid, gid)
 
 
+def _apply_mode(path: Path, mode: int) -> None:
+    """Sets the mode explicitly, after the path exists.
+
+    Not the mode passed to ``mkdir`` or ``os.open``: on this share those are not what ends
+    up on disk. A directory asked for as 0770 and a file asked for as 0660 both came back as
+    0770 — the file executable — which is how this was found: it was measured on the NAS
+    rather than assumed from the call. The same was true of ACL inheritance, and the lesson
+    is the same one: on this file system the creation call is a request, not a result.
+    """
+    os.chmod(path, mode)
+
+
 def _write_atomic(path: Path, data: bytes, mode: int) -> None:
     temporary = path.with_name(path.name + ".tmp")
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
@@ -176,6 +188,7 @@ def _write_atomic(path: Path, data: bytes, mode: int) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
+        _apply_mode(path, mode)
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
@@ -211,6 +224,7 @@ def create_project(request: dict[str, Any]) -> dict[str, Any]:
 
     try:
         os.mkdir(staging, DIRECTORY_MODE)
+        _apply_mode(staging, DIRECTORY_MODE)
         _apply_ownership(staging, owner_uid, owner_gid)
 
         _write_atomic(staging / f"{BEAT_SHEET_NAME}.xlsx",

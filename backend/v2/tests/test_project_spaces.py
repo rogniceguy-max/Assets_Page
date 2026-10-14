@@ -132,6 +132,20 @@ class CreateProjectTests(unittest.TestCase):
         self.assertEqual("scene_beats", projector.classify(created / "节拍表.xlsx"))
         self.assertEqual("asset_review", projector.classify(created / "资产表.xlsx"))
 
+    def test_the_modes_are_set_explicitly_rather_than_left_to_the_creation_call(self):
+        # Asserted because the call is not what decides. On the NAS a directory asked for as
+        # 0770 and a file asked for as 0660 both came back as 0770 — the file executable —
+        # so the mode is applied again afterwards, and this is what says so.
+        applied = []
+        with mock.patch.object(project_helper, "PROJECT_ROOT", self.root), \
+             mock.patch.object(project_helper, "_apply_mode",
+                               lambda path, mode: applied.append((Path(path).name, mode))):
+            project_helper.create_project({"name": "孟婆"})
+
+        self.assertIn((".creating-孟婆", project_helper.DIRECTORY_MODE), applied)
+        self.assertIn(("节拍表.xlsx", project_helper.FILE_MODE), applied)
+        self.assertIn(("资产表.xlsx", project_helper.FILE_MODE), applied)
+
     def test_nothing_is_left_behind_when_a_template_fails(self):
         # The contract forbids a half-built project: one workbook and not the other is
         # exactly the state a user would find and not know what to do with.
