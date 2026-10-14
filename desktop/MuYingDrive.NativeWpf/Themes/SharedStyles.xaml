@@ -33,6 +33,20 @@
         <Setter Property="TextOptions.TextRenderingMode" Value="Auto" />
     </Style>
 
+    <!--
+      A field label: the small secondary-text caption above a value. The project-workbook
+      page looks this key up and drops its own fallback when the host has one, so the host
+      has to supply the same role rather than a different one. The margin matches the
+      fallback's so that adopting it changes the typeface and not the layout.
+    -->
+    <Style x:Key="Typography.Caption" TargetType="{x:Type TextBlock}">
+        <Setter Property="FontFamily" Value="{StaticResource Typography.FontFamily}" />
+        <Setter Property="FontSize" Value="{StaticResource Typography.FontSize.Caption}" />
+        <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Setter Property="Margin" Value="0,0,0,6" />
+    </Style>
+
     <Style x:Key="Button.Base" TargetType="{x:Type Button}">
         <Setter Property="Height" Value="{StaticResource Size.ControlHeight}" />
         <Setter Property="MinWidth" Value="72" />

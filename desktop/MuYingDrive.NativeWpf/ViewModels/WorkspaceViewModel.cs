@@ -74,6 +74,15 @@ public sealed class WorkspaceViewModel : ObservableObject
         var files = new FilesViewModel(session, settings, transfers);
         var feedback = new FeedbackViewModel(session, settings);
 
+        // Built per sign-in and disposed with the workspace: the workbook library scopes its
+        // retry records to a hash of the server origin and the account id, so a page that
+        // outlived a sign-out could resume one person's pending work as the next. Absent when
+        // the client configuration did not load, since there is then no pinned client to build
+        // it from — and the entry is simply not offered rather than offered and broken.
+        var projectWorkbooks = main.ApiClient is { } api
+            ? new ProjectWorkbookPage(api, session.SessionToken, session.User.Id)
+            : null;
+
         var chrome = new WorkspaceChrome(
             [
                 new WorkspaceNavItem("文件", "文件", "Files"),
@@ -85,22 +94,30 @@ public sealed class WorkspaceViewModel : ObservableObject
                 new WorkspaceNavItem("公共素材", "公共素材", "Image"),
                 new WorkspaceNavItem("个人空间", "个人空间", "UserRound"),
                 new WorkspaceNavItem("其他部门", "其他部门", "Folder"),
+                // Last, below the four spaces. It is a page rather than a space, but the
+                // sidebar is one list and this is where it reads best.
+                new WorkspaceNavItem("项目", "项目", "Table"),
             ],
             session.User.UserName,
             "退出登录",
             ShowUpdateEntry: true);
 
+        var pages = new Dictionary<string, object>(StringComparer.Ordinal)
+        {
+            ["文件"] = files,
+            ["传输"] = transfers,
+            ["反馈"] = feedback
+        };
+        if (projectWorkbooks is not null) pages["项目"] = projectWorkbooks.ViewModel;
+
         var workspace = new WorkspaceViewModel(
-            main, chrome,
-            new Dictionary<string, object>(StringComparer.Ordinal)
-            {
-                ["文件"] = files,
-                ["传输"] = transfers,
-                ["反馈"] = feedback
-            },
+            main, chrome, pages,
             key => { files.SetSpace(key); return Task.CompletedTask; },
             () => main.SignOutAsync(session),
             transfers, feedback,
+            disposeExtra: projectWorkbooks is null
+                ? null
+                : () => { projectWorkbooks.Dispose(); return ValueTask.CompletedTask; },
             onPageActivated: key => { if (key == "反馈") _ = feedback.EnsureLoadedAsync(); });
 
         workspace.Session = session;
@@ -252,6 +269,15 @@ public sealed class WorkspaceViewModel : ObservableObject
     private async Task SelectSpaceAsync(string? space)
     {
         if (space is null || !SpaceItems.Any(item => item.Key == space)) return;
+
+        // 项目 sits in the space list for placement, but it is a page rather than a space:
+        // choosing it navigates instead of re-filtering the file browser underneath.
+        if (_pages.ContainsKey(space))
+        {
+            Navigate(space);
+            return;
+        }
+
         _selectedSpaceKey = space;
         SelectedNavigation = "文件";
         CurrentContent = _pages["文件"];
@@ -263,6 +289,10 @@ public sealed class WorkspaceViewModel : ObservableObject
     private void MarkSelected()
     {
         foreach (var item in NavigationItems) item.IsSelected = item.Key == SelectedNavigation;
-        foreach (var item in SpaceItems) item.IsSelected = item.Key == _selectedSpaceKey;
+        // A space item is normally highlighted by the space the browser is showing, but 项目
+        // is a page that lives in this list — without the second test it would never light up
+        // while its page was on screen.
+        foreach (var item in SpaceItems)
+            item.IsSelected = item.Key == _selectedSpaceKey || item.Key == SelectedNavigation;
     }
 }

@@ -59,6 +59,16 @@ public sealed class MainViewModel : ObservableObject
 
     public ThemeService ThemeService { get; }
 
+    /// <summary>
+    /// The authenticated V2 client, or null before the client configuration loads.
+    /// </summary>
+    /// <remarks>
+    /// Exposed so a page can build its own HTTP client against the same certificate pin,
+    /// rather than constructing a second <see cref="V2ApiClient"/> from settings and
+    /// duplicating the pinning rule.
+    /// </remarks>
+    public V2ApiClient? ApiClient => _api;
+
     public AsyncRelayCommand InstallUpdateNowCommand { get; }
     public bool IsUpdateReady => _updateCoordinator?.ReadyUpdate is not null;
     public bool HasPreparedUpdateHandoff => _preparedHandoffPath is not null && _preparedUpdaterPath is not null;

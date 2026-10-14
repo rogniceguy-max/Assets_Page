@@ -2,7 +2,8 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:MuYingDrive.NativeWpf.ViewModels"
-             xmlns:views="clr-namespace:MuYingDrive.NativeWpf.Views">
+             xmlns:views="clr-namespace:MuYingDrive.NativeWpf.Views"
+             xmlns:pw="clr-namespace:MuYingDrive.ProjectWorkbooks;assembly=MuYingDrive.ProjectWorkbooks">
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
@@ -16,6 +17,9 @@
             <!-- The tour's browser renders through the same view; both implement IFileBrowser. -->
             <DataTemplate DataType="{x:Type vm:VisitorViewModel}"><views:FilesView /></DataTemplate>
             <DataTemplate DataType="{x:Type vm:TransferViewModel}"><views:TransferView /></DataTemplate>
+            <!-- The workbook page is a separate library with its own namespace, so it is
+                 templated here rather than inside a dictionary that only knows this one. -->
+            <DataTemplate DataType="{x:Type pw:ProjectWorkbooksViewModel}"><pw:ProjectWorkbooksView /></DataTemplate>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

@@ -10,6 +10,8 @@ using System.Windows.Threading;
 using MuYingDrive.NativeWpf.Models;
 using MuYingDrive.NativeWpf.Services;
 using MuYingDrive.NativeWpf.ViewModels;
+using System.Net.Http;
+using MuYingDrive.ProjectWorkbooks;
 using MuYingDrive.NativeWpf.Views;
 
 internal static class Program
@@ -156,6 +158,19 @@ internal static class Program
                 confirm.Content = null;
                 Render(confirmContent, 460, 340, 96, Path.Combine(output, $"confirm-{theme}.png"));
                 confirm.Close();
+
+                // The workbook page is a separate library with its own XAML and its own local
+                // resource fallbacks. Rendering it is what shows they resolve — a
+                // StaticResource key that does not exist compiles fine and throws on load.
+                var workbookClient = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+                var workbook = new ProjectWorkbooksViewModel(new HttpProjectWorkbookService(
+                    workbookClient, new Uri("https://workbooks.invalid/api/v2/project-workbooks/"),
+                    () => "fixture-token",
+                    new WorkbookTransportOptions { MaxUploadBytes = 64L * 1024 * 1024 },
+                    () => "1"));
+                Render(new ProjectWorkbooksView { DataContext = workbook }, 1100, 700, 96,
+                       Path.Combine(output, $"workbooks-{theme}.png"));
+                workbookClient.Dispose();
 
                 var rename = new TextInputWindow("重命名", "为“照片.jpg”输入新名称。", "照片.jpg", "重命名", 2);
                 Assert(rename.Value == "照片.jpg", "The rename box starts from the current name.");

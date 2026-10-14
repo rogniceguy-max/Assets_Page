@@ -124,6 +124,11 @@ public sealed class LucideIcon : FrameworkElement
                 Path("M20 7h-3a2 2 0 0 1-2-2V2"),
                 Path("M9 18a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l4 4v10a2 2 0 0 1-2 2Z"),
                 Path("M3 7.6v12.8A1.6 1.6 0 0 0 4.6 22h9.8")),
+            // Lucide's "table". The project page is a spreadsheet reader, and neither Folder
+            // nor Files says so.
+            ["Table"] = Group(
+                RoundRect(3, 3, 18, 18, 2),
+                Path("M3 9h18 M3 15h18 M12 3v18")),
             ["Upload"] = Group(
                 Path("M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"),
                 Path("m17 8-5-5-5 5"),
