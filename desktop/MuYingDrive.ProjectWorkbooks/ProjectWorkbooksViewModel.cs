@@ -140,8 +140,21 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         var files = await Service.ListProjectFilesAsync(SelectedProject.Id);
         Files.Clear(); foreach (var file in files) Files.Add(file);
     }
+    /// <summary>
+    /// Asked before the open workbook is replaced or closed, and answers whether that is
+    /// allowed. The view sets it to whatever is holding unsaved input.
+    /// </summary>
+    /// <remarks>
+    /// It lives here rather than on the open button because the open button is not the only
+    /// way in: the host's project tree opens workbooks through OpenWorkbookAsync, and a guard
+    /// that only covered the in-page buttons would drop a draft without asking whenever
+    /// someone clicked a workbook in the sidebar instead.
+    /// </remarks>
+    public Func<bool>? ConfirmLeaving { get; set; }
+
     public async Task OpenAsync(ProjectFile file)
     {
+        if (ConfirmLeaving?.Invoke() == false) return;
         var document = await Service.OpenAsync(file.Id);
         var sheets = new List<SheetItem>();
         foreach (var source in document.Sheets)
@@ -156,7 +169,11 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         Sheets.Clear(); foreach (var sheet in sheets) Sheets.Add(sheet);
         SelectedSheet = Sheets.FirstOrDefault(s => s.IsScene || s.IsAsset) ?? Sheets.FirstOrDefault();
     }
-    public void Back() { Document = null; SelectedSheet = null; Sheets.Clear(); }
+    public void Back()
+    {
+        if (ConfirmLeaving?.Invoke() == false) return;
+        Document = null; SelectedSheet = null; Sheets.Clear();
+    }
     public async Task<ImageItem> MakeImageAsync(ImageAsset image)
     {
         var item = new ImageItem(image, null); await EnsureThumbnailAsync(item); return item;

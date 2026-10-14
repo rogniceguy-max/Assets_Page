@@ -21,7 +21,22 @@ public partial class ProjectWorkbooksView : UserControl
         AdoptHostTheme();
         if (_loaded || DataContext is not ProjectWorkbooksViewModel) return;
         _loaded = true;
+        Model.PropertyChanged += OnModelPropertyChanged;
+        // One guard for every way out: closing the workbook from the page, refreshing it,
+        // and the host's project tree opening a different one, which never asks this view.
+        Model.ConfirmLeaving = TryLeaveScenePanel;
         await Model.ExecuteAsync(Model.InitializeAsync);
+    }
+
+    // The panel holds a row that belongs to the workbook that is open, and opening another
+    // one rebuilds the row list underneath it, so a panel must never outlive its document.
+    // ConfirmLeaving is what normally takes it away, before that happens. This is the net for
+    // a path that gets past it: it cannot ask, because by the time the document has been
+    // replaced the draft it would be asking about is already gone.
+    private void OnModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(ProjectWorkbooksViewModel.Document)) return;
+        HideScenePanel();
     }
     private void AdoptHostTheme()
     {
@@ -280,14 +295,46 @@ public partial class ProjectWorkbooksView : UserControl
         if (e.Handled || e.Key is not (Key.Enter or Key.Space) || FromRowControl(e.OriginalSource as DependencyObject, (DependencyObject)sender)) return;
         e.Handled = true; OnSceneDetails(sender, e);
     }
+    private SceneDetailsPanel? _scenePanel;
+    private SceneRowItem? _scenePanelItem;
+
     private async void OnSceneDetails(object sender, RoutedEventArgs e)
     {
         if (Scene(sender) is not { } row || Model.Document is not { } document) return;
-        await Model.ExecuteAsync(async () =>
-        {
-            new SceneDetailsWindow(Model, document.File.Id, row, Resources) { Owner = Window.GetWindow(this) }.ShowDialog();
-            await Model.RefreshSceneSummaryAsync(document.File.Id, row);
-        });
+        // Clicking the beat that is already open must not rebuild the panel — rebuilding is
+        // how the draft gets dropped, and re-clicking a row is a plausible thing to do.
+        if (_scenePanel != null && ReferenceEquals(row, _scenePanelItem)) return;
+        if (!TryLeaveScenePanel()) return;
+        ShowScenePanel(document.File.Id, row);
+        await Model.ExecuteAsync(() => Model.RefreshSceneSummaryAsync(document.File.Id, row));
+    }
+
+    private void ShowScenePanel(string fileId, SceneRowItem item)
+    {
+        var panel = new SceneDetailsPanel(Model, fileId, item, Resources);
+        panel.CloseRequested += (_, _) => TryLeaveScenePanel();
+        _scenePanel = panel; _scenePanelItem = item;
+        ScenePanelContent.Content = panel;
+        ScenePanelHost.Visibility = Visibility.Visible;
+    }
+
+    private void HideScenePanel()
+    {
+        _scenePanel = null; _scenePanelItem = null;
+        ScenePanelContent.Content = null;
+        ScenePanelHost.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// True when it is safe to take the panel away, which it then does. The panel's own
+    /// TryLeave decides — it refuses while a request is in flight and asks before dropping an
+    /// unsaved draft — and every path that leaves or replaces the workbook has to ask first.
+    /// </summary>
+    private bool TryLeaveScenePanel()
+    {
+        if (_scenePanel is { } panel && !panel.TryLeave()) return false;
+        HideScenePanel();
+        return true;
     }
     private async void OnSceneDiscussion(object sender, RoutedEventArgs e)
     {

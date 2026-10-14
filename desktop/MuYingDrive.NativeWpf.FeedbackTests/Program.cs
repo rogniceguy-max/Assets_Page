@@ -193,6 +193,34 @@ internal static class Program
                     () => "1"));
                 Render(new ProjectWorkbooksView { DataContext = workbook }, 1100, 700, 96,
                        Path.Combine(output, $"workbooks-{theme}.png"));
+
+                // The scene detail is built in code rather than XAML, and it spent its life
+                // inside a Window of its own — which is exactly where a DynamicResource lookup
+                // it depends on could have been resolving without anything saying so.
+                // Rendering it bare is what shows it stands up outside a window, because that
+                // is where it now lives.
+                var sceneItem = new SceneRowItem(new SceneRow("row-fixture", 1, "12", "3", "她把碗放下。", "红", "拆成两拍：递碗、转身。")
+                {
+                    SceneContext = "第二场 · 夜",
+                    CastContext = "孟婆",
+                    LegacyNotes = [new LegacyNote("成员批注一", "这里要停一下。", "F2")],
+                    CanEdit = true,
+                });
+                var panel = new SceneDetailsPanel(workbook, "file-fixture", sceneItem, new ResourceDictionary());
+                Assert(!panel.HasDraft, "A panel nobody has typed into holds no draft.");
+                Assert(panel.Heading == "场景 12 · 节拍 3", "The panel names the beat it is showing: " + panel.Heading);
+                Render(panel, 360, 620, 96, Path.Combine(output, $"scene-panel-{theme}.png"));
+
+                // The panel cannot outlive the workbook it describes, and the host's project
+                // tree can swap that workbook without this view being asked anything. The
+                // guard therefore lives on the view model, and this is what holds it there:
+                // a refusal must leave the open workbook alone rather than being ignored.
+                var asked = 0;
+                workbook.ConfirmLeaving = () => { asked++; return false; };
+                workbook.OpenAsync(new ProjectFile("file-fixture", "孟婆2_场景节拍表.xlsx", "scene_beats", 1)).GetAwaiter().GetResult();
+                Assert(asked == 1, "Opening a workbook has to ask before it takes the open one away.");
+                Assert(!workbook.IsOpen, "A refused open must not replace what is open.");
+                workbook.ConfirmLeaving = null;
                 workbookClient.Dispose();
 
                 var rename = new TextInputWindow("重命名", "为“照片.jpg”输入新名称。", "照片.jpg", "重命名", 2);

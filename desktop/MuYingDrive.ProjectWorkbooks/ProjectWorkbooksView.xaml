@@ -139,6 +139,7 @@
     </ScrollViewer>
    </Grid>
    <Grid Visibility="{Binding IsOpen, Converter={StaticResource BoolVisibility}}">
+    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <StackPanel><WrapPanel><Button Content="返回项目" Click="OnBack"/><Button Content="下载原件" Click="OnDownload"/><Button Content="导出" Click="OnExport"/><Button Content="导入修订" Click="OnImportRevision"/><Button Content="修订记录" Click="OnRevisions"/></WrapPanel>
      <TextBlock Text="{Binding Document.File.Name}" FontSize="16" FontWeight="SemiBold" Margin="0,8,0,8"/><TextBlock Text="{Binding Notice}" Foreground="{DynamicResource Brush.Text.Secondary}" Margin="0,0,0,10"/>
@@ -158,6 +159,16 @@
       </ItemsControl>
      </StackPanel>
     </ScrollViewer>
+    <!-- HOST ADJUSTMENT. The scene detail lives here now, beside the beats it describes,
+         instead of in a modal window over them. The column is Auto and this border is
+         Collapsed until a beat is opened, so the list keeps the full width when it is not.
+         Content and Visibility are set from the code-behind; the panel is built in code, and
+         keeping that in one place is why this file only describes where it goes. -->
+    <Border x:Name="ScenePanelHost" Grid.Column="1" Grid.RowSpan="3" Width="360" Visibility="Collapsed"
+            Background="{DynamicResource Brush.Surface.Panel}"
+            BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1,0,0,0">
+     <ContentControl x:Name="ScenePanelContent"/>
+    </Border>
    </Grid>
   </Grid>
  </Grid>
