@@ -1,5 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
+using System.Windows.Media;
 
 namespace MuYingDrive.ProjectWorkbooks;
 
@@ -132,6 +134,64 @@ public sealed class SceneDetailsPanel : UserControl
         source.Children.Add(WorkflowDialogs.Text("出场信息", 16)); source.Children.Add(WorkflowDialogs.Text(item.Row.CastContext));
         source.Children.Add(WorkflowDialogs.Text("原文", 16)); source.Children.Add(WorkflowDialogs.Text(item.Row.StoryContent));
         content.Children.Add(new Expander { Header = "原文与上下文", Content = source, Margin = new Thickness(0, 0, 0, 12) });
+
+        if (item.HasLinkedAssets)
+        {
+            var assetsPanel = new StackPanel { Margin = new Thickness(12) };
+            var wrap = new WrapPanel();
+            foreach (var asset in item.LinkedAssets)
+            {
+                var card = new Border
+                {
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(6),
+                    Padding = new Thickness(8),
+                    Margin = new Thickness(0, 0, 8, 8),
+                    Width = 140,
+                };
+                card.SetResourceReference(Border.BackgroundProperty, "Brush.Surface.Panel");
+                card.SetResourceReference(Border.BorderBrushProperty, "Brush.Border.Subtle");
+
+                var cardStack = new StackPanel();
+                var thumb = item.LinkedThumbnails.FirstOrDefault(t => t.Asset.Name.Contains(asset.Name));
+                if (thumb != null)
+                {
+                    var img = new Image { Height = 80, Stretch = Stretch.Uniform, Margin = new Thickness(0, 0, 0, 6) };
+                    BindingOperations.SetBinding(img, Image.SourceProperty, new Binding(nameof(ImageItem.Preview)) { Source = thumb });
+                    cardStack.Children.Add(img);
+                }
+                var headerText = new TextBlock
+                {
+                    Text = $"[{asset.Category}] {asset.Name}",
+                    FontWeight = FontWeights.SemiBold,
+                    TextWrapping = TextWrapping.Wrap,
+                };
+                headerText.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Accent.Primary");
+                cardStack.Children.Add(headerText);
+                if (!string.IsNullOrWhiteSpace(asset.Appearance))
+                {
+                    var appText = new TextBlock
+                    {
+                        Text = asset.Appearance,
+                        FontSize = 11,
+                        TextWrapping = TextWrapping.Wrap,
+                        Margin = new Thickness(0, 2, 0, 0),
+                    };
+                    appText.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Secondary");
+                    cardStack.Children.Add(appText);
+                }
+                card.Child = cardStack;
+                wrap.Children.Add(card);
+            }
+            assetsPanel.Children.Add(wrap);
+            content.Children.Add(new Expander
+            {
+                Header = $"本拍关联资产 ({item.LinkedAssets.Count})",
+                Content = assetsPanel,
+                IsExpanded = true,
+                Margin = new Thickness(0, 0, 0, 12)
+            });
+        }
 
         _toolbar.Children.Add(WorkflowDialogs.Button("保存", async (_, _) => await Execute(async () =>
         {

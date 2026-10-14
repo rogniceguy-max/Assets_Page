@@ -396,6 +396,12 @@ class ProjectsApi:
                 return self._review_route(actor, method, parts, parsed.query, headers, body)
             if len(parts) == 1 and method == "GET":
                 return json_response(200, svc.document(actor, parts[0]))
+            if len(parts) == 2 and parts[1] == "sheets" and method == "POST":
+                value = object_body(headers, body)
+                sheet_name = review_text(value.get("sheet_name"))
+                if self.workflow is not None:
+                    return json_response(201, self._workflow().add_sheet(actor, parts[0], sheet_name))
+                raise ApiFault(503, "STORAGE_UNAVAILABLE", "新增工作表服务暂未接入。")
             if len(parts) == 2 and parts[1] == "original" and method == "GET":
                 if self.workflow is not None:
                     return stream_response(self.workflow.original_stream(actor, parts[0]), workbook=True)

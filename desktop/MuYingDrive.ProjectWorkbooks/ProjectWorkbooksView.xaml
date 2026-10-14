@@ -56,6 +56,27 @@
      <StackPanel Margin="10">
       <TextBlock Text="故事内容" Style="{DynamicResource Typography.Caption}"/><TextBlock Text="{Binding Row.StoryContent}"/>
       <TextBlock Text="拆分规划" Style="{DynamicResource Typography.Caption}" Margin="0,12,0,6"/><TextBlock Text="{Binding Row.BreakdownPlan}"/>
+      <StackPanel Margin="0,10,0,0" Visibility="{Binding HasLinkedAssets, Converter={StaticResource BoolVisibility}}">
+       <TextBlock Text="关联资产" Style="{DynamicResource Typography.Caption}" Margin="0,0,0,4"/>
+       <ItemsControl ItemsSource="{Binding LinkedAssets}">
+        <ItemsControl.ItemsPanel>
+         <ItemsPanelTemplate>
+          <WrapPanel/>
+         </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+         <DataTemplate>
+          <Border Background="{DynamicResource Brush.Surface.Canvas}" BorderBrush="{DynamicResource Brush.Border.Subtle}"
+                  BorderThickness="1" CornerRadius="4" Padding="6,2" Margin="0,0,6,6">
+           <StackPanel Orientation="Horizontal">
+            <TextBlock Text="{Binding Category}" Style="{DynamicResource Typography.Caption}" Foreground="{DynamicResource Brush.Accent.Primary}" Margin="0,0,4,0"/>
+            <TextBlock Text="{Binding Name}" FontWeight="Medium"/>
+           </StackPanel>
+          </Border>
+         </DataTemplate>
+        </ItemsControl.ItemTemplate>
+       </ItemsControl>
+      </StackPanel>
      </StackPanel>
     </StackPanel>
    </Border>
@@ -64,7 +85,7 @@
    <Border Loaded="OnRowLoaded" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" Margin="0,0,0,8" Background="{DynamicResource Brush.Surface.Panel}">
     <local:ResponsiveColumnsPanel Weights="0.8,1,1,2,3" Breakpoint="760">
      <Border Style="{StaticResource Cell}"><StackPanel><TextBlock Text="类别" Style="{DynamicResource Typography.Caption}"/><TextBlock Text="{Binding Row.Category}"/></StackPanel></Border>
-     <Border Style="{StaticResource Cell}"><StackPanel><TextBlock Text="名称 / 形态" Style="{DynamicResource Typography.Caption}"/><TextBlock Text="{Binding Row.Name}"/><TextBlock Text="{Binding Row.Variant}" Foreground="{DynamicResource Brush.Text.Secondary}"/><Button Click="OnGeneralReview" Margin="0,12,0,6" Padding="4"><TextBlock Text="{Binding GeneralSummaryText}" TextWrapping="Wrap"/></Button><Button Content="比较图片" Click="OnCompareRow"/><Button Content="选定历史" Click="OnSelectionHistory"/></StackPanel></Border>
+     <Border Style="{StaticResource Cell}"><StackPanel><TextBlock Text="名称 / 形态" Style="{DynamicResource Typography.Caption}"/><TextBlock Text="{Binding Row.Name}"/><TextBlock Text="{Binding Row.Variant}" Foreground="{DynamicResource Brush.Text.Secondary}"/><Button Click="OnGeneralReview" Margin="0,12,0,6" Padding="4"><TextBlock Text="{Binding GeneralSummaryText}" TextWrapping="Wrap"/></Button><Button Content="比较图片" Click="OnCompareRow"/><Button Content="选定历史" Click="OnSelectionHistory"/><Button Content="打开文件夹" Click="OnOpenAssetFolder" ToolTip="在文件管理器中打开此资产目录"/></StackPanel></Border>
      <Border Style="{StaticResource Cell}"><StackPanel><TextBlock Text="出场" Style="{DynamicResource Typography.Caption}"/><TextBlock Text="{Binding Row.Appearance}"/></StackPanel></Border>
      <Border Style="{StaticResource Cell}" AllowDrop="True" Tag="selected" DragOver="OnImageDragOver" Drop="OnImageDrop">
       <StackPanel><TextBlock Text="选定" Style="{DynamicResource Typography.Caption}"/>
@@ -104,7 +125,7 @@
        rendered the raw record — it showed "ProjectInfo { Id = …, Name = 孟婆 }" rather than
        a name — while being a second, disagreeing answer to which project is open. Removed;
        the heading names the project instead. -->
-  <StackPanel Grid.Row="0"><TextBlock Text="{Binding SelectedProject.Name, TargetNullValue=工作簿}" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,16"/>
+  <StackPanel Grid.Row="0">
    <TextBlock Text="{Binding Error}" Foreground="{DynamicResource Brush.Status.Danger}" Margin="0,0,0,8"/>
    <Button Content="重新加载" Click="OnRefresh" HorizontalAlignment="Left" IsEnabled="{Binding Ready}" Visibility="{Binding CanReload, Converter={StaticResource BoolVisibility}}"/>
    <!-- HOST ADJUSTMENT. The bar used to be bound straight to Busy, so switching to a
@@ -145,8 +166,17 @@
     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <StackPanel><WrapPanel><Button Content="返回项目" Click="OnBack"/><Button Content="下载原件" Click="OnDownload"/><Button Content="导出" Click="OnExport"/><Button Content="导入修订" Click="OnImportRevision"/><Button Content="修订记录" Click="OnRevisions"/></WrapPanel>
-     <TextBlock Text="{Binding Document.File.Name}" FontSize="16" FontWeight="SemiBold" Margin="0,8,0,8"/><TextBlock Text="{Binding Notice}" Foreground="{DynamicResource Brush.Text.Secondary}" Margin="0,0,0,10"/>
-     <WrapPanel Margin="0,0,0,12"><TextBlock Text="工作表" VerticalAlignment="Center" Margin="0,0,8,0"/><ComboBox ItemsSource="{Binding Sheets}" SelectedItem="{Binding SelectedSheet}" DisplayMemberPath="Name" MinWidth="140" MaxWidth="280" Margin="0,0,12,0"/>
+     <TextBlock Text="{Binding Document.File.Name}" FontSize="16" FontWeight="SemiBold" Margin="0,8,0,12"/>
+     <WrapPanel Margin="0,0,0,12"><TextBlock Text="工作表" VerticalAlignment="Center" Margin="0,0,8,0"/><ComboBox ItemsSource="{Binding Sheets}" SelectedItem="{Binding SelectedSheet}" MinWidth="140" MaxWidth="280" Margin="0,0,12,0">
+       <ComboBox.ItemTemplate>
+        <DataTemplate>
+         <TextBlock Text="{Binding Name}"/>
+        </DataTemplate>
+       </ComboBox.ItemTemplate>
+      </ComboBox>
+      <Button Content="+ 新增集数" Click="OnAddEpisode" Margin="0,0,12,0" Padding="8,4"
+              Visibility="{Binding SelectedSheet.IsScene, Converter={StaticResource BoolVisibility}}"
+              ToolTip="为当前节拍表新增一集"/>
       <TextBox Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}" Width="200" Padding="6" ToolTip="搜索节拍正文、场景、编号或规划" Background="{DynamicResource Brush.Surface.Panel}" Foreground="{DynamicResource Brush.Text.Primary}"/>
       <ComboBox ItemsSource="{Binding LevelFilters}" SelectedItem="{Binding LevelFilter}" MinWidth="100" Margin="12,0,0,0" ToolTip="制作难度筛选"/>
      </WrapPanel>

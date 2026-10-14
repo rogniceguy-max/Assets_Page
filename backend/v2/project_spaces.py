@@ -44,6 +44,28 @@ class ProjectProvisioner:
     def create_project(self, name: str) -> dict[str, Any]:
         return self._request({"operation": "create_project", "name": name})
 
+    def add_sheet(self, project_name: str, file_name: str, sheet_name: str) -> dict[str, Any]:
+        return self._request({
+            "operation": "add_sheet",
+            "project_name": project_name,
+            "file_name": file_name,
+            "sheet_name": sheet_name,
+        })
+
+    def ensure_workbooks(self, project_name: str) -> dict[str, Any]:
+        return self._request({
+            "operation": "ensure_workbooks",
+            "project_name": project_name,
+        })
+
+    def ensure_asset_folder(self, project_name: str, category: str, name: str) -> dict[str, Any]:
+        return self._request({
+            "operation": "ensure_asset_folder",
+            "project_name": project_name,
+            "category": category,
+            "name": name,
+        })
+
     def _request(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self.socket_path is None:
             raise ProjectHelperUnavailable("项目创建服务尚未配置。")

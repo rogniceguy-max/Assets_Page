@@ -190,6 +190,60 @@ class CreateProjectTests(unittest.TestCase):
                 project_helper.create_project({"name": "孟婆"})
         self.assertEqual("ROOT_UNAVAILABLE", caught.exception.code)
 
+    def test_add_sheet_creates_episode_sheet_in_workbook(self):
+        self._create("孟婆")
+        with mock.patch.object(project_helper, "PROJECT_ROOT", self.root):
+            res = project_helper.add_sheet({
+                "project_name": "孟婆",
+                "file_name": "节拍表.xlsx",
+                "sheet_name": "第2集",
+            })
+        self.assertTrue(res["ok"])
+        self.assertEqual("第2集", res["sheet_name"])
+        import openpyxl
+        wb = openpyxl.load_workbook(self.root / "孟婆" / "节拍表.xlsx")
+        self.assertIn("第2集", wb.sheetnames)
+        self.assertEqual(project_helper.BEAT_HEADERS, [c.value for c in wb["第2集"][1]])
+        wb.close()
+
+    def test_add_sheet_duplicate_refused(self):
+        self._create("孟婆")
+        with mock.patch.object(project_helper, "PROJECT_ROOT", self.root):
+            project_helper.add_sheet({
+                "project_name": "孟婆",
+                "file_name": "节拍表.xlsx",
+                "sheet_name": "第2集",
+            })
+            with self.assertRaises(project_helper.HelperFailure) as caught:
+                project_helper.add_sheet({
+                    "project_name": "孟婆",
+                    "file_name": "节拍表.xlsx",
+                    "sheet_name": "第2集",
+                })
+            self.assertEqual("SHEET_EXISTS", caught.exception.code)
+
+    def test_ensure_workbooks_creates_missing_tables(self):
+        proj = self.root / "孟婆"
+        proj.mkdir()
+        with mock.patch.object(project_helper, "PROJECT_ROOT", self.root):
+            res = project_helper.ensure_workbooks({"project_name": "孟婆"})
+        self.assertTrue(res["ok"])
+        self.assertIn("节拍表.xlsx", res["created"])
+        self.assertIn("资产表.xlsx", res["created"])
+        self.assertTrue((proj / "节拍表.xlsx").is_file())
+        self.assertTrue((proj / "资产表.xlsx").is_file())
+
+    def test_ensure_asset_folder_creates_category_and_name_dir(self):
+        self._create("孟婆")
+        with mock.patch.object(project_helper, "PROJECT_ROOT", self.root):
+            res = project_helper.ensure_asset_folder({
+                "project_name": "孟婆",
+                "category": "角色",
+                "name": "孟溪",
+            })
+        self.assertTrue(res["ok"])
+        self.assertTrue((self.root / "孟婆" / "角色" / "孟溪").is_dir())
+
 
 class StubSession:
     def __init__(self, ok=True):

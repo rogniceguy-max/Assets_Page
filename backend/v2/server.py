@@ -764,20 +764,20 @@ def make_server(settings: Settings, app: V2Application) -> ThreadingHTTPServer:
     # directory; every other method on both protocols answers 503, which is the contract's own
     # way of saying "not implemented". Unset means the module is not served at all and those
     # paths fall through to the host's 404.
+    provisioner = ProjectProvisioner(settings.project_socket) if ProjectProvisioner is not None else None
     project_workbooks = None
     if settings.project_docs_root is not None and ProjectsApi is not None:
         project_workbooks = ProjectsApi(
             NasSecurity(app.session),
             NasWorkbookServices(settings.project_docs_root),
-            workflow=NasWorkflowServices(settings.project_docs_root))
+            workflow=NasWorkflowServices(settings.project_docs_root, provisioner=provisioner))
     # Listing needs only the directory; creating needs the root helper. Unset socket means
     # listing still works and creating answers 503 with the reason, which is better than a
     # + that appears to work.
     project_spaces = None
     if settings.project_docs_root is not None and ProjectSpaceService is not None:
         project_spaces = ProjectSpaceService(
-            settings.project_docs_root, app.session,
-            ProjectProvisioner(settings.project_socket))
+            settings.project_docs_root, app.session, provisioner)
     server = V2HTTPServer((settings.bind_host, settings.port),
                           create_handler(app, update_releases_dir=settings.update_releases_dir,
                                          installer_dir=settings.installer_dir,

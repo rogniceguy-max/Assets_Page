@@ -120,7 +120,9 @@ def project_document(path: Path, *, file_id: str, name: str, project_id: str, ve
             if classification.kind == "scene_beats":
                 sheets.append(_scene_sheet(sheet_id, title, worksheet, classification, notices))
             else:
-                sheets.append(_asset_sheet(sheet_id, title, worksheet, classification))
+                sheets.append(_asset_sheet(sheet_id, title, worksheet, classification,
+                                           project_dir=path.parent if path else None,
+                                           project_id=project_id))
 
             # Any column the classifier did not claim is data the contract says must not vanish.
             # It cannot ride along on the recognised sheet — the client only renders generic
@@ -261,22 +263,95 @@ def _scene_sheet(sheet_id: str, title: str, worksheet, classification: Classific
     }
 
 
-def _asset_sheet(sheet_id: str, title: str, worksheet, classification: Classification) -> dict:
+def _encode_asset_id(project_id: str, rel_path: str) -> str:
+    raw = f"{project_id}\x00{rel_path}".encode("utf-8")
+    return urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _asset_sheet(sheet_id: str, title: str, worksheet, classification: Classification,
+                 project_dir: Path | None = None, project_id: str = "") -> dict:
     rows = []
     for row_number, row in enumerate(worksheet.iter_rows(min_row=classification.header_row + 1), start=classification.header_row + 1):
         if not any(cell.value not in (None, "") for cell in row):
             continue
+        category = _text(_at(row, classification.fields, "category"))
+        name = _text(_at(row, classification.fields, "name"))
+        appearance = _text(_at(row, classification.fields, "appearance"))
+        variant = _text(_at(row, classification.fields, "variant"))
+
+        candidate_images = []
+        selected_image = None
+
+        if project_dir is not None and category and name:
+            asset_folder = project_dir / category / name
+            if asset_folder.is_dir():
+                for entry in sorted(asset_folder.iterdir(), key=lambda e: e.name):
+                    if entry.is_file() and entry.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+                        rel_path = f"{category}/{name}/{entry.name}"
+                        asset_obj = {
+                            "id": _encode_asset_id(project_id, rel_path),
+                            "name": entry.name,
+                            "media_type": "image/png" if entry.suffix.lower() == ".png" else "image/jpeg",
+                            "width": 0,
+                            "height": 0,
+                            "project_id": project_id,
+                            "category": category,
+                            "variant": variant,
+                            "revision_label": None,
+                        }
+                        candidate_images.append(asset_obj)
+                if candidate_images:
+                    selected_image = next((img for img in candidate_images if name in img["name"]), candidate_images[0])
+
         rows.append({
             "id": f"{sheet_id}#{row_number}",
             "version": 1,
-            "category": _text(_at(row, classification.fields, "category")),
-            "name": _text(_at(row, classification.fields, "name")),
-            "appearance": _text(_at(row, classification.fields, "appearance")),
-            "selected_image": None,
-            "candidate_images": [],
-            "variant": _text(_at(row, classification.fields, "variant")),
-            "can_edit": False,
+            "category": category,
+            "name": name,
+            "appearance": appearance,
+            "selected_image": selected_image,
+            "candidate_images": candidate_images,
+            "variant": variant,
+            "can_edit": True,
         })
+
+    # If the sheet had no rows, discover asset folders from project_dir (category -> name)
+    if not rows and project_dir is not None and project_dir.is_dir():
+        row_num = classification.header_row + 1
+        for cat_dir in sorted(project_dir.iterdir(), key=lambda e: e.name):
+            if cat_dir.is_dir() and not cat_dir.name.startswith(".") and cat_dir.name in {"角色", "场景", "道具", "人物", "服化道"}:
+                cat_name = cat_dir.name
+                for item_dir in sorted(cat_dir.iterdir(), key=lambda e: e.name):
+                    if item_dir.is_dir() and not item_dir.name.startswith("."):
+                        item_name = item_dir.name
+                        candidates = []
+                        for entry in sorted(item_dir.iterdir(), key=lambda e: e.name):
+                            if entry.is_file() and entry.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+                                rel_path = f"{cat_name}/{item_name}/{entry.name}"
+                                candidates.append({
+                                    "id": _encode_asset_id(project_id, rel_path),
+                                    "name": entry.name,
+                                    "media_type": "image/png" if entry.suffix.lower() == ".png" else "image/jpeg",
+                                    "width": 0,
+                                    "height": 0,
+                                    "project_id": project_id,
+                                    "category": cat_name,
+                                    "variant": None,
+                                    "revision_label": None,
+                                })
+                        selected = next((img for img in candidates if item_name in img["name"]), candidates[0]) if candidates else None
+                        rows.append({
+                            "id": f"{sheet_id}#{row_num}",
+                            "version": 1,
+                            "category": cat_name,
+                            "name": item_name,
+                            "appearance": None,
+                            "selected_image": selected,
+                            "candidate_images": candidates,
+                            "variant": None,
+                            "can_edit": True,
+                        })
+                        row_num += 1
 
     return {
         "id": sheet_id,

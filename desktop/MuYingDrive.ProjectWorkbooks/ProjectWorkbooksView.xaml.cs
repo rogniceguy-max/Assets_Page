@@ -121,6 +121,30 @@ public partial class ProjectWorkbooksView : UserControl
         else await Model.RefreshFilesAsync();
     });
     private void OnBack(object sender, RoutedEventArgs e) => Model.Back();
+    private async void OnAddEpisode(object sender, RoutedEventArgs e)
+    {
+        if (Model.Document is not { } document) return;
+        var matchNumbers = Model.Sheets
+            .Select(s => System.Text.RegularExpressions.Regex.Match(s.Name, @"第\s*(\d+)\s*集"))
+            .Where(m => m.Success)
+            .Select(m => int.Parse(m.Groups[1].Value))
+            .ToList();
+        var nextNumber = matchNumbers.Count > 0 ? matchNumbers.Max() + 1 : 1;
+        var defaultName = $"第{nextNumber}集";
+        var sheetName = WorkflowDialogs.Prompt(Window.GetWindow(this), Resources, "新增集数", "请输入集数名称（如：第1集、第2集）：", defaultName, false);
+        if (string.IsNullOrWhiteSpace(sheetName)) return;
+        sheetName = sheetName.Trim();
+        if (Model.Sheets.Any(s => string.Equals(s.Name, sheetName, StringComparison.OrdinalIgnoreCase)))
+        {
+            MessageBox.Show(Window.GetWindow(this), $"工作表「{sheetName}」已存在。", "无法添加", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        await Model.ExecuteAsync(() => Model.AddEpisodeAsync(sheetName));
+    }
+    private void OnOpenAssetFolder(object sender, RoutedEventArgs e)
+    {
+        if (Row(sender) is { } row) Model.OpenAssetFolder(row);
+    }
     private async void OnDownload(object sender, RoutedEventArgs e)
     {
         if (Model.Document is not { } document) return;

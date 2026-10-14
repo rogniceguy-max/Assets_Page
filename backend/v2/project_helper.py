@@ -243,6 +243,140 @@ def create_project(request: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "name": name, "path": str(final)}
 
 
+def _validate_sheet_name(raw: object) -> str:
+    if not isinstance(raw, str):
+        raise HelperFailure("INVALID_SHEET_NAME", "工作表名称无效。")
+    name = raw.strip()
+    if not name:
+        raise HelperFailure("INVALID_SHEET_NAME", "工作表名称不能为空。")
+    if len(name) > 31:
+        raise HelperFailure("INVALID_SHEET_NAME", "工作表名称最长 31 个字符。")
+    invalid_chars = set('\\/?*:[]')
+    if any(c in invalid_chars or c < " " for c in name):
+        raise HelperFailure("INVALID_SHEET_NAME", "工作表名称不能包含 \\ / ? * : [ ] 或控制字符。")
+    if name.startswith("'") or name.endswith("'"):
+        raise HelperFailure("INVALID_SHEET_NAME", "工作表名称不能以单引号开头或结尾。")
+    return name
+
+
+def _validate_filename(raw: object) -> str:
+    if not isinstance(raw, str):
+        raise HelperFailure("INVALID_FILENAME", "文件名无效。")
+    name = raw.strip()
+    if not name.lower().endswith(".xlsx") or "/" in name or "\\" in name or ".." in name:
+        raise HelperFailure("INVALID_FILENAME", "文件名无效。")
+    return name
+
+
+def add_sheet(request: dict[str, Any]) -> dict[str, Any]:
+    project_name = _validate_name(request.get("project_name"))
+    file_name = _validate_filename(request.get("file_name"))
+    sheet_name = _validate_sheet_name(request.get("sheet_name"))
+
+    root = PROJECT_ROOT
+    if not root.is_dir():
+        raise HelperFailure("ROOT_UNAVAILABLE", "项目根目录不可用，请联系管理员。")
+
+    target_dir = root / project_name
+    if not target_dir.is_dir():
+        raise HelperFailure("PROJECT_NOT_FOUND", "项目目录不存在。")
+
+    target_file = target_dir / file_name
+    if not target_file.is_file():
+        raise HelperFailure("FILE_NOT_FOUND", "目标工作簿不存在。")
+
+    try:
+        from io import BytesIO
+        from openpyxl import load_workbook
+    except ImportError:
+        raise HelperFailure(
+            "TEMPLATE_UNAVAILABLE", "NAS 上缺少生成表格模板所需的组件，请联系管理员。") from None
+
+    try:
+        workbook = load_workbook(target_file)
+    except Exception as error:
+        raise HelperFailure("CORRUPT_WORKBOOK", "无法打开工作簿。") from error
+
+    try:
+        if sheet_name in workbook.sheetnames:
+            raise HelperFailure("SHEET_EXISTS", f"工作表「{sheet_name}」已存在。")
+        ws = workbook.create_sheet(title=sheet_name)
+        headers = BEAT_HEADERS
+        for existing in workbook.sheetnames:
+            if existing == sheet_name:
+                continue
+            first_row = [cell.value for cell in workbook[existing][1]] if workbook[existing].max_row >= 1 else []
+            if "出场" in first_row and "形态" in first_row:
+                headers = ASSET_HEADERS
+                break
+        ws.append(headers)
+        buffer = BytesIO()
+        workbook.save(buffer)
+    finally:
+        workbook.close()
+
+    owner_uid, owner_gid = _ownership()
+    _write_atomic(target_file, buffer.getvalue(), FILE_MODE)
+    _apply_ownership(target_file, owner_uid, owner_gid)
+
+    return {"ok": True, "sheet_name": sheet_name, "file_name": file_name}
+
+
+def ensure_workbooks(request: dict[str, Any]) -> dict[str, Any]:
+    project_name = _validate_name(request.get("project_name"))
+    root = PROJECT_ROOT
+    if not root.is_dir():
+        raise HelperFailure("ROOT_UNAVAILABLE", "项目根目录不可用，请联系管理员。")
+    target_dir = root / project_name
+    if not target_dir.is_dir():
+        raise HelperFailure("PROJECT_NOT_FOUND", "项目目录不存在。")
+
+    owner_uid, owner_gid = _ownership()
+    created = []
+
+    files = [f.name for f in target_dir.iterdir() if f.is_file() and not f.name.startswith(".")]
+    has_beat = any(name.lower().endswith(".xlsx") and ("节拍" in name or "beat" in name.lower()) for name in files)
+    if not has_beat:
+        beat_path = target_dir / f"{BEAT_SHEET_NAME}.xlsx"
+        _write_atomic(beat_path, _template_bytes(BEAT_HEADERS, BEAT_SHEET_NAME), FILE_MODE)
+        _apply_ownership(beat_path, owner_uid, owner_gid)
+        created.append(beat_path.name)
+
+    has_asset = any(name.lower().endswith(".xlsx") and ("资产" in name or "asset" in name.lower()) for name in files)
+    if not has_asset:
+        asset_path = target_dir / f"{ASSET_SHEET_NAME}.xlsx"
+        _write_atomic(asset_path, _template_bytes(ASSET_HEADERS, ASSET_SHEET_NAME), FILE_MODE)
+        _apply_ownership(asset_path, owner_uid, owner_gid)
+        created.append(asset_path.name)
+
+    return {"ok": True, "created": created}
+
+
+def ensure_asset_folder(request: dict[str, Any]) -> dict[str, Any]:
+    project_name = _validate_name(request.get("project_name"))
+    category = _validate_name(request.get("category"))
+    name = _validate_name(request.get("name"))
+
+    root = PROJECT_ROOT
+    if not root.is_dir():
+        raise HelperFailure("ROOT_UNAVAILABLE", "项目根目录不可用，请联系管理员。")
+    target_dir = root / project_name
+    if not target_dir.is_dir():
+        raise HelperFailure("PROJECT_NOT_FOUND", "项目目录不存在。")
+
+    owner_uid, owner_gid = _ownership()
+    target_folder = target_dir / category / name
+    if not target_folder.is_dir():
+        target_folder.mkdir(parents=True, exist_ok=True)
+        cat_dir = target_dir / category
+        _apply_mode(cat_dir, DIRECTORY_MODE)
+        _apply_ownership(cat_dir, owner_uid, owner_gid)
+        _apply_mode(target_folder, DIRECTORY_MODE)
+        _apply_ownership(target_folder, owner_uid, owner_gid)
+
+    return {"ok": True, "path": str(target_folder)}
+
+
 def _read_line(fd: int) -> bytes:
     result = bytearray()
     while len(result) <= MAX_REQUEST_BYTES:
@@ -284,16 +418,23 @@ def handle_request(raw: bytes) -> dict[str, Any]:
     if not isinstance(request, dict):
         return {"ok": False, "code": "INVALID_REQUEST", "message": "项目请求格式无效。"}
     try:
-        if request.get("operation") == "create_project":
+        op = request.get("operation")
+        if op == "create_project":
             return create_project(request)
+        if op == "add_sheet":
+            return add_sheet(request)
+        if op == "ensure_workbooks":
+            return ensure_workbooks(request)
+        if op == "ensure_asset_folder":
+            return ensure_asset_folder(request)
         return {"ok": False, "code": "UNKNOWN_OPERATION", "message": "项目操作不受支持。"}
     except HelperFailure as error:
         return {"ok": False, "code": error.code, "message": str(error)}
     except OSError:
         # The detail can name the paths involved, and this runs as root.
-        return {"ok": False, "code": "INTERNAL_ERROR", "message": "创建项目失败，请稍后重试。"}
+        return {"ok": False, "code": "INTERNAL_ERROR", "message": "操作失败，请稍后重试。"}
     except Exception:
-        return {"ok": False, "code": "INTERNAL_ERROR", "message": "创建项目失败，请稍后重试。"}
+        return {"ok": False, "code": "INTERNAL_ERROR", "message": "操作失败，请稍后重试。"}
 
 
 def main() -> int:

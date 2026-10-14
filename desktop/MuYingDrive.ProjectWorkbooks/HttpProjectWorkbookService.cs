@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -250,6 +250,11 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
     {
         ImageType(mediaType); _ = Id(projectId);
         return UploadAsync<ImageAsset>("image-assets", fileName, mediaType, source, new Dictionary<string, string> { ["X-Project-Id"] = projectId }, ct);
+    }
+    public Task<AddSheetResponse> AddSheetAsync(string fileId, string sheetName, CancellationToken ct = default)
+    {
+        LimitedText(sheetName, 31, nonEmpty: true);
+        return ReadAsync<AddSheetResponse>(HttpMethod.Post, FileId(fileId) + "/sheets", JsonBody(new { sheet_name = sheetName }), ct);
     }
     public Task<SceneRow> UpdateSceneAsync(string fileId, string rowId, UpdateSceneRequest request, CancellationToken ct = default)
     {

@@ -60,6 +60,8 @@ public sealed record ReviewVoteRequest(string ImageId, string? Verdict);
 public sealed record AddReviewCommentRequest(string? ImageId, string Text);
 public sealed record EditReviewCommentRequest(long ExpectedVersion, string Text);
 public sealed record ResolveCommentRequest(long ExpectedVersion, bool Resolved, string? ResolutionNote);
+public sealed record AddSheetResponse(bool Ok, string SheetName, string? FileName = null);
+public sealed record LinkedAsset(string Category, string Name, string? Appearance, ImageAsset? Image);
 
 public interface IProjectWorkbookService
 {
@@ -76,6 +78,7 @@ public interface IProjectWorkbookService
     Task<ImageSearchPage> SearchImagesAsync(string projectId, string? q = null, string? category = null,
         string? cursor = null, int pageSize = 40, CancellationToken ct = default);
     Task<ImageAsset> UploadProjectImageAsync(string projectId, string fileName, string mediaType, Stream source, CancellationToken ct = default);
+    Task<AddSheetResponse> AddSheetAsync(string fileId, string sheetName, CancellationToken ct = default);
     Task<SceneRow> UpdateSceneAsync(string fileId, string rowId, UpdateSceneRequest request, CancellationToken ct = default);
     Task<SceneRow> UpdateSceneOriginsAsync(string fileId, string rowId, UpdateSceneOriginsRequest request, CancellationToken ct = default);
     Task<IReadOnlyList<SelectionHistoryEntry>> GetSelectionHistoryAsync(string fileId, string rowId, CancellationToken ct = default);

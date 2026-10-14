@@ -55,6 +55,35 @@ public sealed class SceneRowItem(SceneRow row) : ObservableModel
     public string DiscussionText { get => _discussionText; set { _discussionText = value; Changed(); } }
     internal bool SummaryLoaded { get; set; }
     internal bool SummaryLoading { get; set; }
+    public ObservableCollection<LinkedAsset> LinkedAssets { get; } = [];
+    public ObservableCollection<ImageItem> LinkedThumbnails { get; } = [];
+    public bool HasLinkedAssets => LinkedAssets.Count > 0;
+
+    public void ResolveLinkedAssets(IEnumerable<AssetRowItem> assets)
+    {
+        LinkedAssets.Clear();
+        LinkedThumbnails.Clear();
+        var content = string.Join(" ", Row.StoryContent, Row.CastContext, Row.SceneContext);
+        if (string.IsNullOrWhiteSpace(content)) return;
+
+        foreach (var asset in assets)
+        {
+            var name = asset.Row.Name;
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            if (content.Contains(name, StringComparison.OrdinalIgnoreCase))
+            {
+                var linked = new LinkedAsset(asset.Row.Category ?? "角色", name, asset.Row.Appearance, asset.Selected?.Asset ?? asset.Row.CandidateImages.FirstOrDefault());
+                LinkedAssets.Add(linked);
+                if (asset.Selected != null)
+                {
+                    LinkedThumbnails.Add(asset.Selected);
+                }
+            }
+        }
+        Changed(nameof(HasLinkedAssets));
+        Changed(nameof(LinkedAssets));
+        Changed(nameof(LinkedThumbnails));
+    }
 }
 public sealed record GenericCellItem(string Label, string? Value);
 public sealed record GenericRowItem(IReadOnlyList<GenericCellItem> Cells);
@@ -62,6 +91,7 @@ public sealed class SheetItem(WorkbookSheet sheet)
 {
     public WorkbookSheet Sheet { get; } = sheet;
     public string Name => Sheet.Name;
+    public override string ToString() => Name;
     public bool IsAsset => Sheet.Kind == "asset_review";
     public bool IsScene => Sheet.Kind == "scene_beats";
     public bool IsGeneric => Sheet.Kind == "generic";
@@ -168,6 +198,77 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         Document = document;
         Sheets.Clear(); foreach (var sheet in sheets) Sheets.Add(sheet);
         SelectedSheet = Sheets.FirstOrDefault(s => s.IsScene || s.IsAsset) ?? Sheets.FirstOrDefault();
+        if (file.TemplateKind == "scene_beats")
+        {
+            _ = LoadProjectAssetsAsync();
+        }
+    }
+
+    public ObservableCollection<AssetRowItem> ProjectAssets { get; } = [];
+    public string? ShareRoot { get; set; }
+
+    public async Task LoadProjectAssetsAsync(CancellationToken ct = default)
+    {
+        if (Document == null || SelectedProject == null) return;
+        var assetFile = Files.FirstOrDefault(f => f.TemplateKind == "asset_review");
+        if (assetFile == null) return;
+        try
+        {
+            var doc = await Service.OpenAsync(assetFile.Id, ct);
+            var assetRows = new List<AssetRowItem>();
+            foreach (var sheet in doc.Sheets)
+            {
+                foreach (var row in sheet.AssetRows)
+                {
+                    var item = MakeRow(row);
+                    assetRows.Add(item);
+                    if (item.Selected != null) _ = EnsureThumbnailAsync(item.Selected, ct);
+                }
+            }
+            ProjectAssets.Clear();
+            foreach (var r in assetRows) ProjectAssets.Add(r);
+            foreach (var sheet in Sheets)
+            {
+                if (!sheet.IsScene) continue;
+                foreach (var scene in sheet.Scenes)
+                {
+                    scene.ResolveLinkedAssets(ProjectAssets);
+                }
+            }
+            SceneChanged();
+        }
+        catch { }
+    }
+
+    public async Task AddEpisodeAsync(string sheetName)
+    {
+        if (Document == null) return;
+        await Service.AddSheetAsync(Document.File.Id, sheetName);
+        await OpenAsync(Document.File);
+        var created = Sheets.FirstOrDefault(s => s.Name == sheetName);
+        if (created != null) SelectedSheet = created;
+    }
+
+    public void OpenAssetFolder(AssetRowItem item)
+    {
+        if (SelectedProject == null) return;
+        var shareRoot = ShareRoot ?? "\\\\192.168.1.153\\Assets";
+        var category = string.IsNullOrWhiteSpace(item.Row.Category) ? "角色" : item.Row.Category;
+        var name = string.IsNullOrWhiteSpace(item.Row.Name) ? "未命名" : item.Row.Name;
+        var folderPath = Path.Combine(shareRoot, "Project", SelectedProject.Name, category, name);
+        try
+        {
+            if (!Directory.Exists(folderPath)) Directory.CreateDirectory(folderPath);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = folderPath,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            Error = $"打开资产文件夹失败：{ex.Message}";
+        }
     }
     public void Back()
     {

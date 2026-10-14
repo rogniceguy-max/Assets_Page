@@ -97,17 +97,29 @@ class NasWorkbookServices:
         raise _not_implemented()
 
     def image_content(self, actor: Any, asset_id: str, thumbnail: bool) -> BinaryAsset:
-        raise _not_implemented()
+        project_id, rel_path = _decode_asset_id(asset_id)
+        directory = _resolve_project(self._root, project_id)
+        target = (directory / rel_path).resolve()
+        try:
+            target.relative_to(directory.resolve())
+        except ValueError:
+            raise ApiFault(404, "NOT_FOUND", "素材不存在。")
+        if not target.is_file():
+            raise ApiFault(404, "NOT_FOUND", "素材文件不存在。")
+        suffix = target.suffix.lower()
+        media_type = "image/png" if suffix == ".png" else "image/webp" if suffix == ".webp" else "image/jpeg"
+        return BinaryAsset(data=target.read_bytes(), media_type=media_type, name=target.name)
 
     def replace_images(self, actor: Any, file_id: str, row_id: str, **kwargs: Any) -> dict[str, Any]:
         raise _not_implemented()
 
 
 class NasWorkflowServices:
-    """The ``WorkflowServices`` protocol: this cut answers ``projects`` and ``list_files``."""
+    """The ``WorkflowServices`` protocol."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, provisioner: Any = None) -> None:
         self._root = root
+        self._provisioner = provisioner
 
     def projects(self, actor: Any) -> list[dict[str, Any]]:
         return [{"id": str(entry.stat().st_ino), "name": entry.name}
@@ -131,6 +143,18 @@ class NasWorkflowServices:
         files.sort(key=lambda item: item["name"])
         return files
 
+    def add_sheet(self, actor: Any, file_id: str, sheet_name: str) -> dict[str, Any]:
+        if self._provisioner is None:
+            raise ApiFault(503, "STORAGE_UNAVAILABLE", "新增工作表服务暂未配置。")
+        project_id, file_name = _decode_file_id(file_id)
+        directory = _resolve_project(self._root, project_id)
+        try:
+            return self._provisioner.add_sheet(directory.name, file_name, sheet_name)
+        except Exception as error:
+            code = getattr(error, "code", "ADD_SHEET_FAILED")
+            status = 409 if code == "SHEET_EXISTS" else 422 if code in ("INVALID_SHEET_NAME", "INVALID_FILENAME") else 500
+            raise ApiFault(status, code, str(error)) from error
+
     # --- creating, importing and everything downstream: a later cut ----------------------
     def create(self, actor: Any, template_kind: str, project_id: str, operation_id: str) -> dict:
         raise _not_implemented()
@@ -141,14 +165,48 @@ class NasWorkflowServices:
 
     def list_images(self, actor: Any, project_id: str, q: Any, category: Any,
                     cursor: Any, page_size: int) -> dict:
-        raise _not_implemented()
+        directory = _resolve_project(self._root, project_id)
+        items = []
+        for cat_dir in sorted(directory.iterdir(), key=lambda e: e.name):
+            if cat_dir.is_dir() and not cat_dir.name.startswith(".") and (category is None or cat_dir.name == category):
+                for item_dir in sorted(cat_dir.iterdir(), key=lambda e: e.name):
+                    if item_dir.is_dir() and not item_dir.name.startswith("."):
+                        if q is not None and q not in item_dir.name:
+                            continue
+                        for img in sorted(item_dir.iterdir(), key=lambda e: e.name):
+                            if img.is_file() and img.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+                                rel_path = f"{cat_dir.name}/{item_dir.name}/{img.name}"
+                                items.append({
+                                    "id": _encode_asset_id(project_id, rel_path),
+                                    "name": img.name,
+                                    "media_type": "image/png" if img.suffix.lower() == ".png" else "image/jpeg",
+                                    "width": 0,
+                                    "height": 0,
+                                    "project_id": project_id,
+                                    "category": cat_dir.name,
+                                    "variant": item_dir.name,
+                                    "revision_label": None
+                                })
+        return {"items": items[:page_size], "next_cursor": None}
 
     def upload_image_stream(self, actor: Any, name: str, media_type: str, source: BinaryIO,
                             length: int, project_id: Any) -> dict:
         raise _not_implemented()
 
     def image_content_stream(self, actor: Any, asset_id: str, thumbnail: bool):
-        raise _not_implemented()
+        from .workflow_services import StreamAsset
+        project_id, rel_path = _decode_asset_id(asset_id)
+        directory = _resolve_project(self._root, project_id)
+        target = (directory / rel_path).resolve()
+        try:
+            target.relative_to(directory.resolve())
+        except ValueError:
+            raise ApiFault(404, "NOT_FOUND", "素材不存在。")
+        if not target.is_file():
+            raise ApiFault(404, "NOT_FOUND", "素材文件不存在。")
+        suffix = target.suffix.lower()
+        media_type = "image/png" if suffix == ".png" else "image/webp" if suffix == ".webp" else "image/jpeg"
+        return StreamAsset(stream=open(target, "rb"), length=target.stat().st_size, media_type=media_type, name=target.name)
 
     def original_stream(self, actor: Any, file_id: str):
         raise _not_implemented()
@@ -257,3 +315,24 @@ def _decode_file_id(file_id: str) -> tuple[str, str]:
     if not separator or not project_id.isdigit() or not name or posixpath.basename(name) != name:
         raise ApiFault(422, "INVALID_REQUEST", "工作簿标识无效。")
     return project_id, name
+
+
+def _encode_asset_id(project_id: str, rel_path: str) -> str:
+    raw = f"{project_id}\x00{rel_path}".encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_asset_id(asset_id: str) -> tuple[str, str]:
+    if not asset_id or len(asset_id) > 1024:
+        raise ApiFault(422, "INVALID_REQUEST", "素材标识无效。")
+    try:
+        padded = asset_id + "=" * (-len(asset_id) % 4)
+        decoded = base64.urlsafe_b64decode(padded).decode("utf-8")
+    except Exception as error:
+        raise ApiFault(422, "INVALID_REQUEST", "素材标识无效。") from error
+
+    project_id, separator, rel_path = decoded.partition("\x00")
+    if not separator or not project_id.isdigit() or not rel_path:
+        raise ApiFault(422, "INVALID_REQUEST", "素材标识无效。")
+    return project_id, rel_path
+
