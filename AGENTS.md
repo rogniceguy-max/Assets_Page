@@ -1,3 +1,11 @@
+> ## ⚠️ 接手先读这个
+>
+> **当前工作分支是 `feat/mac-m4-media-worker`，`main` 是空的。** 本文件的所有小节都**不覆盖这个分支**。
+>
+> 当前分支的现状、已验/未验项、NAS 状态，以及**本文件里哪几条已经作废**，见
+> [`docs/handover.md`](docs/handover.md)。先读它再动手 —— 下面「匿名反馈中心」一节里有几行描述的
+> 是已经删掉的部门导航，照着做会把删掉的东西加回来。
+
 > **合并分支说明（2026-10-13）：** 本分支 `codex/ugos-acl-visitor` 已合并 `codex/software-updater` 与 `codex/feedback-center`。以下两节分别是「软件更新」与「匿名反馈中心」的工作线规则，**各自仍只约束对应模块**；两节中“本分支”的表述按各自来源分支理解。合并按用户明确指示执行。
 
 # AGENTS.md — 沐影盘软件更新模块开发规则
@@ -52,7 +60,10 @@
 
 - 仅基于 `desktop/MuYingDrive.NativeWpf/` 的 **.NET 8 / net8.0-windows + C# + 原生 WPF + XAML + MVVM** 开发反馈 UI；禁止 WebView2、React、HTML/CSS、JavaScript Web UI、Electron、Tauri、Chromium 等作为 UI 路线；不得自行升级 .NET 10。
 - 正常情况下只修改反馈新增的 Views/ViewModels/Models/Services、最少量 `WorkspaceView.xaml` 和 `WorkspaceViewModel.cs` 导航绑定、NAS `backend/v2/` 的隔离反馈模块、反馈专项文档/测试。不能为 UI 便利改写 SMB/ACL/账户、上传下载引擎、更新器、旧 WebView2/React 工程、`main` 或生产部署配置。
-- 新增一级「反馈」是**已经批准**的唯一级导航例外；保留「文件」「传输」和「本部门/公共素材/个人空间/其他部门」位置与功能，切换页不清空文件浏览上下文或传输队列。
+- 新增一级「反馈」是**已经批准**的唯一级导航例外；切换页不清空文件浏览上下文或传输队列。
+  - ~~保留「文件」「传输」和「本部门/公共素材/个人空间/其他部门」位置与功能~~ —— **作废（2026-10-14）**。部门入口已从侧栏移除，侧栏现在是
+    `图片 / 视频 / 个人空间 / 传输 / 反馈` 加一个「项目」分组。这里只作废「保留部门入口」这一句：目录与 ACL 都还在，
+    权限模型一点没碰，所以是纯客户端的、可逆的。原委与后续见 [`docs/handover.md`](docs/handover.md)。
 - 视觉沿用现有 Slate/Iris/Lucide/Light-Dark 设计令牌。反馈为主窗口内的 WPF 工作区，不是新欢迎首页、网页版系统或多层复杂工单平台。
 
 ## 匿名隐私（强制）
