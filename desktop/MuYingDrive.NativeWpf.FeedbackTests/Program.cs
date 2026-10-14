@@ -19,6 +19,11 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        // A second entry point, deliberately kept out of the render harness below: this one
+        // talks to a real SMB share and writes to it. Run it against the isolated test share
+        // only, never against production material.
+        if (args.Length == 2 && args[0] == "--nas-acceptance") return RunNasAcceptance(args[1]);
+
         try
         {
             var application = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
@@ -194,6 +199,125 @@ internal static class Program
             return 0;
         }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+    }
+
+    /// <summary>
+    /// Exercises the write operations against a real SMB share.
+    /// </summary>
+    /// <param name="spaceDirectory">
+    /// The UNC directory to treat as one space, e.g.
+    /// <c>\\NAS\MuYing_ACL_Test\film</c>. The share root and the virtual path are derived
+    /// from it.
+    /// </param>
+    /// <remarks>
+    /// The unit tests cannot reach these: the path checks and the mutations talk to a real
+    /// filesystem, and the failures that matter only appear against a server — a rename
+    /// that lands on the wrong name, a recursive delete that misses a level, a conflict
+    /// that refuses instead of numbering.
+    /// </remarks>
+    private static int RunNasAcceptance(string spaceDirectory)
+    {
+        var failures = 0;
+        void Verify(string name, bool ok, string detail = "")
+        {
+            Console.WriteLine((ok ? "  PASS  " : "  FAIL  ") + name + (detail.Length > 0 ? $"  ({detail})" : ""));
+            if (!ok) failures++;
+        }
+
+        var full = Path.GetFullPath(spaceDirectory);
+        var parent = Path.GetDirectoryName(full);
+        if (parent is null || !Directory.Exists(full))
+        {
+            Console.Error.WriteLine($"The space directory does not exist: {full}");
+            return 1;
+        }
+
+        // One space, named "film", rooted at the directory above the one given.
+        var settings = new NasClientSettings(
+            new Uri("https://nas-acceptance.invalid"), new string('0', 64), parent);
+        var session = new DriveSession(
+            new V2UserSession
+            {
+                Id = 1, UserName = "acceptance", Department = "acceptance", GroupType = "film",
+                Spaces = new() { ["film"] = Path.GetFileName(full) }
+            },
+            "acceptance-token", new SmbConnectionResult(0));
+
+        var spaces = new SmbSpaceResolver(settings, session.User);
+        var mutations = new SmbFileMutations(spaces);
+        var kind = DriveSpaceKind.Department;
+        var scratch = Path.Combine(full, "_ops-probe-" + Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            Console.WriteLine($"space: {full}");
+            Console.WriteLine($"scratch: {scratch}");
+
+            Directory.CreateDirectory(scratch);
+            mutations.EnsureDirectoriesAsync(kind, [
+                Path.Combine(scratch, "素材"),
+                Path.Combine(scratch, "素材", "子目录"),
+                Path.Combine(scratch, "素材", "空目录")
+            ]).GetAwaiter().GetResult();
+            Verify("creates nested and empty directories",
+                Directory.Exists(Path.Combine(scratch, "素材", "子目录")) &&
+                Directory.Exists(Path.Combine(scratch, "素材", "空目录")));
+
+            var original = Path.Combine(scratch, "照片.txt");
+            File.WriteAllText(original, "first");
+            var copy = mutations.DuplicateInPlaceAsync(kind, original).GetAwaiter().GetResult();
+            Verify("duplicates beside the original", File.Exists(copy), Path.GetFileName(copy));
+            Verify("the copy is numbered, not named the same",
+                Path.GetFileName(copy) == "照片 (2).txt", Path.GetFileName(copy));
+            Verify("the original is untouched", File.ReadAllText(original) == "first");
+
+            var second = mutations.DuplicateInPlaceAsync(kind, original).GetAwaiter().GetResult();
+            Verify("a second duplicate takes the next number",
+                Path.GetFileName(second) == "照片 (3).txt", Path.GetFileName(second));
+
+            var renamed = mutations.RenameAsync(kind, original, "改名后.txt").GetAwaiter().GetResult();
+            Verify("renames to a free name exactly",
+                Path.GetFileName(renamed) == "改名后.txt" && !File.Exists(original), Path.GetFileName(renamed));
+
+            // The exact number it lands on depends on what is already there, so the property
+            // asserted is the one that matters: it is not the name asked for, it is numbered,
+            // and what it would have landed on is untouched.
+            var collided = mutations.RenameAsync(kind, renamed, "照片 (2).txt").GetAwaiter().GetResult();
+            var collidedName = Path.GetFileName(collided);
+            Verify("a rename onto an existing name is numbered rather than overwriting",
+                collidedName != "照片 (2).txt" && collidedName.StartsWith("照片 (") && collidedName.EndsWith(").txt"),
+                collidedName);
+            Verify("the file it would have overwritten still has its own contents",
+                File.ReadAllText(Path.Combine(scratch, "照片 (2).txt")) == "first");
+
+            File.WriteAllText(Path.Combine(scratch, "素材", "a.txt"), "a");
+            File.WriteAllText(Path.Combine(scratch, "素材", "子目录", "b.txt"), "b");
+            // Four: a.txt, 子目录, 子目录/b.txt, 空目录. Folders count — the point of the
+            // number is to warn about everything that goes, not just the files.
+            var contained = mutations.CountContainedAsync(kind, Path.Combine(scratch, "素材")).GetAwaiter().GetResult();
+            Verify("counts everything under a folder for the confirmation", contained == 4, $"{contained}");
+
+            var escaped = false;
+            try { mutations.DeleteAsync(kind, Path.Combine(full, "..", "Assets", "00_公共素材")); }
+            catch (InvalidOperationException) { escaped = true; }
+            Verify("refuses a path that walks out of the space", escaped);
+
+            var wrongKind = false;
+            try { mutations.DeleteAsync(DriveSpaceKind.Public, Path.Combine(scratch, "素材")); }
+            catch (InvalidOperationException) { wrongKind = true; }
+            Verify("refuses a path belonging to another space", wrongKind);
+
+            mutations.DeleteAsync(kind, scratch).GetAwaiter().GetResult();
+            Verify("deletes a folder and everything under it", !Directory.Exists(scratch));
+        }
+        finally
+        {
+            try { if (Directory.Exists(scratch)) Directory.Delete(scratch, recursive: true); } catch (IOException) { }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine(failures == 0 ? "NAS ACCEPTANCE PASSED" : $"{failures} NAS CHECK(S) FAILED");
+        return failures == 0 ? 0 : 1;
     }
 
     private static void Render(FrameworkElement content, double width, double height, double dpi, string path)

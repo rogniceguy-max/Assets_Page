@@ -72,13 +72,49 @@
   重解析点检查不吃掉正常路径、文件夹遍历保留空目录。
 - 用一个故意的错误断言确认了测试确实会失败，而不是恒过。
 
-**未验证（需要真机）**：
+**已在隔离共享上实测（2026-10-14）**：
 
-- **对 NAS 的真实写操作一次都没跑过** —— 重命名、复制、递归删除、多文件上传、文件夹上传。
-  必须在隔离共享 `MuYing_ACL_Test` 上先跑通，再考虑生产素材库。
-- 重解析点拒绝本身：Windows 上创建 junction/symlink 需要权限，本机未验证；
-  该规则的可信度目前来自代码与 Linux 侧的验收，不来自测试。
+`dotnet run --project desktop/MuYingDrive.NativeWpf.FeedbackTests -- --nas-acceptance '\\<NAS>\MuYing_ACL_Test\film'`
+以 `沐影影视测试` 连上隔离共享，真实执行 12 项，**全部通过**：
+
+```
+creates nested and empty directories                          PASS
+duplicates beside the original  (照片 (2).txt)                 PASS
+the copy is numbered, not named the same                      PASS
+the original is untouched                                     PASS
+a second duplicate takes the next number                      PASS
+renames to a free name exactly                                PASS
+a rename onto an existing name is numbered rather than
+  overwriting  (照片 (4).txt)                                  PASS
+the file it would have overwritten still has its own contents PASS
+counts everything under a folder for the confirmation  (4)    PASS
+refuses a path that walks out of the space                    PASS
+refuses a path belonging to another space                     PASS
+deletes a folder and everything under it                      PASS
+```
+
+探针结束后共享上**无残留**（刻意用带 GUID 的独立目录，并在 finally 里兜底清理）。
+**生产素材库上一个写操作都没有做过。**
+
+这轮同时也说明了一件好事：头两次跑测试时挂掉的两项，查下来都是**测试自己的期望算错了**
+（把 `照片 (4).txt` 写成了 `照片 (2) (2).txt`；数目录时漏了 `空目录` 本身），代码行为是对的。
+
+**仍未验证**：
+
+- **重解析点拒绝本身没被实测** —— Windows 上建 junction/symlink 需要权限。这条规则目前的可信度
+  来自代码与 Linux 侧验收，不来自测试。
+- **应用内的完整链路没跑过** —— 探针直接调服务层，**未经**按钮、右键菜单、两个对话框和上传刷新。
+  那部分靠渲染测试（无绑定错误）和代码审查覆盖，**不等于实机点过**。
+- 多文件与文件夹上传没有在真机上跑过（探针只覆盖了写操作，没有走传输队列）。
 - 传输引擎并发上限的实际行为（排队显示、暂停、销毁不挂起）。
 - 大目录复制的表现（无进度、不可续传，已知限制）。
 
-**明确不做**：移动到（保持占位）、跨空间操作、目录复制的进度与断点续传。
+## 隔离共享的现状（不是本次造成）
+
+`MuYing_ACL_Test` 里仍有 **2026-10-13 那轮 ACL 验证留下的约 60 个探针产物**
+（`muying-acl-probe-*`、`probe-*`、`matrix-*` 等）。`docs/ugos-acl-test-teardown-plan.md`
+的清理方案**至今未执行**。本次的产物已全部清除。
+
+## 明确不做
+
+移动到（保持占位）、跨空间操作、目录复制的进度与断点续传。
