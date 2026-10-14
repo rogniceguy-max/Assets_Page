@@ -78,7 +78,7 @@ try {
         [System.IO.Compression.ZipFile]::CreateFromDirectory(
             $clientPublish,
             $packagePath,
-            [System.IO.Compression.CompressionLevel]::Optimal,
+            [System.IO.Compression.CompressionLevel]::Fastest,
             $false
         )
 
