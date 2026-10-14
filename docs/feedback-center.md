@@ -86,7 +86,7 @@
 - 当前仅在 `codex/feedback-center` 实现反馈专属原生 WPF 视图/控件/ViewModel，以及 NAS V2 反馈业务接口与存储；引入菜单入口应只做最小必要 `WorkspaceView.xaml` / `WorkspaceViewModel` 变更。
 - `codex/ui-refinement` 继续负责通用原生 WPF 视觉、主题和其它文件/传输页面改进；本分支复用 Slate/Iris + Lucide 资源，不自造技术栈和视觉体系。
 - `codex/software-updater` 继续负责版本更新；本分支不得修改其流程和窗口。
-- **禁止**更改 `frontend/` 或 `desktop/MuYingDrive.Wpf/` 的 WebView2/React 旧原型，也禁止改 `main`、SMB ACL、NAS 账号/会话模型、原有登录和文件传输底层或生产运维配置。
+- **禁止**改 `main`、SMB ACL、NAS 账号/会话模型、原有登录和文件传输底层或生产运维配置。
 - 原有 Notion UI 文档将一级导航标记为「文件」「传输」，本次用户**明确批准增加「反馈」**，仅是此一项例外；后续应将新增确认事项同步回 Notion 专项规范，并在合并时处理各分支对 `WorkspaceView` 的冲突，不能拿旧文档中“禁止新增导航”一条来删除反馈入口。
 
 ## 7. 开发与验收

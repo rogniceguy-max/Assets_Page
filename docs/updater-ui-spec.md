@@ -7,7 +7,7 @@
 ## 1. 技术与分支边界（强制）
 
 - **唯一客户端技术栈：** .NET 8、C#、**原生 WPF + XAML + MVVM**。主客户端沿用 `desktop/MuYingDrive.NativeWpf/`；独立安装进程的更新 UI 放在 `desktop/MuYingDrive.Updater/` 内，以原生 WPF 窗口显示。
-- **禁止** WebView2、React、HTML/CSS、JavaScript Web UI、Electron、Tauri、Chromium/内嵌浏览器。不得以 UI 较复杂、跨平台或易于开发为借口更换。旧 `desktop/MuYingDrive.Wpf/` 和 `frontend/` 仅作历史参考。
+- **禁止** WebView2、React、HTML/CSS、JavaScript Web UI、Electron、Tauri、Chromium/内嵌浏览器。不得以 UI 较复杂、跨平台或易于开发为借口更换。旧 `desktop/MuYingDrive.Wpf/` 和 `frontend/` 曾作历史参考，已于 2026-10-14 移除。
 - 此分支负责更新提醒、下载/校验状态、进程外安装窗口、失败/恢复界面及底层更新流程。普通文件/登录/传输页面的全局视觉迭代归 `codex/ui-refinement`；只允许为更新功能增加最小必要展示接口，不能顺手重做主界面。
 - 更新 UI 遵循同一套已约定的 Radix Slate/Iris 视觉令牌、Lucide 图标和 Light/Dark/跟随 Windows 主题；不得自造第二套色板、随机图标或大幅动画。更新器可通过共享资源或构建期确定的资源副本复用令牌，但不得要求原主客户端进程继续运行。
 

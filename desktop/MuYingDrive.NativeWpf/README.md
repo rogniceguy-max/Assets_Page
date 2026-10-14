@@ -1,6 +1,6 @@
 # 沐影盘原生 Windows 客户端（第一阶段）
 
-本项目是纯 WPF + XAML 界面，使用 C# MVVM。旧 WebView2/React 原型保留在 `desktop/MuYingDrive.Wpf/` 和 `frontend/`，便于比较与回退。
+本项目是纯 WPF + XAML 界面，使用 C# MVVM。旧 WebView2/React 原型（`desktop/MuYingDrive.Wpf/` 和 `frontend/`）已于 2026-10-14 移除；需要对照时见 git 历史。
 
 ## 运行
 

@@ -6,7 +6,7 @@
 >
 > 此分支从 `codex/nas-smb-v2` 派生，负责软件更新协议、校验、预下载、进程外安装、回滚和**更新专属 UI**。工作时先阅读本 README、根目录 [AGENTS.md](AGENTS.md)、[更新模块架构设计](docs/software-updater.md)、[独立更新器 UI 规范](docs/updater-ui-spec.md)。
 >
-> **硬性架构要求：** Windows 客户端和更新窗口都采用 **.NET 8 + C# + 原生 WPF + XAML + MVVM**。严禁将任何更新界面做成 WebView2、React、HTML/CSS、Electron、Tauri 或内嵌浏览器。不得以更方便、更好看或跨平台为由擅自切换框架。旧版 `desktop/MuYingDrive.Wpf/` 和 `frontend/` 仅供历史参考。
+> **硬性架构要求：** Windows 客户端和更新窗口都采用 **.NET 8 + C# + 原生 WPF + XAML + MVVM**。严禁将任何更新界面做成 WebView2、React、HTML/CSS、Electron、Tauri 或内嵌浏览器。不得以更方便、更好看或跨平台为由擅自切换框架。旧版 `desktop/MuYingDrive.Wpf/` 和 `frontend/` 曾作为历史参考保留，已于 2026-10-14 移除。
 >
 > **运行时版本和发布方式已确认：** 当前固定使用 **.NET 8 / `net8.0-windows`**，员工端优先使用 **Windows x64 自包含（self-contained）安装包**，不要求单独安装 .NET Desktop Runtime。**不得擅自升级 .NET 10**；将来需先在隔离环境完成兼容性测试和自动更新/回滚验证，再由用户批准是否向员工发布。自包含运行时的安全修复需要随应用安装包更新。
 >
@@ -32,7 +32,7 @@
 >
 > 在开始任何开发前先读 [`AGENTS.md`](AGENTS.md) 及 [`docs/feedback-center.md`](docs/feedback-center.md)。该设计**已得到用户确认**，不得擅自改成实名工单、用户追踪系统或基于 WebView 的网页界面。
 >
-> **锁定技术栈：** .NET 8（`net8.0-windows`）+ C# + 原生 WPF + XAML + MVVM，正式 UI 入口为 `desktop/MuYingDrive.NativeWpf/`；旧版 `desktop/MuYingDrive.Wpf/` 和 `frontend/` 仅是历史原型，严禁引入 WebView2、React、HTML/CSS、Electron、Tauri。不得未经许可迁移 .NET 10。
+> **锁定技术栈：** .NET 8（`net8.0-windows`）+ C# + 原生 WPF + XAML + MVVM，正式 UI 入口为 `desktop/MuYingDrive.NativeWpf/`；旧版 `desktop/MuYingDrive.Wpf/` 和 `frontend/` 曾是历史原型，已于 2026-10-14 移除；严禁引入 WebView2、React、HTML/CSS、Electron、Tauri。不得未经许可迁移 .NET 10。
 >
 > **本分支唯一目标：** 新增一级「反馈」导航，供所有已登录员工查看**匿名公开反馈**；匿名提交「问题反馈」或「功能建议」，支持文字与截图、状态跟踪。员工看不到提交人姓名、账号、部门、头像、稳定匿名昵称；反馈业务数据不能保留关联作者的 ID/IP/会话/设备信息。注意截图像素和基础设施日志需要专门去标识化审计，未经验证不可承诺网络层绝对不可追踪。
 >
@@ -81,15 +81,17 @@
 - 本地登录会话只在 SQLite 保存会话令牌哈希；会话不自动超时，退出时清除会话和未完成上传暂存。
 - JSON 请求体上限为 1 MiB，单个上传分块上限为 4 MiB。
 - 旧凭据 BAT 脚本接口已返回 410，脚本生成实现已移除。
-- 当前 Windows 演示是 WPF 窗口承载 WebView2，WebView2 中显示 React/HTML；它是本机功能原型，不代表最终桌面 UI 或技术栈已定。
-- 按 Notion 的技术验证要求，最终还需比较 WPF + Win32 OLE/COM 与 Tauri + Rust 原生桥接，并在允许进行 NAS/UNC 拖放验证后依据真实目标软件结果选型。此前选定的 WPF 是当前候选基线；WebView2 与原生 WPF 控件仍可调整。
-- WPF 宿主启动随包提供的本地 Python 服务，前端与 API 使用同一个随机回环端口；WebView2 用户数据目录和账号数据库保存在 `%LOCALAPPDATA%\MuYingDrive`。
+- 当前 Windows 客户端是 `desktop/MuYingDrive.NativeWpf/`：.NET 8 + 原生 WPF + XAML + MVVM。不使用 WebView2、React、HTML/CSS 或内嵌浏览器。
+- 技术栈**已锁定**（见文件开头两条硬性要求）。早先关于 "WPF + Win32 OLE/COM 对比 Tauri + Rust" 的选型讨论已由原生 WPF 路线取代，不再作为待办。
+- 客户端不随包启动本地 Python 服务：身份、反馈与更新走 NAS 上的 V2 HTTPS API，文件字节走 Windows SMB 重定向器。凭据存在 Windows 凭据管理器，配置在 `%LOCALAPPDATA%\MuYingDrive\Settings\`。
 
 ## Windows 本地构建
 
-- 先在 `frontend/` 执行 `npm run build`，再从仓库根目录执行 `dotnet build desktop/MuYingDrive.Wpf/MuYingDrive.Wpf.csproj -c Release`。
-- 构建输出位于 `desktop/MuYingDrive.Wpf/bin/Release/net8.0-windows/`。当前为本机开发原型：启动时需要系统可调用的 Python 3.11+（或设置 `MUYING_PYTHON`），目标 Windows 电脑还需要 .NET 8 Desktop Runtime 和 Microsoft Edge WebView2 Runtime。
-- 尚未制作自包含安装包，也未在干净 Windows 电脑验证安装与升级流程。文件拖出到其他应用保留到真实 NAS/UNC 阶段。
+- 当前客户端：`dotnet build desktop/MuYingDrive.NativeWpf/MuYingDrive.NativeWpf.csproj -c Release`
+- 自包含部署（Windows x64），目标电脑**不需要**单独安装 .NET Desktop Runtime，安装也**不需要管理员权限**（装到 `%LOCALAPPDATA%\Programs\MuYingDrive`）。
+- 首次安装包由 `desktop/publish-installer.ps1` 产出，更新包由 `desktop/publish-update.ps1` 产出；两者都需要仓库之外的签名私钥与 NAS 配置模板，用法见脚本头部注释。安装包本体不带客户端，安装时从 NAS 拉取并校验签名清单后才写入。
+- 安装、更新与回滚已在真实 NAS 上端到端验收（`docs/software-updater-acceptance-2026-10-13.md`）。
+- 旧的 WebView2 原型（`frontend/` + `desktop/MuYingDrive.Wpf/`）已于 2026-10-14 移除，需要对照时见 git 历史。
 
 ## NAS 只读核查与兼容验证
 

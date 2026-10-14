@@ -12,7 +12,7 @@
 - **版本决策：** 当前保持 .NET 8 和 `net8.0-windows`；禁止自行改成 .NET 10 或自动更新项目目标框架。后续升级 .NET 10 必须先单独完成兼容测试（原生 WPF、依赖、NAS/SMB、传输、安装包、更新器和回滚）并得到用户明确批准，才可以向员工发布。员工安装目标采用 Windows x64 自包含部署，避免要求单独安装 .NET Desktop Runtime；尚未实现的打包/安装不要假称已验证。
 - 独立更新器 `desktop/MuYingDrive.Updater/` **同样必须由原生 WPF/XAML/C# 构建**；应在主客户端进程完全退出后继续运行，不依赖主应用窗口。
 - **禁止** WebView2、React、HTML/CSS、JS 前端、Electron、Tauri、Chromium、内嵌浏览器窗口或将 WPF 变为 Web UI 外壳。绝不能以开发效率、美观、组件生态或跨平台为由绕开。
-- `frontend/` 和 `desktop/MuYingDrive.Wpf/` 均为旧版历史参考；不是新模块的实现目标。禁止直接修改它们来实现更新 UI。
+- `frontend/` 与 `desktop/MuYingDrive.Wpf/`（旧 WebView2 + React 原型）**已于 2026-10-14 经用户确认从仓库移除**。它们长期被标为"仅供历史参考、禁止修改"，但一套与锁定技术栈相矛盾的旧实现留在工作树里，只会让人以为那是可用的第二条路。历史在 git 历史里可查，不靠留在工作树里保存。
 - 修改 UI 框架、依赖、窗口容器或技术栈必须先得到用户明确许可；不得通过编辑本文件/README 偷偷取消规则。
 
 ## 2. 严格模块职责
