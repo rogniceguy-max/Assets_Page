@@ -191,8 +191,20 @@ internal static class Program
                     () => "fixture-token",
                     new WorkbookTransportOptions { MaxUploadBytes = 64L * 1024 * 1024 },
                     () => "1"));
-                Render(new ProjectWorkbooksView { DataContext = workbook }, 1100, 700, 96,
-                       Path.Combine(output, $"workbooks-{theme}.png"));
+                // Loaded never fires for a tree with no window, so the adoption that makes the
+                // library look like the host has never been exercised here — the buttons and
+                // scrollbars in these screenshots were the library's own fallbacks. Invoking
+                // it directly is what puts the host's Button and ScrollBar styles in the shot.
+                var workbookView = new ProjectWorkbooksView { DataContext = workbook };
+                typeof(ProjectWorkbooksView).GetMethod("AdoptHostTheme", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(workbookView, null);
+                // Both are keyed lookups into the host's dictionaries, so renaming either key
+                // there would quietly drop the library back to drawing its own controls rather
+                // than failing. This is what notices.
+                Assert(workbookView.Resources.Contains(typeof(Button))
+                       && workbookView.Resources.Contains(typeof(System.Windows.Controls.Primitives.ScrollBar)),
+                    "The library has to adopt the host's button and scrollbar styles.");
+                Render(workbookView, 1100, 700, 96, Path.Combine(output, $"workbooks-{theme}.png"));
 
                 // The scene detail is built in code rather than XAML, and it spent its life
                 // inside a Window of its own — which is exactly where a DynamicResource lookup

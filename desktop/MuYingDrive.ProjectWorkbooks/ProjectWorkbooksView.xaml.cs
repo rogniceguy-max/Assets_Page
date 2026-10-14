@@ -52,6 +52,12 @@ public partial class ProjectWorkbooksView : UserControl
             var style = ancestor?.TryFindResource("Button.Secondary") ?? Application.Current?.TryFindResource("Button.Secondary");
             Resources[typeof(Button)] = style;
         }
+        // The host's scrollbar is a keyed style, not an implicit one, so it never reaches this
+        // library's scroll areas on its own — they were showing the stock Windows scrollbar,
+        // which looks nothing like the rest of the app. Adopted by key, and only when the host
+        // actually has it, since a StaticResource here would throw where it does not.
+        if ((ancestor?.TryFindResource("ScrollBar.FileArea") ?? Application.Current?.TryFindResource("ScrollBar.FileArea")) is Style scrollBars)
+            Resources[typeof(ScrollBar)] = scrollBars;
     }
     private static AssetRowItem? Row(object sender)
     {

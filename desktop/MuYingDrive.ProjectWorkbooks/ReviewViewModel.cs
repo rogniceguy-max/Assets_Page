@@ -45,6 +45,8 @@ public sealed class ReviewViewModel(IProjectWorkbookService service, string file
     public ImageSource? Preview { get => _preview; private set { _preview = value; Changed(); } }
     private ReviewThread? _thread;
     public string SummaryText => _thread is { } t ? IsImage ? $"好 {t.Good} · 不好 {t.Bad} · 评论 {t.CommentCount}" : $"评论 {t.CommentCount}" : "统计暂不可用";
+    /// <summary>An empty list once the thread is known, never a claim made before it is read.</summary>
+    public bool HasNoComments => _thread != null && Comments.Count == 0;
     public string MyVerdictText => _thread == null ? "评价状态未知" : _thread.MyVerdict switch { "good" => "我的评价：好", "bad" => "我的评价：不好", _ => "尚未评价" };
     private string _draft = "";
     public string Draft { get => _draft; set { _draft = value; Changed(); } }
@@ -81,13 +83,13 @@ public sealed class ReviewViewModel(IProjectWorkbookService service, string file
         if (thread.ImageId != ImageId) throw new InvalidDataException("接口返回了不同的讨论目标，已拒绝显示。");
         _thread = thread; Comments.Clear();
         foreach (var comment in thread.Comments.OrderBy(c => c.CreatedAt).ThenBy(c => c.Id, StringComparer.Ordinal)) Comments.Add(comment);
-        Changed(nameof(SummaryText)); Changed(nameof(MyVerdictText));
+        Changed(nameof(SummaryText)); Changed(nameof(MyVerdictText)); Changed(nameof(HasNoComments));
     }
     public async Task RefreshAsync()
     {
         // A failed refresh leaves previous data explicitly stale; counters are not invented as zero.
         var previousIds = Comments.Select(comment => comment.Id).ToHashSet(StringComparer.Ordinal);
-        _thread = null; Changed(nameof(SummaryText)); Changed(nameof(MyVerdictText));
+        _thread = null; Changed(nameof(SummaryText)); Changed(nameof(MyVerdictText)); Changed(nameof(HasNoComments));
         Apply(await service.GetReviewThreadForRowAsync(FileId, RowId, RowKind, ImageId));
         var newCount = Comments.Count(comment => !previousIds.Contains(comment.Id));
         RefreshNotice = _loadedThread && newCount > 0 ? $"新增 {newCount} 条评论。" : "";

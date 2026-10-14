@@ -111,7 +111,10 @@
         workbook drew a violet line for a single frame before the content arrived: at that
         speed the bar is an artifact, not information. It now waits before appearing, and
         says something only when the work actually takes a moment. -->
-   <ProgressBar Height="3" IsIndeterminate="True" Margin="0,0,0,8"
+   <!-- Collapsed to begin with, and it has to be set here rather than left to the attached
+        property: a binding that resolves to the property's own default is not a change, so
+        the callback never runs and the bar would sit there drawn while nothing is happening. -->
+   <ProgressBar Height="3" IsIndeterminate="True" Margin="0,0,0,8" Visibility="Collapsed"
                 local:DelayedVisibility.IsBusy="{Binding Busy}"/>
   </StackPanel>
   <StackPanel Grid.Row="1" Visibility="{Binding HasPendingOperation, Converter={StaticResource BoolVisibility}}" IsEnabled="{Binding Ready}" Margin="0,0,0,12">
@@ -165,7 +168,7 @@
          Content and Visibility are set from the code-behind; the panel is built in code, and
          keeping that in one place is why this file only describes where it goes. -->
     <Border x:Name="ScenePanelHost" Grid.Column="1" Grid.RowSpan="3" Width="360" Visibility="Collapsed"
-            Background="{DynamicResource Brush.Surface.Panel}"
+            Background="{DynamicResource Brush.Surface.Canvas}"
             BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1,0,0,0">
      <ContentControl x:Name="ScenePanelContent"/>
     </Border>

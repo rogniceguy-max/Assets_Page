@@ -32,6 +32,7 @@ public sealed class SceneDetailsPanel : UserControl
     private readonly ComboBox _level;
     private readonly StackPanel _body;
     private readonly Button _reload;
+    private readonly ReviewPanel _review;
     private SceneRowItem _item;
     private string _savedPlan;
     private string _savedLevel;
@@ -55,10 +56,11 @@ public sealed class SceneDetailsPanel : UserControl
         Heading = $"场景 {item.Row.SceneNumber} · 节拍 {item.Row.BeatNumber}";
 
         var root = new Grid { Margin = new Thickness(14) };
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                          // header
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                          // status
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });     // 本拍内容
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                          // 批注
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                          // toolbar
         Content = root;
 
         var header = new Grid();
@@ -92,19 +94,21 @@ public sealed class SceneDetailsPanel : UserControl
         Grid.SetRow(scroll, 2);
         root.Children.Add(scroll);
 
-        _toolbar = new WrapPanel();
-        Grid.SetRow(_toolbar, 3);
-        root.Children.Add(_toolbar);
-
-        var notes = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
-        notes.Children.Add(WorkflowDialogs.Text("原批注", 16));
-        foreach (var note in item.Row.LegacyNotes)
+        // The six imported 成员批注 columns are gone from here. They name members this app has
+        // no way to identify, and picking one for whoever is signed in would be a guess shown
+        // as a fact. What replaces them is what the walk-through asked for: you write a note,
+        // it is signed with the account that wrote it, and nobody's column is assumed.
+        _review = new ReviewPanel
         {
-            notes.Children.Add(WorkflowDialogs.Text($"{note.Label} · {note.SourceCell}", 13));
-            notes.Children.Add(WorkflowDialogs.Text(string.IsNullOrEmpty(note.Text) ? "（空）" : note.Text));
-        }
-        if (item.Row.LegacyNotes.Count == 0) notes.Children.Add(WorkflowDialogs.Text("未返回原批注列。"));
-        content.Children.Add(notes);
+            Height = 300,
+            DataContext = new ReviewViewModel(_model.Service, _fileId, _item.Row.Id, null, "scene-rows"),
+        };
+        Grid.SetRow(_review, 3);
+        root.Children.Add(_review);
+
+        _toolbar = new WrapPanel();
+        Grid.SetRow(_toolbar, 4);
+        root.Children.Add(_toolbar);
 
         _body = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
         _body.Children.Add(WorkflowDialogs.Text("制作难度", 16));
@@ -157,11 +161,8 @@ public sealed class SceneDetailsPanel : UserControl
         }));
         reload.Visibility = Visibility.Collapsed;
         _reload = reload; _toolbar.Children.Add(reload);
-        _toolbar.Children.Add(WorkflowDialogs.Button("讨论", (_, _) =>
-        {
-            var review = new ReviewWindow(new ReviewViewModel(_model.Service, _fileId, _item.Row.Id, null, "scene-rows")) { Owner = Window.GetWindow(this) };
-            WorkflowDialogs.Theme(review, _resources); review.ShowDialog();
-        }));
+        // No 讨论 button here any more: the discussion is the section above it, so a button
+        // that opened the same thing in a window would be a second way to do one thing.
         _toolbar.Children.Add(WorkflowDialogs.Button("来源", (_, _) =>
         {
             new SceneOriginsWindow(_model, _fileId, _item, _resources) { Owner = Window.GetWindow(this) }.ShowDialog(); _model.SceneChanged();
@@ -181,6 +182,9 @@ public sealed class SceneDetailsPanel : UserControl
     public bool TryLeave()
     {
         if (_busy) return false;
+        // The comment composer holds a draft of its own, and it is a separate refusal: a
+        // half-written note is as easy to lose as a half-written plan.
+        if (!_review.TryLeave()) return false;
         if (!HasDraft) return true;
         var owner = Window.GetWindow(this);
         return MessageBox.Show(owner, "规划或等级尚未保存，是否放弃当前修改？", "保留草稿", MessageBoxButton.YesNo) == MessageBoxResult.Yes;

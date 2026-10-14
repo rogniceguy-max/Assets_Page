@@ -28,7 +28,7 @@ internal static class WorkflowDialogs
         input.SetResourceReference(Control.BackgroundProperty, "Brush.Surface.Panel"); input.SetResourceReference(Control.ForegroundProperty, "Brush.Text.Primary");
         input.SetResourceReference(Control.BorderBrushProperty, "Brush.Border.Subtle"); input.SetResourceReference(TextBox.CaretBrushProperty, "Brush.Text.Primary"); return input;
     }
-    internal static string? Prompt(Window owner, ResourceDictionary resources, string title, string message, string initial = "", bool allowEmpty = true)
+    internal static string? Prompt(Window? owner, ResourceDictionary resources, string title, string message, string initial = "", bool allowEmpty = true)
     {
         var window = new Window { Owner = owner, Title = title, Width = 560, Height = 320, WindowStartupLocation = WindowStartupLocation.CenterOwner };
         Theme(window, resources); var panel = new StackPanel { Margin = new Thickness(20) }; window.Content = panel;

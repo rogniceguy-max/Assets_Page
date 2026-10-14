@@ -3,64 +3,11 @@
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:local="clr-namespace:MuYingDrive.ProjectWorkbooks"
  Title="{Binding Title}" Width="980" Height="760" MinWidth="460" MinHeight="520"
- WindowStartupLocation="CenterOwner" Loaded="OnLoaded" Closing="OnClosing"
- Background="{DynamicResource Brush.Surface.Canvas}" Foreground="{DynamicResource Brush.Text.Primary}"
+ WindowStartupLocation="CenterOwner" Closing="OnClosing"
+ Background="{DynamicResource Brush.Surface.Canvas}"
  FontFamily="{DynamicResource Typography.FontFamily}" FontSize="13">
- <Window.Resources>
-  <BooleanToVisibilityConverter x:Key="ReviewBoolVisibility"/>
-  <Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/></Style>
-  <Style TargetType="TextBox">
-   <Setter Property="Background" Value="{DynamicResource Brush.Surface.Panel}"/>
-   <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
-   <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Subtle}"/>
-   <Setter Property="CaretBrush" Value="{DynamicResource Brush.Text.Primary}"/>
-  </Style>
- </Window.Resources>
- <Grid Margin="20">
-  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-  <DockPanel><Button DockPanel.Dock="Right" Content="重新加载" Click="OnRefresh" IsEnabled="{Binding Ready}" Visibility="{Binding CanReload, Converter={StaticResource ReviewBoolVisibility}}" Style="{DynamicResource Button.Secondary}"/>
-   <StackPanel><TextBlock Text="{Binding Title}" FontSize="20" FontWeight="SemiBold"/><TextBlock Text="{Binding SummaryText}" Margin="0,8,0,10" Foreground="{DynamicResource Brush.Text.Secondary}"/></StackPanel>
-  </DockPanel>
-  <StackPanel Grid.Row="1"><TextBlock Text="{Binding Error}" Foreground="{DynamicResource Brush.Status.Danger}" Margin="0,0,0,8"/>
-   <TextBlock Text="{Binding RefreshNotice}" Foreground="{DynamicResource Brush.Text.Secondary}" Margin="0,0,0,8"/>
-   <ProgressBar Height="3" IsIndeterminate="True" Visibility="{Binding Busy, Converter={StaticResource ReviewBoolVisibility}}"/>
-  </StackPanel>
-  <ScrollViewer Grid.Row="2" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" Margin="0,10,0,10">
-   <StackPanel>
-    <StackPanel Visibility="{Binding IsImage, Converter={StaticResource ReviewBoolVisibility}}">
-     <Border Background="{DynamicResource Brush.Surface.Panel}" CornerRadius="8" Padding="12"><local:ZoomImageView Source="{Binding Preview}" Height="360"/></Border>
-     <TextBlock Text="{Binding ImageError}" Foreground="{DynamicResource Brush.Text.Secondary}" Margin="0,6,0,0"/>
-     <WrapPanel Margin="0,12,0,8" IsEnabled="{Binding Ready}">
-      <Button Content="好" Tag="good" Click="OnVote" Style="{DynamicResource Button.Secondary}"/>
-      <Button Content="不好" Tag="bad" Click="OnVote" Style="{DynamicResource Button.Secondary}"/>
-      <Button Content="撤回评价" Click="OnWithdraw" Style="{DynamicResource Button.Secondary}"/>
-      <TextBlock Text="{Binding MyVerdictText}" VerticalAlignment="Center" Margin="10,0,0,6" Foreground="{DynamicResource Brush.Text.Secondary}"/>
-     </WrapPanel>
-    </StackPanel>
-    <TextBlock Text="评论" FontSize="16" FontWeight="SemiBold" Margin="0,12,0,10"/>
-    <ItemsControl ItemsSource="{Binding Comments}" IsEnabled="{Binding Ready}">
-     <ItemsControl.ItemTemplate><DataTemplate>
-      <Border Background="{DynamicResource Brush.Surface.Panel}" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,0,0,8">
-       <StackPanel>
-        <WrapPanel><TextBlock Text="{Binding UserName}" FontWeight="SemiBold" Margin="0,0,12,4"/><TextBlock Text="{Binding CreatedAtText}" Foreground="{DynamicResource Brush.Text.Secondary}" Margin="0,0,0,4"/></WrapPanel>
-        <TextBlock Text="{Binding Text}" Margin="0,4,0,8"/>
-        <TextBlock><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Text" Value="待处理"/><Style.Triggers><DataTrigger Binding="{Binding Resolved}" Value="True"><Setter Property="Text" Value="已解决"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
-        <TextBlock Text="{Binding ResolutionNote}" Margin="0,4,0,8" Foreground="{DynamicResource Brush.Text.Secondary}"/>
-        <WrapPanel>
-         <Button Content="编辑" Click="OnEdit" Visibility="{Binding CanEdit, Converter={StaticResource ReviewBoolVisibility}}" Style="{DynamicResource Button.Secondary}"/>
-         <Button Content="删除" Click="OnDelete" Visibility="{Binding CanDelete, Converter={StaticResource ReviewBoolVisibility}}" Style="{DynamicResource Button.Secondary}"/>
-         <Button Click="OnResolve" Style="{DynamicResource Button.Secondary}" Visibility="{Binding CanResolve, Converter={StaticResource ReviewBoolVisibility}}"><TextBlock><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Text" Value="标记已解决"/><Style.Triggers><DataTrigger Binding="{Binding Resolved}" Value="True"><Setter Property="Text" Value="重新待处理"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock></Button>
-        </WrapPanel>
-       </StackPanel>
-      </Border>
-     </DataTemplate></ItemsControl.ItemTemplate>
-    </ItemsControl>
-   </StackPanel>
-  </ScrollViewer>
-  <StackPanel Grid.Row="3" IsEnabled="{Binding Ready}">
-   <TextBlock Text="{Binding ComposerTitle}" Margin="0,0,0,8"/>
-   <TextBox Text="{Binding Draft, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="75" MaxHeight="140" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="10"/>
-   <WrapPanel Margin="0,10,0,0"><Button Content="{Binding SendLabel}" Click="OnSend" Style="{DynamicResource Button.Primary}"/><Button Content="取消编辑" Click="OnCancelEdit" Visibility="{Binding IsEditing, Converter={StaticResource ReviewBoolVisibility}}" Style="{DynamicResource Button.Secondary}"/></WrapPanel>
-  </StackPanel>
- </Grid>
+ <!-- HOST ADJUSTMENT. The markup that was here is ReviewPanel.xaml now, so the beat detail
+      panel can host the same discussion without a second copy of it. This window is the
+      asset row's 讨论 button, which has nowhere else to put it. -->
+ <local:ReviewPanel x:Name="Panel" Margin="20"/>
 </Window>
