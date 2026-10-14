@@ -17,16 +17,25 @@ import hashlib
 import logging
 import subprocess
 from pathlib import Path
+from logging.handlers import RotatingFileHandler
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Dict, Any, List
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+# Setup auto-rotating logging (capped at 10MB x 3 = 30MB max disk space)
+log_dir = Path.home() / "Library" / "Logs"
+log_dir.mkdir(parents=True, exist_ok=True)
+log_file = log_dir / "media_worker.log"
+
 logger = logging.getLogger("MediaWorker")
+logger.setLevel(logging.INFO)
+
+file_handler = RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=3, encoding="utf-8")
+file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+logger.addHandler(file_handler)
+
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+logger.addHandler(console_handler)
 
 VIDEO_EXTS = {'.mp4', '.mov', '.mkv', '.avi', '.webm', '.flv', '.ts', '.m4v', '.wmv'}
 IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tiff', '.tif', '.psd'}
