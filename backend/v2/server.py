@@ -25,12 +25,22 @@ from .release_store import ReleaseNotFound, ReleaseStore, ReleaseUnavailable
 from .service import ApiError, V2Application
 from .feedback import FeedbackService
 from .feedback_http import dispatch as dispatch_feedback
-from .project_workbooks_http import dispatch as dispatch_project_workbooks
-from .project_workbooks.nas_adapter import NasSecurity, NasWorkbookServices, NasWorkflowServices
-from .project_workbooks.projects_api import ProjectsApi
 from .update_failure_reports import InvalidUpdateFailureReport, UpdateFailureReportStore, validate_report
 from .visitor import VisitorReader, VisitorService
 from .visitor_http import dispatch as dispatch_visitor
+
+# The workbook routes need a spreadsheet library that nothing else in this service uses. If
+# it is absent they go unavailable rather than the service refusing to start: login, the
+# update channel and the download page have no dependency on any of this, and an API that
+# will not boot because one optional feature's dependency is missing is a far worse failure
+# than that one feature being offline. The routes then fall through to the host's 404.
+try:
+    from .project_workbooks_http import dispatch as dispatch_project_workbooks
+    from .project_workbooks.nas_adapter import NasSecurity, NasWorkbookServices, NasWorkflowServices
+    from .project_workbooks.projects_api import ProjectsApi
+except ImportError:
+    dispatch_project_workbooks = None
+    NasSecurity = NasWorkbookServices = NasWorkflowServices = ProjectsApi = None
 
 
 API_ROOT = "/api/v2"
@@ -741,7 +751,7 @@ def make_server(settings: Settings, app: V2Application) -> ThreadingHTTPServer:
     # way of saying "not implemented". Unset means the module is not served at all and those
     # paths fall through to the host's 404.
     project_workbooks = None
-    if settings.project_docs_root is not None:
+    if settings.project_docs_root is not None and ProjectsApi is not None:
         project_workbooks = ProjectsApi(
             NasSecurity(app.session),
             NasWorkbookServices(settings.project_docs_root),
