@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import os
 import re
@@ -49,6 +50,68 @@ REQUEST_TIMEOUT_SECONDS = 20
 DOWNLOAD_ROOT = "/download"
 INSTALLER_FILE_PATH = f"{DOWNLOAD_ROOT}/muying-setup.exe"
 INSTALLER_DIGEST_PATH = f"{DOWNLOAD_ROOT}/muying-setup.sha256"
+
+# The page at the bare URL. Served as HTML with a link rather than as an index of paths:
+# this address is meant to be pasted to a colleague who has nothing installed, and a page
+# that prints a path as text gives them nothing to click. Placeholders are substituted with
+# str.replace rather than a template engine — the values come from the installer store, not
+# from the request, and escaping them is enough.
+DOWNLOAD_PAGE = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>下载沐影盘</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.7 -apple-system, "Microsoft YaHei UI", system-ui, sans-serif;
+         max-width: 620px; margin: 0 auto; padding: 48px 22px 80px; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  .sub { opacity: .65; margin: 0 0 28px; }
+  a.go { display: block; text-align: center; text-decoration: none; font-size: 17px;
+         padding: 16px; border-radius: 10px; background: #5B5BD6; color: #fff;
+         font-weight: 600; }
+  a.go:hover { background: #5151CD; }
+  dl { margin: 28px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; }
+  dt { opacity: .65; white-space: nowrap; }
+  dd { margin: 0; font-family: Consolas, Menlo, monospace; font-size: 13px; word-break: break-all; }
+  .box { margin-top: 28px; padding: 14px 16px; border-radius: 10px;
+         border: 1px solid rgba(127,127,127,.3); background: rgba(127,127,127,.08); }
+  .box p { margin: 0 0 8px; }
+  .box p:last-child { margin: 0; }
+</style>
+</head>
+<body>
+<h1>沐影盘</h1>
+<p class="sub">点击下面的按钮下载。装好之后桌面会出现「沐影盘」图标。</p>
+
+<a class="go" href="{{PATH}}" download>下载安装包（{{SIZE}} MB）</a>
+
+<dl>
+  <dt>版本文件</dt><dd>{{NAME}}</dd>
+  <dt>大小</dt><dd>{{SIZE}} MB</dd>
+  <dt>SHA-256</dt><dd>{{DIGEST}}</dd>
+</dl>
+
+<div class="box">
+  <p><b>安装不需要管理员权限</b>，也不会弹 UAC。</p>
+  <p>第一次运行如果出现「Windows 已保护你的电脑」，点<b>「更多信息」</b>，再点<b>「仍要运行」</b>。</p>
+  <p>想核对文件有没有传坏，可以对照上面的 SHA-256，校验值文件在
+     <a href="{{DIGEST_PATH}}">{{DIGEST_PATH}}</a>。</p>
+</div>
+</body>
+</html>
+"""
+
+DOWNLOAD_PAGE_NOTHING = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>下载沐影盘</title></head>
+<body style="font:15px/1.7 -apple-system,'Microsoft YaHei UI',system-ui,sans-serif;padding:48px 22px">
+<h1 style="font-size:22px">沐影盘</h1>
+<p>尚未发布安装包。</p>
+</body>
+</html>
+"""
 
 # Downloads run in the same worker pool as the authenticated API, and every connection
 # holds one of its 32 slots for as long as the transfer lasts. Without a separate cap, a
@@ -481,10 +544,16 @@ def create_handler(app: V2Application, *,
             self.wfile.write(body)
 
         def _serve_download_index(self) -> None:
-            """A short plain-text index so the bare URL is not a dead end.
+            """The page a colleague is handed.
 
-            Nothing from the request is echoed back — no Host header, no path — so this
-            page cannot be used to reflect anything into a browser.
+            A page with a link, not an index of paths. This URL exists to be pasted to
+            someone who has nothing installed, and printing "/download/muying-setup.exe"
+            as text gives them nothing to click — which is exactly how it was reported:
+            "只显示了黑屏和文字", no download.
+
+            Nothing from the request is echoed into it — no Host header, no path — so it
+            cannot reflect anything into a browser. Every value comes from the installer
+            store, and the two that could in principle be odd are escaped.
             """
             if not installer.configured:
                 self._send_error(ApiError(503, "INSTALLER_UNAVAILABLE", "安装包下载暂不可用。"))
@@ -500,7 +569,7 @@ def create_handler(app: V2Application, *,
                     # per request, and on Windows holds a lock on the published file.
                     opened.close()
             except ReleaseNotFound:
-                body = "沐影盘安装包下载\n\n尚未发布安装包。\n"
+                body = DOWNLOAD_PAGE_NOTHING
             except (ReleaseUnavailable, OSError):
                 # 503 rather than a friendly 200: an operator who mistyped the directory,
                 # or forgot to make the package read-only, should see the endpoint report
@@ -508,28 +577,16 @@ def create_handler(app: V2Application, *,
                 self._send_error(ApiError(503, "INSTALLER_UNAVAILABLE", "安装包下载暂不可用。"))
                 return
             else:
-                mebibytes = size / (1024 * 1024)
-                body = (
-                    "沐影盘安装包下载\n"
-                    "\n"
-                    f"版本文件  {name}\n"
-                    f"大小      {mebibytes:.1f} MB\n"
-                    f"SHA-256   {digest}\n"
-                    "\n"
-                    f"下载      {INSTALLER_FILE_PATH}\n"
-                    f"校验值    {INSTALLER_DIGEST_PATH}\n"
-                    "\n"
-                    f"校验      下载后算出的 SHA-256 应等于上面那串。校验文件里写的是\n"
-                    f"          {name}，与浏览器保存的文件名一致；用 curl -O 取到的\n"
-                    "          是 muying-setup.exe，需先改名才能用 sha256sum -c。\n"
-                    "\n"
-                    "安装不需要管理员权限。首次运行若出现「Windows 已保护你的电脑」，\n"
-                    "点「更多信息」再点「仍要运行」即可。\n"
-                )
+                body = DOWNLOAD_PAGE.replace("{{NAME}}", html.escape(name)) \
+                                   .replace("{{DIGEST}}", html.escape(digest)) \
+                                   .replace("{{SIZE}}", f"{size / (1024 * 1024):.1f}") \
+                                   .replace("{{PATH}}", INSTALLER_FILE_PATH) \
+                                   .replace("{{DIGEST_PATH}}", INSTALLER_DIGEST_PATH)
 
             encoded = body.encode("utf-8")
             self.send_response(200)
-            self._send_release_headers("text/plain; charset=utf-8", len(encoded), f'"{hashlib.sha256(encoded).hexdigest()}"')
+            self._send_release_headers("text/html; charset=utf-8", len(encoded),
+                                       f'"{hashlib.sha256(encoded).hexdigest()}"')
             self.end_headers()
             self.wfile.write(encoded)
 

@@ -79,6 +79,16 @@ public sealed class SmbFileCatalog
 
                 var isDirectory = (attributes & FileAttributes.Directory) != 0;
                 var info = isDirectory ? (FileSystemInfo)new DirectoryInfo(path) : new FileInfo(path);
+
+                // Filter out hidden files, system files, and internal .muying_cache
+                if (info.Name.StartsWith(".", StringComparison.Ordinal) ||
+                    info.Name.Equals(".muying_cache", StringComparison.OrdinalIgnoreCase) ||
+                    info.Name.Equals("Thumbs.db", StringComparison.OrdinalIgnoreCase) ||
+                    info.Name.Equals(".DS_Store", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
                 var modified = info.LastWriteTime;
                 var size = isDirectory ? 0L : ((FileInfo)info).Length;
                 var extension = isDirectory ? string.Empty : Path.GetExtension(path);
@@ -90,7 +100,7 @@ public sealed class SmbFileCatalog
                     Name = info.Name,
                     FullPath = path,
                     ThumbnailPath = isImage || isVideo ? path : string.Empty,
-                    AspectRatio = 1.4,
+                    AspectRatio = isVideo ? (16.0 / 9.0) : 1.4,
                     IsVideo = isVideo,
                     IsDirectory = isDirectory,
                     IsReadOnly = readOnly,

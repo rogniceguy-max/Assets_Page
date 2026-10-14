@@ -20,7 +20,7 @@ from pathlib import Path
 
 from backend.v2.installer_store import _has_write_bit, newest_setup_name
 from backend.v2.release_store import OpenRelease, ReleaseNotFound, ReleaseUnavailable
-from backend.v2.server import MAX_CONCURRENT_DOWNLOADS, create_handler
+from backend.v2.server import INSTALLER_FILE_PATH, MAX_CONCURRENT_DOWNLOADS, create_handler
 from backend.v2.service import ApiError
 
 
@@ -177,11 +177,23 @@ class InstallerDownloadTests(unittest.TestCase):
         self.assertEqual(digest, hashlib.sha256(self.payload).hexdigest())
 
     def test_the_bare_url_explains_itself(self):
-        status, _headers, body = self.request("/download")
+        status, headers, body = self.request("/download")
         self.assertEqual(status, 200)
+        self.assertEqual(headers["Content-Type"], "text/html; charset=utf-8")
         text = body.decode("utf-8")
         self.assertIn("MuYingDrive.Setup-1.0.15.exe", text)
         self.assertIn(hashlib.sha256(self.payload).hexdigest(), text)
+
+    def test_the_bare_url_offers_something_to_click(self):
+        # It shipped as a plain-text index once, which printed the download path as text.
+        # Reported from a real browser as "只显示了黑屏和文字" — no download, because there
+        # was nothing to click. The page exists to be handed to someone who has nothing
+        # installed, so a link is the whole point of it.
+        _status, headers, body = self.request("/download")
+        text = body.decode("utf-8")
+        self.assertIn("text/html", headers["Content-Type"])
+        self.assertIn(f'href="{INSTALLER_FILE_PATH}"', text)
+        self.assertIn("<a ", text)
 
     def test_nothing_published_yet_is_a_clear_answer_not_a_crash(self):
         self.files.clear()
