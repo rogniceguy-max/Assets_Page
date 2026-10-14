@@ -53,23 +53,57 @@ class MediaWorker:
         self.max_workers = max_workers
         self.running = True
 
+    @staticmethod
+    def nas_smb_url() -> Optional[str]:
+        """The SMB URL to mount, built from the environment.
+
+        The credentials are read here rather than written down: this file used to carry
+        a live NAS account name and password in plain text, which is how they reached a
+        public repository. There is deliberately no fallback — a missing variable must
+        stop the mount, because a "safe default" is how a credential gets written down
+        again. Prefer a dedicated, non-admin account: this worker only reads media and
+        writes into .muying_cache/.
+        """
+        explicit = os.environ.get("MUYING_NAS_SMB_URL")
+        if explicit:
+            return explicit
+        user = os.environ.get("MUYING_NAS_USER")
+        password = os.environ.get("MUYING_NAS_PASSWORD")
+        host = os.environ.get("MUYING_NAS_HOST")
+        if not (user and password and host):
+            return None
+        share = os.environ.get("MUYING_NAS_SHARE", "Assets")
+        return f"//{user}:{password}@{host}/{share}"
+
     def ensure_nas_mounted(self) -> bool:
         """Verifies if the NAS share is mounted, attempts to mount if missing."""
         if self.nas_root.exists() and any(self.nas_root.iterdir()):
             return True
-        logger.warning(f"NAS root {self.nas_root} is not mounted or empty. Attempting auto-mount...")
-        cmd = [
-            "mount_smbfs",
-            "//19945022511:Andy66668888@192.168.1.153/Assets",
-            str(self.nas_root)
-        ]
-        try:
-            subprocess.run(cmd, check=True)
-            logger.info("NAS Assets share mounted successfully.")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to mount NAS Assets share: {e}")
+        url = self.nas_smb_url()
+        if url is None:
+            logger.error(
+                "NAS root %s is not mounted and no credentials are configured. Set "
+                "MUYING_NAS_USER, MUYING_NAS_PASSWORD and MUYING_NAS_HOST (or "
+                "MUYING_NAS_SMB_URL) in the worker's environment.",
+                self.nas_root)
             return False
+        logger.warning("NAS root %s is not mounted or empty. Attempting auto-mount...", self.nas_root)
+        try:
+            # capture_output, and never log the command: the URL carries the password,
+            # and this process's stderr is redirected into a log file by launchd.
+            result = subprocess.run(
+                ["mount_smbfs", url, str(self.nas_root)],
+                capture_output=True, text=True)
+        except OSError as e:
+            logger.error("Could not run mount_smbfs: %s", e)
+            return False
+        if result.returncode != 0:
+            detail = (result.stderr or "").strip().replace(url, "<redacted>")
+            logger.error("Failed to mount NAS Assets share (exit %d): %s",
+                         result.returncode, detail or "no error output")
+            return False
+        logger.info("NAS Assets share mounted successfully.")
+        return True
 
     @staticmethod
     def get_cache_dir(space_dir: Path) -> Path:

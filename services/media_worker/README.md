@@ -23,7 +23,7 @@
 
 每个业务空间根目录下维护独立的 `.muying_cache/thumbs/`：
 ```text
-\\192.168.1.153\Assets\
+\\<NAS>\Assets\
 ├── 00_公共素材\
 │   └── .muying_cache\
 │       └── thumbs\
@@ -66,13 +66,47 @@
 - `start.sh`：自动检测挂载与启动脚本。
 - `com.muying.mediaworker.plist`：macOS launchd 守护配置。
 
+### NAS 凭据：只从环境变量来，绝不写进文件
+
+**凭据不允许出现在这两个脚本里。** 这两个文件曾经明文带着一个 NAS 账号和密码，它们就是
+这么进到公开仓库里去的。现在：
+
+| 变量 | 必填 | 说明 |
+|---|---|---|
+| `MUYING_NAS_USER` | 是 | NAS 账号。**请用专用账号，不要用管理员**——工蜂只需要读媒体、写 `.muying_cache/` |
+| `MUYING_NAS_PASSWORD` | 是 | 该账号的密码 |
+| `MUYING_NAS_HOST` | 是 | NAS 地址 |
+| `MUYING_NAS_SHARE` | 否 | 共享名，默认 `Assets` |
+| `MUYING_NAS_SMB_URL` | 否 | 直接给出完整 `//user:pass@host/share`。密码含 `@ : / ? #` 等 URL 特殊字符时用这个，省得做百分号编码 |
+| `MUYING_NAS_MOUNT` | 否 | 挂载点，默认 `$HOME/NAS_Assets` |
+| `MUYING_MEDIA_WORKER` | 否 | worker.py 路径，默认 `$HOME/media_worker/worker.py` |
+
+**没有任何一项有默认凭据值，这是刻意的。** 变量缺失时脚本会直接停下并报错，而不是退回某个
+"能用的"账号——兜底值正是一个凭据再次被写下来的方式。
+
+macOS 上给 launchd 传环境变量，在 `com.muying.mediaworker.plist` 里加：
+
+```xml
+<key>EnvironmentVariables</key>
+<dict>
+    <key>MUYING_NAS_USER</key>     <string>换成你的账号</string>
+    <key>MUYING_NAS_PASSWORD</key> <string>换成密码</string>
+    <key>MUYING_NAS_HOST</key>     <string>换成 NAS 地址</string>
+</dict>
+```
+
+该 plist 里含有密码，所以它**必须**保持 `chmod 600`、属主为部署账号，并且永远不要提交。
+更稳妥的做法是把凭据存进 macOS 钥匙串，用 `security add-generic-password` 写入、在
+`start.sh` 里用 `security find-generic-password -w` 取出，这样 plist 里就只有变量名。
+
 ### 常用命令
 ```bash
-# 启动守护程序
-nohup python3 -u /Users/muying12345/media_worker/worker.py > /Users/muying12345/Library/Logs/media_worker.log 2>&1 &
+# 启动守护程序（凭据先 export，或由 launchd 注入）
+export MUYING_NAS_USER=... MUYING_NAS_PASSWORD=... MUYING_NAS_HOST=...
+nohup python3 -u "$HOME/media_worker/worker.py" > "$HOME/Library/Logs/media_worker.log" 2>&1 &
 
 # 查看实时处理日志
-tail -f /Users/muying12345/Library/Logs/media_worker.log
+tail -f "$HOME/Library/Logs/media_worker.log"
 
 # 检查进程状态
 ps aux | grep worker.py
