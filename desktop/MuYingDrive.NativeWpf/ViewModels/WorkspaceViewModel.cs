@@ -17,6 +17,17 @@ namespace MuYingDrive.NativeWpf.ViewModels;
 /// </remarks>
 public sealed class WorkspaceViewModel : ObservableObject
 {
+    /// <summary>
+    /// The navigation entries that are the file browser pointed somewhere else rather than
+    /// pages of their own. Selecting one has to move the browser, not just swap the content:
+    /// setting the content alone would leave the previous scope's listing on screen under
+    /// the new title.
+    /// </summary>
+    private static readonly HashSet<string> BrowserKeys = new(StringComparer.Ordinal)
+    {
+        "图片", "视频", "个人空间"
+    };
+
     private readonly MainViewModel _main;
     private readonly Dictionary<string, object> _pages;
     private readonly Func<string, Task> _selectSpaceAsync;
@@ -49,21 +60,108 @@ public sealed class WorkspaceViewModel : ObservableObject
 
         NavigationItems = chrome.NavigationItems;
         SpaceItems = chrome.SpaceItems;
+        Projects = chrome.Projects;
         ShowUpdateEntry = chrome.ShowUpdateEntry;
         AccountLabel = chrome.AccountLabel;
         ExitLabel = chrome.ExitLabel;
-        _currentContent = pages["文件"];
+
+        // The first entry in the sidebar is where the workspace opens. Read from the chrome
+        // rather than hard-coded: the employee and the tour offer different first entries,
+        // and a hard-coded one would be a page the tour does not have.
+        var first = chrome.NavigationItems.FirstOrDefault();
+        _selectedSpaceKey = first?.Key;
+        _currentContent = ResolveOpeningContent(chrome, pages);
 
         ToggleSidebarCommand = new RelayCommand(_ => IsSidebarExpanded = !IsSidebarExpanded);
-        NavigateCommand = new RelayCommand(parameter => Navigate(parameter as string ?? "文件"));
+        NavigateCommand = new RelayCommand(parameter => Navigate(parameter as string ?? string.Empty));
         SelectSpaceCommand = new RelayCommand(parameter => _ = SelectSpaceAsync(parameter as string));
+        ActivateProjectNodeCommand = new RelayCommand(
+            parameter => { if (parameter is ProjectNode node) ActivateProjectNode(node); });
         ThemeChangedCommand = new RelayCommand(parameter =>
             _main.ThemeService.SetPreference(parameter as string ?? "跟随系统"));
         ExitCommand = new AsyncRelayCommand(_ => exitAsync());
 
         MarkSelected();
-        if (chrome.SpaceItems.Count > 0) _selectedSpaceKey = chrome.SpaceItems[0].Key;
+        // The browser entries have to actually be activated, or the workspace opens showing
+        // a browser that has never been pointed anywhere.
+        if (first is not null && BrowserKeys.Contains(first.Key)) _ = _selectSpaceAsync(first.Key);
+    }
+
+    /// <summary>Activating a row in the 项目 tree.</summary>
+    public RelayCommand ActivateProjectNodeCommand { get; }
+
+    /// <summary>
+    /// Creating a project, or null when nothing can serve it yet.
+    /// </summary>
+    /// <remarks>
+    /// Null rather than a command that reports "not yet": the sidebar disables the button and
+    /// shows <see cref="CreateProjectToolTip"/> as its reason, which is the same choice the
+    /// 项目 entry itself made when there was no page behind it — the entry is not offered as
+    /// working until it is.
+    /// </remarks>
+    public RelayCommand? CreateProjectCommand { get; set; }
+
+    /// <summary>Why the + is disabled, or what it will do.</summary>
+    public string CreateProjectToolTip { get; set; } = "项目创建服务尚未接入。";
+
+    /// <summary>
+    /// What activating a project row does. Assigned by the factory after construction,
+    /// because the handler needs the workspace itself — opening a row sets the content, and
+    /// that is the workspace's to set.
+    /// </summary>
+    public Action<ProjectNode>? ProjectNodeActivator { get; set; }
+
+    private void ActivateProjectNode(ProjectNode node) => ProjectNodeActivator?.Invoke(node);
+
+    /// <summary>The page table key for the workbook reader, which has no sidebar entry.</summary>
+    public const string WorkbookPageKey = "工作簿";
+
+    /// <summary>
+    /// What the workspace shows before anything has been clicked: the first sidebar entry
+    /// that has a page behind it.
+    /// </summary>
+    /// <remarks>
+    /// Throws rather than falling back to an empty content area. A chrome whose entries all
+    /// point at pages that were never built is a wiring mistake, and a blank workspace is
+    /// the one symptom that would not say so.
+    /// </remarks>
+    private static object ResolveOpeningContent(WorkspaceChrome chrome, Dictionary<string, object> pages)
+    {
+        foreach (var item in chrome.NavigationItems)
+            if (pages.TryGetValue(item.Key, out var page)) return page;
+        if (pages.Count > 0) return pages.Values.First();
+        throw new InvalidOperationException("工作区没有任何可显示的页面。");
+    }
+
+    /// <summary>
+    /// Shows the file browser, wherever it is currently pointed.
+    /// </summary>
+    /// <remarks>
+    /// Used when a project row opens a directory. No global entry is highlighted afterwards:
+    /// the user is inside a project, not in one of the views at the top of the sidebar, and
+    /// leaving the previous entry lit would say otherwise.
+    /// </remarks>
+    public void ShowBrowser(object browser)
+    {
+        SelectedNavigation = string.Empty;
+        CurrentContent = browser;
         MarkSelected();
+        OnPropertyChanged(nameof(PageTitle));
+    }
+
+    /// <summary>Shows a page that exists without a sidebar entry of its own.</summary>
+    /// <remarks>
+    /// The workbook page is reached from a project's 工作簿 row rather than from a
+    /// navigation entry, so it lives in the page table but not in the sidebar list.
+    /// </remarks>
+    public void ShowPage(string key)
+    {
+        if (!_pages.TryGetValue(key, out var page)) return;
+        SelectedNavigation = key;
+        CurrentContent = page;
+        MarkSelected();
+        OnPropertyChanged(nameof(PageTitle));
+        _onPageActivated?.Invoke(key);
     }
 
     /// <summary>The signed-in employee workspace: files, transfers and feedback.</summary>
@@ -83,42 +181,71 @@ public sealed class WorkspaceViewModel : ObservableObject
             ? new ProjectWorkbookPage(api, session.SessionToken, session.User.Id)
             : null;
 
+        // The sidebar. 图片, 视频 and 个人空间 are the same file browser pointed at three
+        // different scopes; 传输 and 反馈 are pages of their own. The department spaces this
+        // replaces are still reachable at the SMB and ACL layer — only the entries are gone,
+        // which is what makes this reversible.
         var chrome = new WorkspaceChrome(
             [
-                new WorkspaceNavItem("文件", "文件", "Files"),
+                new WorkspaceNavItem("图片", "图片", "Image"),
+                new WorkspaceNavItem("视频", "视频", "Video"),
+                new WorkspaceNavItem("个人空间", "个人空间", "UserRound"),
                 new WorkspaceNavItem("传输", "传输", "Upload"),
                 new WorkspaceNavItem("反馈", "反馈", "CircleHelp"),
             ],
-            [
-                new WorkspaceNavItem("本部门", "本部门", "FolderOpen"),
-                new WorkspaceNavItem("公共素材", "公共素材", "Image"),
-                new WorkspaceNavItem("个人空间", "个人空间", "UserRound"),
-                new WorkspaceNavItem("其他部门", "其他部门", "Folder"),
-                // Last, below the four spaces. It is a page rather than a space, but the
-                // sidebar is one list and this is where it reads best.
-                new WorkspaceNavItem("项目", "项目", "Table"),
-            ],
+            [],
+            // Filled once the project list has been read. Empty until then, and empty is
+            // shown as "loading or none" rather than as a project that is not there.
+            [],
             session.User.UserName,
             "退出登录",
             ShowUpdateEntry: true);
 
         var pages = new Dictionary<string, object>(StringComparer.Ordinal)
         {
-            ["文件"] = files,
+            // One instance under three keys: they differ by scope, not by page.
+            ["图片"] = files,
+            ["视频"] = files,
+            ["个人空间"] = files,
             ["传输"] = transfers,
             ["反馈"] = feedback
         };
-        if (projectWorkbooks is not null) pages["项目"] = projectWorkbooks.ViewModel;
+        // No sidebar entry of its own: the workbook page is reached from a project's
+        // 工作簿 row, so it is a page without being a navigation destination.
+        if (projectWorkbooks is not null) pages[WorkbookPageKey] = projectWorkbooks.ViewModel;
 
         var workspace = new WorkspaceViewModel(
             main, chrome, pages,
-            key => { files.SetSpace(key); return Task.CompletedTask; },
+            key => { files.ActivateNavigation(key); return Task.CompletedTask; },
             () => main.SignOutAsync(session),
             transfers, feedback,
             disposeExtra: projectWorkbooks is null
                 ? null
                 : () => { projectWorkbooks.Dispose(); return ValueTask.CompletedTask; },
             onPageActivated: key => { if (key == "反馈") _ = feedback.EnsureLoadedAsync(); });
+
+        workspace.ProjectNodeActivator = node =>
+        {
+            switch (node.Kind)
+            {
+                case ProjectNodeKind.Workbook when projectWorkbooks is not null:
+                    workspace.ShowPage(WorkbookPageKey);
+                    _ = projectWorkbooks.OpenWorkbookAsync(node.ProjectId, node.Id);
+                    break;
+                case ProjectNodeKind.MediaGroup:
+                    files.OpenProjectMedia(
+                        node.ProjectName,
+                        node.Name == ProjectNavigation.ImageGroupName
+                            ? SpaceMediaKind.Images
+                            : SpaceMediaKind.Videos);
+                    workspace.ShowBrowser(files);
+                    break;
+                default:
+                    files.OpenProject(node.ProjectName);
+                    workspace.ShowBrowser(files);
+                    break;
+            }
+        };
 
         workspace.Session = session;
         workspace.Account = session.User;
@@ -149,6 +276,9 @@ public sealed class WorkspaceViewModel : ObservableObject
                 new WorkspaceNavItem("反馈", "反馈", "CircleHelp"),
             ],
             spaces,
+            // The tour has no projects. It is a read-only walk through a few shared spaces,
+            // not a workspace someone works in.
+            [],
             "参观",
             "退出游览",
             ShowUpdateEntry: false);
@@ -174,6 +304,10 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     public IReadOnlyList<WorkspaceNavItem> NavigationItems { get; }
     public IReadOnlyList<WorkspaceNavItem> SpaceItems { get; }
+
+    /// <summary>The 项目 group: one tree per project. Empty until the list has been read.</summary>
+    public IReadOnlyList<ProjectNode> Projects { get; }
+
     public bool ShowUpdateEntry { get; }
     public string AccountLabel { get; }
     public string ExitLabel { get; }
@@ -257,10 +391,16 @@ public sealed class WorkspaceViewModel : ObservableObject
     private void Navigate(string destination)
     {
         if (!_pages.TryGetValue(destination, out var page)) return;
+        var isBrowser = BrowserKeys.Contains(destination);
+        if (isBrowser) _selectedSpaceKey = destination;
         SelectedNavigation = destination;
         CurrentContent = page;
         MarkSelected();
         OnPropertyChanged(nameof(PageTitle));
+        // Re-pointing the browser is what makes 图片, 视频 and 个人空间 different from each
+        // other; they share one instance, so without this all three would show whichever
+        // scope was set last.
+        if (isBrowser) _ = _selectSpaceAsync(destination);
         // Some pages fetch on first display; without this the feedback list opened empty
         // until a filter was clicked.
         _onPageActivated?.Invoke(destination);

@@ -71,8 +71,30 @@ internal static class Program
             Assert(ReferenceEquals(workspace.CurrentContent, workspace.Feedback), "Feedback must be a peer workspace.");
             workspace.NavigateCommand.Execute("传输");
             Assert(ReferenceEquals(workspace.CurrentContent, transfers) && transfers.Tasks.Contains(failed), "Navigation must retain the transfer queue instance.");
-            workspace.NavigateCommand.Execute("文件");
+            workspace.NavigateCommand.Execute("图片");
             Assert(ReferenceEquals(workspace.CurrentContent, files) && files.SearchText == "fixture-browse-filter", "Navigation must retain file browsing state.");
+
+            // --- the shape of the sidebar ---------------------------------------------------
+            var navKeys = workspace.NavigationItems.Select(item => item.Key).ToArray();
+            Assert(navKeys.SequenceEqual(["图片", "视频", "个人空间", "传输", "反馈"]),
+                "The global navigation is 图片/视频/个人空间/传输/反馈: " + string.Join("/", navKeys));
+            Assert(workspace.SpaceItems.Count == 0, "The department spaces are gone from the sidebar.");
+            foreach (var gone in new[] { "文件", "本部门", "其他部门", "公共素材" })
+            {
+                Assert(!navKeys.Contains(gone), $"'{gone}' must not be a navigation entry any more.");
+                Assert(!workspace.SpaceItems.Any(item => item.Key == gone), $"'{gone}' must not be a space entry.");
+            }
+
+            var tree = ProjectNavigation.ForProject("211953005", "孟婆",
+                [new ProjectNavigation.WorkbookEntry("file-id", "孟婆2_场景节拍表.xlsx")]);
+            Assert(tree.Kind == ProjectNodeKind.Project && tree.Name == "孟婆", "A project row is the project.");
+            Assert(tree.Id == "211953005", "A project row is identified by the backend's id, not its name.");
+            Assert(tree.Children.Select(child => child.Name).SequenceEqual(["工作簿", "图片", "视频"]),
+                "A project carries its workbooks and the two media views.");
+            Assert(tree.Children[0].Children.Single().Id == "file-id",
+                "A workbook row carries the file id the document route takes.");
+            Assert(tree.Children.All(child => child.ProjectId == "211953005"),
+                "Every row knows which project it belongs to.");
 
             // --- the names a duplicate gets ---------------------------------------------
             Assert(UniqueName.WithSuffix("照片.jpg", 2) == "照片 (2).jpg", "A duplicate is numbered before its extension.");

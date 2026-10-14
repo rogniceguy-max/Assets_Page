@@ -36,12 +36,17 @@ public sealed class WorkspaceNavItem : ObservableObject
 /// </remarks>
 /// <param name="NavigationItems">Pages shown at the top of the sidebar.</param>
 /// <param name="SpaceItems">Spaces listed under the "空间" heading.</param>
+/// <param name="Projects">
+/// The 项目 group. Empty is a real state — a workspace whose projects have not loaded, or a
+/// tour, which has none — and the sidebar says so rather than showing an empty box.
+/// </param>
 /// <param name="AccountLabel">Text shown in the account button.</param>
 /// <param name="ExitLabel">Label for the account menu action.</param>
 /// <param name="ShowUpdateEntry">Whether the update button appears in the header.</param>
 public sealed record WorkspaceChrome(
     IReadOnlyList<WorkspaceNavItem> NavigationItems,
     IReadOnlyList<WorkspaceNavItem> SpaceItems,
+    IReadOnlyList<ProjectNode> Projects,
     string AccountLabel,
     string ExitLabel,
     bool ShowUpdateEntry);

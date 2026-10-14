@@ -30,7 +30,6 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
     // What the browser is currently pointed at: a root and the rules that apply inside it.
     // Assigned in the constructor before anything reads it.
     private SpaceScope _scope = null!;
-    private readonly string _departmentName;
     private int _loadRequestId;
     private readonly bool _smbConnected;
     private readonly string _smbConnectionError;
@@ -44,12 +43,14 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
         _spaces = new SmbSpaceResolver(settings, session.User);
         _catalog = new SmbFileCatalog(_spaces);
         _mutations = new SmbFileMutations(_spaces);
-        _departmentName = session.User.Department;
         Files = [];
         ItemsView = CollectionViewSource.GetDefaultView(Files);
         ItemsView.Filter = FilterItem;
-        SpaceTitle = session.User.Department;
-        _scope = _spaces.ResolveScope(DriveSpaceKind.Department);
+        // Lands on the global 图片 view, which is the first entry in the sidebar. The
+        // workspace re-activates it on the way in, so this is the state a browser is in
+        // before anything has been clicked rather than a second source of truth.
+        SpaceTitle = ProjectNavigation.ImageGroupName;
+        _scope = _spaces.ResolveProjectsScope(SpaceMediaKind.Images);
         _currentRoot = _scope.Root;
         _currentDirectory = _currentRoot;
         _smbConnected = session.SmbConnection.Succeeded;
@@ -271,31 +272,42 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
 
     public async Task InitializeAsync() => await LoadCurrentDirectoryAsync();
 
-    /// <summary>Points the browser at one of the spaces the sidebar offers, by its label.</summary>
+    /// <summary>
+    /// Points the browser at one of the global navigation entries.
+    /// </summary>
     /// <remarks>
-    /// This is the last place that still knows department names. Everything below it works
-    /// on the resolved <see cref="SpaceScope"/>, which is what makes replacing these labels
-    /// with projects a change here rather than a change everywhere.
+    /// These entries are views rather than pages: each is this same browser pointed at a
+    /// different scope, which is why they are handled here instead of as separate pages.
+    /// Returns false for a key that is not one of them, so the caller can fall through to a
+    /// real page rather than showing an empty browser.
     /// </remarks>
-    public void SetSpace(string space)
+    public bool ActivateNavigation(string key)
     {
-        var kind = space switch
+        switch (key)
         {
-            "本部门" => DriveSpaceKind.Department,
-            "公共素材" => DriveSpaceKind.Public,
-            "个人空间" => DriveSpaceKind.Personal,
-            "其他部门" => DriveSpaceKind.OtherDepartment,
-            _ => DriveSpaceKind.Department
-        };
-        SetScope(_spaces.ResolveScope(kind), kind switch
-        {
-            DriveSpaceKind.Department => _departmentName,
-            DriveSpaceKind.Public => "公共素材",
-            DriveSpaceKind.Personal => "个人空间",
-            DriveSpaceKind.OtherDepartment => _departmentName == "影视资源库" ? "文学创作库" : "影视资源库",
-            _ => "本部门"
-        });
+            case "图片":
+                SetScope(_spaces.ResolveProjectsScope(SpaceMediaKind.Images), ProjectNavigation.ImageGroupName);
+                return true;
+            case "视频":
+                SetScope(_spaces.ResolveProjectsScope(SpaceMediaKind.Videos), ProjectNavigation.VideoGroupName);
+                return true;
+            case "个人空间":
+                SetScope(_spaces.ResolveScope(DriveSpaceKind.Personal), "个人空间");
+                return true;
+            default:
+                return false;
+        }
     }
+
+    /// <summary>Opens one project's directory, where writing is allowed.</summary>
+    public void OpenProject(string projectName) =>
+        SetScope(_spaces.ResolveProjectScope(projectName), projectName);
+
+    /// <summary>Opens one project, showing only one kind of its media.</summary>
+    public void OpenProjectMedia(string projectName, SpaceMediaKind media) =>
+        SetScope(
+            _spaces.ResolveProjectScope(projectName, media),
+            media == SpaceMediaKind.Images ? ProjectNavigation.ImageGroupName : ProjectNavigation.VideoGroupName);
 
     /// <summary>
     /// Points the browser at a scope: a directory, what may be done in it, and which of its

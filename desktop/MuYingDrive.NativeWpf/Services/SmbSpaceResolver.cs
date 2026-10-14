@@ -103,6 +103,23 @@ public sealed class SmbSpaceResolver
         return new SpaceScope(root, canWrite: true, media);
     }
 
+    /// <summary>
+    /// The scope behind the global 图片 and 视频 entries: every project's directory at once.
+    /// </summary>
+    /// <remarks>
+    /// Read-only, deliberately. The global media views are an aggregate — a way to find a
+    /// picture without first knowing which project holds it — and an aggregate is the wrong
+    /// place to offer an upload, because there is no answer to "into which project". Writing
+    /// lives in the project tree, where the destination is unambiguous.
+    ///
+    /// This enumerates the projects folder itself rather than asking the backend for media
+    /// across projects, so what it shows is exactly what is on disk. The cost is that it
+    /// cannot group by project the way the contract describes; it shows the project folders
+    /// and lets the user walk in, which is honest about what it knows.
+    /// </remarks>
+    public SpaceScope ResolveProjectsScope(SpaceMediaKind media) =>
+        new(Path.GetFullPath(Path.Combine(_shareRoot, ProjectFolderName)), canWrite: false, media);
+
     /// <summary>Whether <paramref name="path"/> sits inside the given scope.</summary>
     public bool IsWithinSpace(SpaceScope scope, string path) =>
         Within(scope.Root, path);

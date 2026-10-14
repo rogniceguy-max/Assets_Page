@@ -35,6 +35,32 @@ public sealed class ProjectWorkbookPage : IDisposable
 
     public ProjectWorkbooksViewModel ViewModel { get; }
 
+    /// <summary>
+    /// Opens one workbook by id, the way the 项目 tree asks for it.
+    /// </summary>
+    /// <remarks>
+    /// The tree knows the project and the file; this page owns the list the file objects come
+    /// from, so the lookup happens here rather than the tree being handed a second, parallel
+    /// idea of what a file is. Both ids come from the backend, so neither depends on a
+    /// display name — which is the point, because a project can be renamed and this has to
+    /// keep working when it is.
+    /// </remarks>
+    public Task OpenWorkbookAsync(string projectId, string fileId) =>
+        ViewModel.ExecuteAsync(async () =>
+        {
+            var project = ViewModel.Projects.FirstOrDefault(p => p.Id == projectId)
+                ?? throw new InvalidOperationException("找不到该项目，可能已被删除。");
+            if (!ReferenceEquals(project, ViewModel.SelectedProject))
+            {
+                ViewModel.SelectedProject = project;
+                await ViewModel.RefreshFilesAsync();
+            }
+
+            var file = ViewModel.Files.FirstOrDefault(f => f.Id == fileId)
+                ?? throw new InvalidOperationException("该项目里没有这个工作簿，可能已被删除。");
+            await ViewModel.OpenAsync(file);
+        });
+
     public void Dispose()
     {
         // Disposing the client cancels anything still in flight for this account.
