@@ -14,6 +14,8 @@ public sealed class UpdateRunner
 {
     public async Task<UpdateRunResult> RunAsync(string requestPath, IProgress<UpdateProgress> progress, CancellationToken cancellationToken)
     {
+        DetachWorkingDirectory();
+
         UpdateHandoffRequest request;
         IDisposable? executionLock = null;
         string? stageDirectory = null;
@@ -205,12 +207,43 @@ public sealed class UpdateRunner
         public void Report(T value) => report(value);
     }
 
+    /// <summary>
+    /// Moves this process's working directory out of the install tree.
+    /// </summary>
+    /// <remarks>
+    /// Applying an update begins by renaming the install directory, and Windows refuses to
+    /// rename a directory that any process has open — including a process whose working
+    /// directory is merely inside it. The launcher now hands us a directory outside the
+    /// install root, but a shortcut left over from an older install, or any other launcher,
+    /// can still pass one in; the window that results says only that a file could not be
+    /// read or written, which is nothing like the cause. This runs from the updater's own
+    /// directory, which is never the install root.
+    /// </remarks>
+    private static void DetachWorkingDirectory()
+    {
+        try
+        {
+            var own = Path.GetDirectoryName(Environment.ProcessPath);
+            if (!string.IsNullOrEmpty(own) && Directory.Exists(own))
+                Environment.CurrentDirectory = own;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            // Best effort: the launcher's working directory is the primary guard.
+        }
+    }
+
     private static string SafeErrorMessage(Exception exception) => exception switch
     {
         UnauthorizedAccessException => "当前用户没有足够的安装目录权限。旧版本文件未被主动删除。",
         CryptographicException => "更新签名或文件完整性验证失败。旧版本仍保留。",
         InvalidDataException => "更新文件格式或版本信息无效。旧版本仍保留。",
-        IOException => "更新文件无法安全读取或写入。请重试；如果无法启动沐影盘，请联系管理员。",
+        // The old wording named neither a cause nor an action, so a sharing violation on the
+        // install directory read the same as a full disk. A program still holding that
+        // directory is by far the likeliest reason this fires, and it is the one the reader
+        // can act on, so it is named — as a possibility, since it is not the only one.
+        IOException => "更新文件无法安全读取或写入。可能仍有程序占用安装目录：请完全退出沐影盘后重试；"
+                      + "如果反复出现，请联系管理员。",
         _ => "更新过程遇到问题。旧版本仍保留；可查看更新日志或联系管理员。"
     };
 }

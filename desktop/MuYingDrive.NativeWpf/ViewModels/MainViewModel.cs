@@ -273,7 +273,19 @@ public sealed class MainViewModel : ObservableObject
             return false;
         try
         {
-            var start = new ProcessStartInfo(_preparedUpdaterPath) { UseShellExecute = false };
+            var start = new ProcessStartInfo(_preparedUpdaterPath)
+            {
+                UseShellExecute = false,
+                // Set explicitly, and outside the install root. A process whose working
+                // directory is a folder holds a handle on it, and the updater's first act is
+                // to rename that folder. Without this the child inherits our working
+                // directory — which is the install root whenever the client was started from
+                // the shortcut the installer creates, i.e. for everyone who double-clicks it.
+                // The rename then fails in about twenty milliseconds with a sharing violation,
+                // the transaction rolls back, and the user is told the update could not
+                // complete.
+                WorkingDirectory = Path.GetDirectoryName(_preparedUpdaterPath)!
+            };
             start.ArgumentList.Add("--request");
             start.ArgumentList.Add(_preparedHandoffPath);
             return Process.Start(start) is not null;
