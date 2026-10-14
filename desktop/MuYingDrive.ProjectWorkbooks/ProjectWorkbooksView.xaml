@@ -100,30 +100,24 @@
    </Border>
   </DataTemplate>
  </UserControl.Resources>
- <Grid Margin="24">
+ <Grid Margin="24,20,24,22">
   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-  <!-- HOST ADJUSTMENT. This view is otherwise a copy of the handoff package's, kept
-       diffable against it. The handoff's own design notes say the project home should no
-       longer carry a project switcher or repeated create-template buttons, because the
-       sidebar's project tree is the switcher now. The dropdown was still here, and it
-       rendered the raw record — it showed "ProjectInfo { Id = …, Name = 孟婆 }" rather than
-       a name — while being a second, disagreeing answer to which project is open. Removed;
-       the heading names the project instead. -->
-  <StackPanel Grid.Row="0">
-   <TextBlock Text="{Binding Error}" Foreground="{DynamicResource Brush.Status.Danger}" Margin="0,0,0,8"/>
-   <Button Content="重新加载" Click="OnRefresh" HorizontalAlignment="Left" IsEnabled="{Binding Ready}" Visibility="{Binding CanReload, Converter={StaticResource BoolVisibility}}"/>
-   <!-- HOST ADJUSTMENT. The bar used to be bound straight to Busy, so switching to a
-        workbook drew a violet line for a single frame before the content arrived: at that
-        speed the bar is an artifact, not information. It now waits before appearing, and
-        says something only when the work actually takes a moment. -->
-   <!-- Collapsed to begin with, and it has to be set here rather than left to the attached
-        property: a binding that resolves to the property's own default is not a change, so
-        the callback never runs and the bar would sit there drawn while nothing is happening. -->
+  <Grid Grid.Row="0" Margin="0,0,0,16">
+   <TextBlock Text="{Binding Document.File.Name}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"
+              Visibility="{Binding IsOpen, Converter={StaticResource BoolVisibility}}"/>
+   <TextBlock Text="工作簿" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"
+              Visibility="{Binding IsHome, Converter={StaticResource BoolVisibility}}"/>
+  </Grid>
+  <StackPanel Grid.Row="1">
    <ProgressBar Height="3" IsIndeterminate="True" Margin="0,0,0,8" Visibility="Collapsed"
                 local:DelayedVisibility.IsBusy="{Binding Busy}"/>
-  </StackPanel>
-  <StackPanel Grid.Row="1" Visibility="{Binding HasPendingOperation, Converter={StaticResource BoolVisibility}}" IsEnabled="{Binding Ready}" Margin="0,0,0,12">
-   <TextBlock Text="{Binding PendingText}"/><WrapPanel Margin="0,6,0,0"><Button Content="重试这次操作" Click="OnRetryPending"/><Button Content="取消待确认操作" Click="OnCancelPending"/></WrapPanel>
+   <TextBlock Text="{Binding Error}" Foreground="{DynamicResource Brush.Status.Danger}" Margin="0,0,0,8"
+              Visibility="{Binding CanReload, Converter={StaticResource BoolVisibility}}"/>
+   <Button Content="重新加载" Click="OnRefresh" HorizontalAlignment="Left" Margin="0,0,0,8" IsEnabled="{Binding Ready}"
+           Visibility="{Binding CanReload, Converter={StaticResource BoolVisibility}}"/>
+   <StackPanel Visibility="{Binding HasPendingOperation, Converter={StaticResource BoolVisibility}}" IsEnabled="{Binding Ready}" Margin="0,0,0,12">
+    <TextBlock Text="{Binding PendingText}"/><WrapPanel Margin="0,6,0,0"><Button Content="重试这次操作" Click="OnRetryPending"/><Button Content="取消待确认操作" Click="OnCancelPending"/></WrapPanel>
+   </StackPanel>
   </StackPanel>
   <Grid Grid.Row="2" IsEnabled="{Binding Ready}">
    <Grid Visibility="{Binding IsHome, Converter={StaticResource BoolVisibility}}" AllowDrop="True" DragOver="OnWorkbookDragOver" Drop="OnWorkbookDrop" Background="Transparent">
@@ -150,7 +144,6 @@
     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <StackPanel>
-     <TextBlock Text="{Binding Document.File.Name}" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12"/>
      <WrapPanel Margin="0,0,0,12"><ComboBox ItemsSource="{Binding Sheets}" SelectedItem="{Binding SelectedSheet}" MinWidth="140" MaxWidth="280" Margin="0,0,12,0">
        <ComboBox.ItemTemplate>
         <DataTemplate>

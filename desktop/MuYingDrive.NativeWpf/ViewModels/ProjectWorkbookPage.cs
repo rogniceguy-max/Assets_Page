@@ -51,6 +51,12 @@ public sealed class ProjectWorkbookPage : IDisposable
         string projectId, CancellationToken cancellationToken = default) =>
         _service.ListProjectFilesAsync(projectId, cancellationToken);
 
+    public Action? ProjectFilesChanged
+    {
+        get => ViewModel.ProjectFilesChanged;
+        set => ViewModel.ProjectFilesChanged = value;
+    }
+
     /// <summary>
     /// Opens one workbook by id, the way the 项目 tree asks for it.
     /// </summary>
@@ -61,7 +67,7 @@ public sealed class ProjectWorkbookPage : IDisposable
     /// display name — which is the point, because a project can be renamed and this has to
     /// keep working when it is.
     /// </remarks>
-    public Task OpenWorkbookAsync(string projectId, string fileId) =>
+    public Task OpenWorkbookAsync(string projectId, string fileId, Func<Task>? onNotFound = null) =>
         ViewModel.ExecuteAsync(async () =>
         {
             // The page loads its lists lazily, and opening a workbook from the sidebar is
@@ -78,8 +84,65 @@ public sealed class ProjectWorkbookPage : IDisposable
                 await ViewModel.RefreshFilesAsync();
             }
 
-            var file = ViewModel.Files.FirstOrDefault(f => f.Id == fileId)
-                ?? throw new InvalidOperationException("该项目里没有这个工作簿，可能已被删除。");
+            var file = ViewModel.Files.FirstOrDefault(f => f.Id == fileId);
+            if (file == null)
+            {
+                await ViewModel.RefreshFilesAsync();
+                file = ViewModel.Files.FirstOrDefault(f => f.Id == fileId);
+            }
+            if (file == null)
+            {
+                if (onNotFound != null) await onNotFound();
+                throw new InvalidOperationException("该工作簿在 NAS 上已不存在或已被改名，已刷新列表。");
+            }
+
+            try
+            {
+                await ViewModel.OpenAsync(file);
+            }
+            catch (Exception)
+            {
+                if (onNotFound != null) await onNotFound();
+                throw;
+            }
+        });
+
+    /// <summary>
+    /// Opens the project's workbook home view (showing workbook list and creation options).
+    /// </summary>
+    public Task OpenProjectHomeAsync(string projectId) =>
+        ViewModel.ExecuteAsync(async () =>
+        {
+            if (ViewModel.Projects.Count == 0) await ViewModel.InitializeAsync();
+
+            var project = ViewModel.Projects.FirstOrDefault(p => p.Id == projectId)
+                ?? throw new InvalidOperationException("找不到该项目，可能已被删除。");
+            if (!ReferenceEquals(project, ViewModel.SelectedProject))
+            {
+                ViewModel.SelectedProject = project;
+            }
+            await ViewModel.RefreshFilesAsync();
+            ViewModel.Back();
+        });
+
+    /// <summary>
+    /// Opens a workbook by its filename within a project (used when double clicking a file in browser).
+    /// </summary>
+    public Task OpenWorkbookByNameAsync(string projectId, string fileName) =>
+        ViewModel.ExecuteAsync(async () =>
+        {
+            if (ViewModel.Projects.Count == 0) await ViewModel.InitializeAsync();
+
+            var project = ViewModel.Projects.FirstOrDefault(p => p.Id == projectId)
+                ?? throw new InvalidOperationException("找不到该项目，可能已被删除。");
+            if (!ReferenceEquals(project, ViewModel.SelectedProject))
+            {
+                ViewModel.SelectedProject = project;
+            }
+            await ViewModel.RefreshFilesAsync();
+
+            var file = ViewModel.Files.FirstOrDefault(f => string.Equals(f.Name, fileName, StringComparison.OrdinalIgnoreCase))
+                ?? throw new InvalidOperationException($"该项目里没有找到工作簿「{fileName}」。");
             await ViewModel.OpenAsync(file);
         });
 

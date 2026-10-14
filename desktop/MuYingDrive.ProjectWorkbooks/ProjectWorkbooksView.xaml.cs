@@ -116,9 +116,21 @@ public partial class ProjectWorkbooksView : UserControl
     }
     private async void OnRefresh(object sender, RoutedEventArgs e) => await Model.ExecuteAsync(async () =>
     {
-        if (Model.Document is { } document) await Model.OpenAsync(document.File);
+        if (Model.Document is { } document)
+        {
+            try
+            {
+                await Model.OpenAsync(document.File);
+            }
+            catch
+            {
+                Model.Back();
+                await Model.RefreshFilesAsync();
+            }
+        }
         else if (Model.SelectedProject == null) await Model.InitializeAsync();
         else await Model.RefreshFilesAsync();
+        Model.ProjectFilesChanged?.Invoke();
     });
     private void OnBack(object sender, RoutedEventArgs e) => Model.Back();
     private async void OnAddEpisode(object sender, RoutedEventArgs e)
@@ -227,6 +239,7 @@ public partial class ProjectWorkbooksView : UserControl
         var file = await pending.SubmitAsync(Model.Service);
         Model.SetPending(null);
         if (file.ProjectId == Model.SelectedProject?.Id && !Model.Files.Any(existing => existing.Id == file.Id)) Model.Files.Add(file);
+        Model.ProjectFilesChanged?.Invoke();
         return file;
     }
     private async void OnRetryPending(object sender, RoutedEventArgs e) => await Model.ExecuteAsync(async () => { await SubmitPendingAsync(); });

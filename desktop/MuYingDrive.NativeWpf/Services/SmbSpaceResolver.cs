@@ -100,7 +100,7 @@ public sealed class SmbSpaceResolver
         var prefix = _shareRoot.EndsWith('\\') ? _shareRoot : _shareRoot + "\\";
         if (!root.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("项目路径超出 SMB 共享范围。");
-        return new SpaceScope(root, canWrite: true, media);
+        return new SpaceScope(root, canWrite: true, media, flatten: media != SpaceMediaKind.All);
     }
 
     /// <summary>

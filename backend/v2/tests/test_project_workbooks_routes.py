@@ -212,24 +212,31 @@ class WorkbookRouteTests(unittest.TestCase):
         self.assertEqual(401, self.request("GET", "/api/v2/project-workbooks/projects", token=None)[0])
         self.assertEqual(401, self.request("GET", "/api/v2/project-workbooks/projects", token="wrong")[0])
 
-    def test_creating_a_template_says_not_implemented_rather_than_pretending(self):
-        # A body that passes the route's own validation, so the answer comes from the missing
-        # adapter rather than from a rejected request.
-        body = json.dumps({"template_kind": "scene_beats", "project_id": "1",
+    def test_creating_a_template_creates_workbook_file(self):
+        by_name = {item["name"]: item["id"] for item in self.projects()}
+        project_id = by_name["空项目"]
+        body = json.dumps({"template_kind": "scene_beats", "project_id": project_id,
                            "operation_id": "0123456789abcdef"}).encode("utf-8")
         status, _, response = self.request(
             "POST", "/api/v2/project-workbooks/create", body=body, content_type="application/json")
-        self.assertEqual(503, status, response[:200])
-        self.assertIn("STORAGE_UNAVAILABLE", response.decode("utf-8"))
+        self.assertEqual(201, status, response[:200])
+        created = json.loads(response.decode("utf-8"))
+        self.assertEqual("scene_beats", created["template_kind"])
+        self.assertTrue((self.root / "空项目" / created["name"]).is_file())
 
-    def test_importing_a_workbook_says_not_implemented_rather_than_pretending(self):
+    def test_importing_a_workbook_creates_file(self):
+        by_name = {item["name"]: item["id"] for item in self.projects()}
+        project_id = by_name["空项目"]
+        sample_xlsx = MASTER.read_bytes()
         status, _, response = self.request(
-            "POST", "/api/v2/project-workbooks/import", body=b"PK\x03\x04",
+            "POST", "/api/v2/project-workbooks/import", body=sample_xlsx,
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            extra_headers={"X-Project-Id": "1", "X-Operation-Id": "0123456789abcdef",
-                           "X-File-Name": "x.xlsx"})
-        self.assertEqual(503, status, response[:200])
-        self.assertIn("STORAGE_UNAVAILABLE", response.decode("utf-8"))
+            extra_headers={"X-Project-Id": project_id, "X-Operation-Id": "0123456789abcdef",
+                           "X-File-Name": "imported.xlsx"})
+        self.assertEqual(201, status, response[:200])
+        imported = json.loads(response.decode("utf-8"))
+        self.assertEqual("imported.xlsx", imported["name"])
+        self.assertTrue((self.root / "空项目" / "imported.xlsx").is_file())
 
     def test_the_host_sends_its_own_404_for_paths_it_does_not_own(self):
         self.assertEqual(404, self.request("GET", "/api/v2/not-a-workbook-route")[0])

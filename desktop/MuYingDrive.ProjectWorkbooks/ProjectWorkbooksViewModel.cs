@@ -181,6 +181,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
     /// someone clicked a workbook in the sidebar instead.
     /// </remarks>
     public Func<bool>? ConfirmLeaving { get; set; }
+    public Action? ProjectFilesChanged { get; set; }
 
     public async Task OpenAsync(ProjectFile file)
     {

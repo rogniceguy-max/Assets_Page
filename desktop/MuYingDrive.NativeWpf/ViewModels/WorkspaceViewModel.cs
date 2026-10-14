@@ -40,6 +40,7 @@ public sealed class WorkspaceViewModel : ObservableObject
     private string? _selectedSpaceKey;
     private object _currentContent;
     private bool _isSidebarExpanded = true;
+    private ProjectWorkbookPage? _projectWorkbooksPage;
 
     private WorkspaceViewModel(
         MainViewModel main,
@@ -113,7 +114,24 @@ public sealed class WorkspaceViewModel : ObservableObject
     /// </summary>
     public Action<ProjectNode>? ProjectNodeActivator { get; set; }
 
-    private void ActivateProjectNode(ProjectNode node) => ProjectNodeActivator?.Invoke(node);
+    private void ActivateProjectNode(ProjectNode node)
+    {
+        SelectProjectNode(node);
+        ProjectNodeActivator?.Invoke(node);
+    }
+
+    /// <summary>
+    /// Highlights the active project node in the sidebar tree.
+    /// </summary>
+    public void SelectProjectNode(ProjectNode? target)
+    {
+        void UpdateNode(ProjectNode n)
+        {
+            n.IsSelected = target != null && (ReferenceEquals(n, target) || n.Id == target.Id);
+            foreach (var child in n.Children) UpdateNode(child);
+        }
+        foreach (var project in Projects) UpdateNode(project);
+    }
 
     /// <summary>
     /// Opens an .xlsx the user opened from the file browser in the workbook reader, returning
@@ -121,10 +139,31 @@ public sealed class WorkspaceViewModel : ObservableObject
     /// </summary>
     public bool TryOpenWorkbookFile(string fullPath)
     {
-        if (ProjectNodeActivator is null) return false;
-        var node = FindWorkbookNode(fullPath);
-        if (node is null) return false;
-        ProjectNodeActivator(node);
+        var segments = fullPath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var rootIndex = Array.FindLastIndex(segments, segment =>
+            segment.Equals(SmbSpaceResolver.ProjectFolderName, StringComparison.OrdinalIgnoreCase));
+        if (rootIndex < 0 || rootIndex + 2 != segments.Length - 1) return false;
+
+        var projectName = segments[rootIndex + 1];
+        var fileName = segments[^1];
+        if (!fileName.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase)) return false;
+
+        var projectNode = Projects.FirstOrDefault(project =>
+            project.Kind == ProjectNodeKind.Project &&
+            string.Equals(project.ProjectName, projectName, StringComparison.OrdinalIgnoreCase));
+        if (projectNode is null) return false;
+
+        ShowPage(WorkbookPageKey);
+        if (_projectWorkbooksPage is not null)
+        {
+            _ = _projectWorkbooksPage.OpenWorkbookByNameAsync(projectNode.ProjectId, fileName);
+            _ = LoadProjectsAsync();
+        }
+        else
+        {
+            var node = FindWorkbookNode(fullPath);
+            if (node is not null) ProjectNodeActivator?.Invoke(node);
+        }
         return true;
     }
 
@@ -206,7 +245,7 @@ public sealed class WorkspaceViewModel : ObservableObject
     public void ShowPage(string key)
     {
         if (!_pages.TryGetValue(key, out var page)) return;
-        SelectedNavigation = key;
+        SelectedNavigation = string.Empty;
         CurrentContent = page;
         MarkSelected();
         OnPropertyChanged(nameof(PageTitle));
@@ -273,13 +312,28 @@ public sealed class WorkspaceViewModel : ObservableObject
                 : () => { projectWorkbooks.Dispose(); return ValueTask.CompletedTask; },
             onPageActivated: key => { if (key == "反馈") _ = feedback.EnsureLoadedAsync(); });
 
+        workspace._projectWorkbooksPage = projectWorkbooks;
+        if (projectWorkbooks is not null)
+        {
+            projectWorkbooks.ProjectFilesChanged = () => _ = workspace.LoadProjectsAsync();
+        }
+
         workspace.ProjectNodeActivator = node =>
         {
+            workspace.SelectProjectNode(node);
             switch (node.Kind)
             {
                 case ProjectNodeKind.Workbook when projectWorkbooks is not null:
                     workspace.ShowPage(WorkbookPageKey);
-                    _ = projectWorkbooks.OpenWorkbookAsync(node.ProjectId, node.Id);
+                    _ = projectWorkbooks.OpenWorkbookAsync(node.ProjectId, node.Id, async () =>
+                    {
+                        await workspace.LoadProjectsAsync();
+                    });
+                    break;
+                case ProjectNodeKind.WorkbookGroup when projectWorkbooks is not null:
+                    workspace.ShowPage(WorkbookPageKey);
+                    _ = projectWorkbooks.OpenProjectHomeAsync(node.ProjectId);
+                    _ = workspace.LoadProjectsAsync();
                     break;
                 case ProjectNodeKind.MediaGroup:
                     files.OpenProjectMedia(
@@ -580,5 +634,9 @@ public sealed class WorkspaceViewModel : ObservableObject
         // while its page was on screen.
         foreach (var item in SpaceItems)
             item.IsSelected = item.Key == _selectedSpaceKey || item.Key == SelectedNavigation;
+        if (!string.IsNullOrEmpty(SelectedNavigation))
+        {
+            SelectProjectNode(null);
+        }
     }
 }

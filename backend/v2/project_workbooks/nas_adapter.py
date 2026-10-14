@@ -160,11 +160,91 @@ class NasWorkflowServices:
 
     # --- creating, importing and everything downstream: a later cut ----------------------
     def create(self, actor: Any, template_kind: str, project_id: str, operation_id: str) -> dict:
-        raise _not_implemented()
+        from backend.v2.project_helper import (
+            _template_bytes, BEAT_HEADERS, ASSET_HEADERS,
+            BEAT_SHEET_NAME, ASSET_SHEET_NAME, FILE_MODE, _write_atomic,
+            _ownership, _apply_ownership
+        )
+        directory = _resolve_project(self._root, project_id)
+        if template_kind == "scene_beats":
+            base_name = "节拍表"
+            data = _template_bytes(BEAT_HEADERS, BEAT_SHEET_NAME)
+        elif template_kind == "asset_review":
+            base_name = "资产表"
+            data = _template_bytes(ASSET_HEADERS, ASSET_SHEET_NAME)
+        else:
+            raise ApiFault(422, "INVALID_TEMPLATE", "请选择一种内置模板。")
+
+        target_name = f"{base_name}.xlsx"
+        idx = 2
+        while (directory / target_name).exists():
+            target_name = f"{base_name}_{idx}.xlsx"
+            idx += 1
+
+        target_file = directory / target_name
+        _write_atomic(target_file, data, FILE_MODE)
+        try:
+            uid, gid = _ownership()
+            _apply_ownership(target_file, uid, gid)
+        except Exception:
+            pass
+
+        return {
+            "id": _encode_file_id(project_id, target_file.name),
+            "name": target_file.name,
+            "template_kind": template_kind,
+            "version": 1,
+            "project_id": project_id,
+            "revision_of": None,
+            "revision_label": None,
+        }
 
     def import_xlsx_stream(self, actor: Any, name: str, source: BinaryIO, length: int,
                            project_id: Any, operation_id: Any, revision_of: Any) -> dict:
-        raise _not_implemented()
+        from backend.v2.project_helper import (
+            _validate_name, FILE_MODE, _write_atomic,
+            _ownership, _apply_ownership
+        )
+        if project_id is None:
+            raise ApiFault(422, "MISSING_PROJECT", "导入需要指定项目。")
+        directory = _resolve_project(self._root, project_id)
+        try:
+            safe_name = _validate_name(name)
+        except Exception as error:
+            raise ApiFault(422, "INVALID_FILENAME", str(error)) from error
+        if not safe_name.lower().endswith(WORKBOOK_SUFFIX):
+            raise ApiFault(415, "UNSUPPORTED_TYPE", "项目只接收 .xlsx 文件。")
+
+        target_name = safe_name
+        if (directory / target_name).exists() and revision_of is None:
+            stem = safe_name[:-5]
+            idx = 2
+            while (directory / f"{stem}_{idx}.xlsx").exists():
+                idx += 1
+            target_name = f"{stem}_{idx}.xlsx"
+
+        data = source.read(length) if length >= 0 else source.read()
+        if not data:
+            raise ApiFault(422, "INVALID_WORKBOOK", "表格文件为空。")
+
+        target_file = directory / target_name
+        _write_atomic(target_file, data, FILE_MODE)
+        try:
+            uid, gid = _ownership()
+            _apply_ownership(target_file, uid, gid)
+        except Exception:
+            pass
+
+        kind = projector.classify(target_file)
+        return {
+            "id": _encode_file_id(project_id, target_file.name),
+            "name": target_file.name,
+            "template_kind": kind,
+            "version": 1,
+            "project_id": project_id,
+            "revision_of": revision_of,
+            "revision_label": None,
+        }
 
     def list_images(self, actor: Any, project_id: str, q: Any, category: Any,
                     cursor: Any, page_size: int) -> dict:

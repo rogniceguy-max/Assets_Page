@@ -18,7 +18,7 @@
  <Grid>
   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
   <DockPanel><Button DockPanel.Dock="Right" Content="重新加载" Click="OnRefresh" IsEnabled="{Binding Ready}" Visibility="{Binding CanReload, Converter={StaticResource ReviewBoolVisibility}}" Style="{DynamicResource Button.Secondary}"/>
-   <StackPanel><TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold"/><TextBlock Text="{Binding SummaryText}" Margin="0,8,0,10" Foreground="{DynamicResource Brush.Text.Secondary}"/></StackPanel>
+   <StackPanel><TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold"/><TextBlock Text="{Binding SummaryText}" Margin="0,8,0,10" Foreground="{DynamicResource Brush.Text.Secondary}" Visibility="{Binding IsImage, Converter={StaticResource ReviewBoolVisibility}}"/></StackPanel>
   </DockPanel>
   <StackPanel Grid.Row="1"><TextBlock Text="{Binding Error}" Foreground="{DynamicResource Brush.Status.Danger}" Margin="0,0,0,8"/>
    <TextBlock Text="{Binding RefreshNotice}" Foreground="{DynamicResource Brush.Text.Secondary}" Margin="0,0,0,8"/>
@@ -36,10 +36,6 @@
       <TextBlock Text="{Binding MyVerdictText}" VerticalAlignment="Center" Margin="10,0,0,6" Foreground="{DynamicResource Brush.Text.Secondary}"/>
      </WrapPanel>
     </StackPanel>
-    <!-- Only shown once a thread has actually been read. Before that the count is unknown,
-         and "no comments" is a claim the panel is not yet in a position to make. -->
-    <TextBlock Text="还没有批注。" Margin="0,0,0,8" Foreground="{DynamicResource Brush.Text.Secondary}"
-               Visibility="{Binding HasNoComments, Converter={StaticResource ReviewBoolVisibility}}"/>
     <ItemsControl ItemsSource="{Binding Comments}" IsEnabled="{Binding Ready}">
      <ItemsControl.ItemTemplate><DataTemplate>
       <Border Background="{DynamicResource Brush.Surface.Panel}" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,0,0,8">

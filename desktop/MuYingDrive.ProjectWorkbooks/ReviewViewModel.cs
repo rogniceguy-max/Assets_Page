@@ -44,7 +44,7 @@ public sealed class ReviewViewModel(IProjectWorkbookService service, string file
     private ImageSource? _preview = image?.Preview;
     public ImageSource? Preview { get => _preview; private set { _preview = value; Changed(); } }
     private ReviewThread? _thread;
-    public string SummaryText => _thread is { } t ? IsImage ? $"好 {t.Good} · 不好 {t.Bad} · 批注 {t.CommentCount}" : $"批注 {t.CommentCount}" : "统计暂不可用";
+    public string SummaryText => _thread is { } t ? (IsImage ? $"好 {t.Good} · 不好 {t.Bad} · 批注 {t.CommentCount}" : string.Empty) : string.Empty;
     /// <summary>An empty list once the thread is known, never a claim made before it is read.</summary>
     public bool HasNoComments => _thread != null && Comments.Count == 0;
     public string MyVerdictText => _thread == null ? "评价状态未知" : _thread.MyVerdict switch { "good" => "我的评价：好", "bad" => "我的评价：不好", _ => "尚未评价" };
