@@ -167,6 +167,27 @@
                     </Button>
                 </Grid>
 
+                <!-- Why the group is empty, when it is. "No projects yet" and "the list did
+                     not load" are the same blank space otherwise, and they need different
+                     things from whoever is looking at it. -->
+                <TextBlock Grid.Row="4" Text="{Binding ProjectListNotice}" TextWrapping="Wrap"
+                           Margin="10,2,10,0" VerticalAlignment="Top"
+                           FontSize="{StaticResource Typography.FontSize.Caption}"
+                           Foreground="{DynamicResource Brush.Text.Secondary}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding ProjectListNotice}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsSidebarExpanded}" Value="False">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+
                 <ScrollViewer Grid.Row="4" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <TreeView ItemsSource="{Binding Projects}" ItemTemplate="{StaticResource ProjectNodeTemplate}"
                               Background="Transparent" BorderThickness="0" Padding="0">

@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using MuYingDrive.NativeWpf.Infrastructure;
 using MuYingDrive.NativeWpf.Models;
@@ -60,7 +61,7 @@ public sealed class WorkspaceViewModel : ObservableObject
 
         NavigationItems = chrome.NavigationItems;
         SpaceItems = chrome.SpaceItems;
-        Projects = chrome.Projects;
+        Projects = new ObservableCollection<ProjectNode>(chrome.Projects);
         ShowUpdateEntry = chrome.ShowUpdateEntry;
         AccountLabel = chrome.AccountLabel;
         ExitLabel = chrome.ExitLabel;
@@ -247,6 +248,30 @@ public sealed class WorkspaceViewModel : ObservableObject
             }
         };
 
+        if (projectWorkbooks is not null)
+        {
+            workspace.ProjectListLoader = async () =>
+            {
+                var projects = await projectWorkbooks.ListProjectsAsync();
+                var trees = new List<ProjectNode>(projects.Count);
+                // One request per project for its workbooks. Fine at this size and honest
+                // about it; if the list ever grows, the fix is a backend route that returns
+                // projects with their workbooks, not a cache here.
+                foreach (var project in projects)
+                {
+                    var files = await projectWorkbooks.ListProjectFilesAsync(project.Id);
+                    trees.Add(ProjectNavigation.ForProject(
+                        project.Id,
+                        project.Name,
+                        files.Select(file => new ProjectNavigation.WorkbookEntry(file.Id, file.Name)).ToArray()));
+                }
+                return trees;
+            };
+            // Not awaited: the sidebar fills in when it fills in, and the workspace is usable
+            // — 图片, 个人空间, 传输, 反馈 — while it does.
+            _ = workspace.LoadProjectsAsync();
+        }
+
         workspace.Session = session;
         workspace.Account = session.User;
         workspace.Files = files;
@@ -306,7 +331,47 @@ public sealed class WorkspaceViewModel : ObservableObject
     public IReadOnlyList<WorkspaceNavItem> SpaceItems { get; }
 
     /// <summary>The 项目 group: one tree per project. Empty until the list has been read.</summary>
-    public IReadOnlyList<ProjectNode> Projects { get; }
+    public ObservableCollection<ProjectNode> Projects { get; }
+
+    /// <summary>
+    /// Reads the projects for the sidebar. Assigned by the factory, because it needs the
+    /// workbook page's service and the workspace should not know how one is built.
+    /// </summary>
+    public Func<Task<IReadOnlyList<ProjectNode>>>? ProjectListLoader { get; set; }
+
+    /// <summary>Why the 项目 group is empty, or empty when it simply has not loaded yet.</summary>
+    public string ProjectListNotice
+    {
+        get => _projectListNotice;
+        private set => SetProperty(ref _projectListNotice, value);
+    }
+
+    private string _projectListNotice = string.Empty;
+
+    /// <summary>
+    /// Fills the 项目 group from the backend.
+    /// </summary>
+    /// <remarks>
+    /// A failure leaves the group empty and says why, rather than leaving it looking like a
+    /// workspace that has no projects — those two are the same pixels and different
+    /// problems. It does not throw: a sidebar that cannot load is not a reason to take the
+    /// file browser, the transfers and the feedback page down with it.
+    /// </remarks>
+    public async Task LoadProjectsAsync()
+    {
+        if (ProjectListLoader is null) return;
+        try
+        {
+            var projects = await ProjectListLoader();
+            Projects.Clear();
+            foreach (var project in projects) Projects.Add(project);
+            ProjectListNotice = projects.Count == 0 ? "还没有项目。点击 + 新建。" : string.Empty;
+        }
+        catch (Exception)
+        {
+            ProjectListNotice = "项目列表暂时读不到，请稍后重试。";
+        }
+    }
 
     public bool ShowUpdateEntry { get; }
     public string AccountLabel { get; }

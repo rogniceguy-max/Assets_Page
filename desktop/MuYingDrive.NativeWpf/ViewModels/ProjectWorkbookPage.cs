@@ -18,11 +18,12 @@ namespace MuYingDrive.NativeWpf.ViewModels;
 public sealed class ProjectWorkbookPage : IDisposable
 {
     private readonly HttpClient _http;
+    private readonly HttpProjectWorkbookService _service;
 
     public ProjectWorkbookPage(V2ApiClient api, string sessionToken, long accountId)
     {
         _http = api.CreateProjectWorkbookClient();
-        var service = new HttpProjectWorkbookService(
+        _service = new HttpProjectWorkbookService(
             _http,
             api.ProjectWorkbookRoot,
             () => sessionToken,
@@ -30,10 +31,25 @@ public sealed class ProjectWorkbookPage : IDisposable
             // Required even for reading: the library computes its operation scope from the
             // account id and refuses to construct a service without it.
             () => accountId.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        ViewModel = new ProjectWorkbooksViewModel(service);
+        ViewModel = new ProjectWorkbooksViewModel(_service);
     }
 
     public ProjectWorkbooksViewModel ViewModel { get; }
+
+    /// <summary>
+    /// The projects and their workbooks, for the sidebar tree.
+    /// </summary>
+    /// <remarks>
+    /// Delegated rather than re-implemented over a second HTTP client: the library already
+    /// knows these two routes, the JSON shape and the pinned certificate, and a parallel
+    /// implementation is how the tree and the page start disagreeing about what a project is.
+    /// </remarks>
+    public Task<IReadOnlyList<ProjectInfo>> ListProjectsAsync(CancellationToken cancellationToken = default) =>
+        _service.ListProjectsAsync(cancellationToken);
+
+    public Task<IReadOnlyList<ProjectFile>> ListProjectFilesAsync(
+        string projectId, CancellationToken cancellationToken = default) =>
+        _service.ListProjectFilesAsync(projectId, cancellationToken);
 
     /// <summary>
     /// Opens one workbook by id, the way the 项目 tree asks for it.
