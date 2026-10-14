@@ -60,6 +60,13 @@ public sealed class VisitorViewModel : ObservableObject, IFileBrowser
         ClearSelectionCommand = new RelayCommand(_ => SelectionRequested?.Invoke(SelectionRequest.Clear));
         ToggleListCommand = new RelayCommand(_ => IsGridView = false);
         UploadCommand = new RelayCommand(_ => { }, _ => false);
+        // The tour has no write path at all: these exist so the shared view's bindings
+        // resolve, and every one of them refuses. CanModify is false, so the view never
+        // offers them either — this is the second line, not the only one.
+        UploadFolderCommand = new AsyncRelayCommand(_ => Task.CompletedTask, _ => false);
+        RenameCommand = new AsyncRelayCommand(_ => Task.CompletedTask, _ => false);
+        DuplicateCommand = new AsyncRelayCommand(_ => Task.CompletedTask, _ => false);
+        DeleteCommand = new AsyncRelayCommand(_ => Task.CompletedTask, _ => false);
         UnsupportedEditCommand = new RelayCommand<string>(_ => { }, _ => false);
         DetailsCommand = new RelayCommand<DriveFileItem>(ShowDetails);
         ExitCommand = new AsyncRelayCommand(_ => _main.ExitVisitorAsync(this));
@@ -81,6 +88,10 @@ public sealed class VisitorViewModel : ObservableObject, IFileBrowser
     public RelayCommand ClearSelectionCommand { get; }
     public RelayCommand ToggleListCommand { get; }
     public RelayCommand UploadCommand { get; }
+    public AsyncRelayCommand UploadFolderCommand { get; }
+    public AsyncRelayCommand RenameCommand { get; }
+    public AsyncRelayCommand DuplicateCommand { get; }
+    public AsyncRelayCommand DeleteCommand { get; }
     public RelayCommand<string> UnsupportedEditCommand { get; }
     public RelayCommand<DriveFileItem> DetailsCommand { get; }
     public AsyncRelayCommand ExitCommand { get; }
@@ -94,6 +105,10 @@ public sealed class VisitorViewModel : ObservableObject, IFileBrowser
     ICommand IFileBrowser.ToggleGridCommand => ToggleGridCommand;
     ICommand IFileBrowser.ToggleListCommand => ToggleListCommand;
     ICommand IFileBrowser.UploadCommand => UploadCommand;
+    ICommand IFileBrowser.UploadFolderCommand => UploadFolderCommand;
+    ICommand IFileBrowser.RenameCommand => RenameCommand;
+    ICommand IFileBrowser.DuplicateCommand => DuplicateCommand;
+    ICommand IFileBrowser.DeleteCommand => DeleteCommand;
     ICommand IFileBrowser.UnsupportedEditCommand => UnsupportedEditCommand;
     ICommand IFileBrowser.DetailsCommand => DetailsCommand;
 
@@ -163,9 +178,9 @@ public sealed class VisitorViewModel : ObservableObject, IFileBrowser
 
     public string? SessionToken => _session?.SessionToken;
 
-    public void UpdateSelectionCount(int selectedCount)
+    public void UpdateSelection(IReadOnlyList<DriveFileItem> items)
     {
-        SelectedCount = selectedCount;
+        SelectedCount = items?.Count ?? 0;
         OnPropertyChanged(nameof(SelectedLabel));
         OnPropertyChanged(nameof(HasSelection));
     }
@@ -271,7 +286,7 @@ public sealed class VisitorViewModel : ObservableObject, IFileBrowser
             foreach (var entry in listing.Entries)
                 Files.Add(ToItem(entry));
             CurrentPathLabel = BuildLabel(listing.Path);
-            UpdateSelectionCount(0);
+            UpdateSelection([]);
             OnPropertyChanged(nameof(CanNavigateUp));
             OnPropertyChanged(nameof(IsEmpty));
         }

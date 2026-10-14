@@ -16,7 +16,12 @@ public sealed class TransferViewModel : ObservableObject
 
     public TransferViewModel(long accountId)
     {
-        _engine = new ResumableTransferEngine(accountId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        // A cap on concurrent workers, which only matters now that one action can queue many
+        // files: uploading a folder of two hundred otherwise starts two hundred simultaneous
+        // SMB streams, which is slower than a few at a time and makes the queue unreadable.
+        // Downloads and single uploads behave exactly as before.
+        _engine = new ResumableTransferEngine(
+            accountId.ToString(System.Globalization.CultureInfo.InvariantCulture), maxConcurrentWorkers: 4);
         _engine.TransferChanged += HandleTransferChanged;
         Tasks = [];
         Tasks.CollectionChanged += HandleTasksChanged;
@@ -195,15 +200,36 @@ public sealed class TransferViewModel : ObservableObject
             await _engine.CancelAsync(task.Id);
     }
 
+    /// <summary>
+    /// Raised on the UI thread when an upload finishes, with the directory it landed in.
+    /// </summary>
+    /// <remarks>
+    /// Nothing else tells the file browser that a transfer completed, so a newly uploaded
+    /// file only appeared after navigating away and back. A folder upload made that
+    /// impossible to ignore: the whole shape of the folder was on the NAS while the page
+    /// still showed the listing from before it started.
+    /// </remarks>
+    public event Action<string>? UploadCompleted;
+
     private void HandleTransferChanged(object? sender, ResumableTransferChangedEventArgs args)
     {
         var dispatcher = Application.Current?.Dispatcher;
         if (dispatcher is null)
             return;
         if (dispatcher.CheckAccess())
-            Upsert(args.Snapshot);
+            ApplyTransferChanged(args.Snapshot);
         else
-            dispatcher.BeginInvoke(() => Upsert(args.Snapshot));
+            dispatcher.BeginInvoke(() => ApplyTransferChanged(args.Snapshot));
+    }
+
+    private void ApplyTransferChanged(ResumableTransferSnapshot snapshot)
+    {
+        Upsert(snapshot);
+        if (snapshot.Direction == ResumableTransferDirection.Upload &&
+            snapshot.Status == ResumableTransferStatus.Completed)
+        {
+            UploadCompleted?.Invoke(snapshot.Location);
+        }
     }
 
     private void Upsert(ResumableTransferSnapshot snapshot)

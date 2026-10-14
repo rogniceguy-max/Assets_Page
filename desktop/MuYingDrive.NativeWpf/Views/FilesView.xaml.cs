@@ -1,3 +1,4 @@
+using MuYingDrive.NativeWpf.Models;
 using MuYingDrive.NativeWpf.ViewModels;
 using System.Windows;
 using System.Windows.Controls;
@@ -50,7 +51,8 @@ public partial class FilesView : UserControl
     {
         if (sender is ListBox list && DataContext is IFileBrowser viewModel)
         {
-            viewModel.UpdateSelectionCount(list.SelectedItems.Count);
+            // The items, not a count: rename, duplicate and delete act on what is selected.
+            viewModel.UpdateSelection(list.SelectedItems.OfType<DriveFileItem>().ToArray());
         }
     }
 
@@ -78,8 +80,10 @@ public partial class FilesView : UserControl
         }
         else if (args.Key == Key.Delete && list.SelectedItem is not null && viewModel.CanModify)
         {
-            // A read-only browser has no delete path to invoke at all.
-            viewModel.UnsupportedEditCommand.Execute("删除");
+            // The row is passed so the command can apply itself to the whole selection when
+            // that row belongs to one, and to the row alone otherwise. A read-only browser
+            // never reaches here: CanModify is false, so there is no delete path to invoke.
+            viewModel.DeleteCommand.Execute(list.SelectedItem);
             args.Handled = true;
         }
     }

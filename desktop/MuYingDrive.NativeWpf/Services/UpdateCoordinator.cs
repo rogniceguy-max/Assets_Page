@@ -21,16 +21,6 @@ public enum UpdateCheckState
 /// <summary>Checks the signed stable channel and pre-downloads only verified packages.</summary>
 public sealed class UpdateCoordinator : IAsyncDisposable
 {
-    /// <summary>
-    /// How often the signed stable channel is polled.
-    /// </summary>
-    /// <remarks>
-    /// A check is one small HTTPS request — the manifest is about 0.5 KB and is served
-    /// with a strong ETag — and a package is downloaded only when a newer version exists.
-    /// Polling this often therefore costs almost nothing, while an eight-hour interval
-    /// could leave a published fix invisible for most of a working day.
-    /// </remarks>
-    private static readonly TimeSpan CheckInterval = TimeSpan.FromMinutes(15);
     private static readonly Regex PackageIdPattern = new("^[a-f0-9]{32}$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
     private readonly V2ApiClient _api;
     private readonly string _currentVersion;
@@ -39,6 +29,13 @@ public sealed class UpdateCoordinator : IAsyncDisposable
     private Task? _loop;
     private PreparedUpdate? _readyUpdate;
     private UpdateCheckState _state;
+
+    /// <summary>
+    /// The ETag of the manifest seen last, so the next poll can ask the server to skip
+    /// the body. Deliberately not persisted: one extra 0.5 KB request per launch is
+    /// cheaper than another reparse-guarded write path on startup.
+    /// </summary>
+    private string? _manifestEntityTag;
 
     public UpdateCoordinator(V2ApiClientOptions apiOptions, string currentVersion)
     {
@@ -62,8 +59,12 @@ public sealed class UpdateCoordinator : IAsyncDisposable
         await RestoreCachedReadyUpdateAsync(cancellationToken).ConfigureAwait(false);
         while (!cancellationToken.IsCancellationRequested)
         {
+            // The first check runs immediately — someone who was just handed a fix should
+            // not have to wait an interval to see it. Only the periodic wait is jittered.
             await CheckAndPrepareAsync(cancellationToken).ConfigureAwait(false);
-            try { await Task.Delay(CheckInterval, cancellationToken).ConfigureAwait(false); }
+            var delay = UpdateCheckSchedule.NextDelay(
+                UpdateCheckSchedule.DefaultCheckInterval, Random.Shared.NextDouble());
+            try { await Task.Delay(delay, cancellationToken).ConfigureAwait(false); }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { break; }
         }
     }
@@ -77,7 +78,19 @@ public sealed class UpdateCoordinator : IAsyncDisposable
         try
         {
             SetState(UpdateCheckState.Checking);
-            var envelopeBytes = await _api.GetStableUpdateManifestAsync(cancellationToken).ConfigureAwait(false);
+            var manifest = await _api.GetStableUpdateManifestAsync(_manifestEntityTag, cancellationToken)
+                .ConfigureAwait(false);
+            _manifestEntityTag = manifest.EntityTag;
+            if (manifest.NotModified)
+            {
+                // The manifest is byte-identical to the one already judged not newer, so
+                // that judgement still holds and there is nothing to verify or download.
+                SetState(_readyUpdate is null ? UpdateCheckState.Idle : UpdateCheckState.Ready);
+                return;
+            }
+
+            var envelopeBytes = manifest.EnvelopeBytes
+                ?? throw new V2ApiException("更新服务器返回了空的更新信息。");
             var verified = UpdateManifestVerifier.Verify(envelopeBytes);
             if (!UpdateManifestVerifier.IsNewer(verified.Value.Version, _currentVersion))
             {

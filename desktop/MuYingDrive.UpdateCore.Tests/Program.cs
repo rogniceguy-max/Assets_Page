@@ -423,6 +423,39 @@ if (args.Length > 0 && args[0] == "--probe-update")
     return failures == 0 ? 0 : 1;
 }
 
+Console.WriteLine("UpdateCheckSchedule");
+{
+    var interval = UpdateCheckSchedule.DefaultCheckInterval;
+
+    // Nothing asserted this before, which is how it sat at fifteen minutes unnoticed.
+    Check("the interval is five minutes", interval == TimeSpan.FromMinutes(5));
+
+    // The bounds have to be reachable and symmetric, or the documented period is a lie.
+    var shortest = UpdateCheckSchedule.NextDelay(interval, 0.0);
+    var middle = UpdateCheckSchedule.NextDelay(interval, 0.5);
+    var longest = UpdateCheckSchedule.NextDelay(interval, 1.0);
+    Check("the shortest wait is 20% under the interval", shortest == TimeSpan.FromMinutes(4));
+    Check("the middle sample returns the interval exactly", middle == interval);
+    Check("the longest wait is 20% over the interval", longest == TimeSpan.FromMinutes(6));
+
+    // The point of jitter: two clients started together must not agree on every wait.
+    Check("different samples give different waits", shortest != middle && middle != longest);
+    Check("the spread is 40% of the interval", longest - shortest == TimeSpan.FromMinutes(2));
+
+    // Whatever it is handed, it must never produce a wait that is negative or absurd.
+    var samples = new[] { double.NaN, double.NegativeInfinity, double.PositiveInfinity, -5.0, 42.0 };
+    var safe = true;
+    foreach (var sample in samples)
+    {
+        var delay = UpdateCheckSchedule.NextDelay(interval, sample);
+        if (delay < TimeSpan.Zero || delay > TimeSpan.FromMinutes(6)) safe = false;
+    }
+    Check("a nonsensical sample still yields a sane wait", safe);
+
+    // A zero interval is a caller error, not a reason to spin.
+    Check("a zero interval stays zero", UpdateCheckSchedule.NextDelay(TimeSpan.Zero, 0.9) == TimeSpan.Zero);
+}
+
 if (args.Length > 0)
 {
     Console.WriteLine("Signed release verification: " + args[0]);

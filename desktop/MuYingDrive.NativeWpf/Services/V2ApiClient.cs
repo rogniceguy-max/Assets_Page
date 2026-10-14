@@ -13,6 +13,15 @@ namespace MuYingDrive.NativeWpf.Services;
 /// <summary>Connection settings for the authenticated V2 HTTPS API.</summary>
 public sealed record V2ApiClientOptions(Uri BaseUri, string LeafCertificateSha256);
 
+/// <summary>What one poll of the stable channel returned.</summary>
+/// <param name="EnvelopeBytes">The signed envelope, or null when the server answered 304.</param>
+/// <param name="EntityTag">The strong tag for this manifest, or null if the server sent none.</param>
+/// <param name="NotModified">
+/// True when the manifest is unchanged since the tag that was sent. The caller then knows
+/// its previous decision still holds and can skip verification entirely.
+/// </param>
+public sealed record StableManifestResult(byte[]? EnvelopeBytes, string? EntityTag, bool NotModified);
+
 /// <summary>An API failure with a safe message suitable for display in the UI.</summary>
 public sealed class V2ApiException : Exception
 {
@@ -102,8 +111,79 @@ public sealed partial class V2ApiClient : IDisposable
             .ConfigureAwait(false);
     }
 
-    public Task<byte[]> GetStableUpdateManifestAsync(CancellationToken cancellationToken = default) =>
-        SendBytesAsync(HttpMethod.Get, "api/v2/updates/stable/manifest", null, cancellationToken);
+    /// <summary>
+    /// Polls the stable channel, asking the server to skip the body when nothing changed.
+    /// </summary>
+    /// <param name="knownEntityTag">
+    /// The tag returned by the previous poll, or null. Only a tag this client could have
+    /// received is echoed back; see <see cref="TryParseManifestEntityTag"/>.
+    /// </param>
+    /// <remarks>
+    /// The server has always answered <c>If-None-Match</c> — it serves the manifest with a
+    /// strong ETag — but nothing ever sent the header, so every check transferred and
+    /// re-verified the whole envelope. On a five-minute interval that is worth avoiding.
+    ///
+    /// Not built on <see cref="SendBytesAsync"/>: a 304 is not a success status, and that
+    /// helper turns every other status into a <see cref="V2ApiException"/>.
+    /// </remarks>
+    public async Task<StableManifestResult> GetStableUpdateManifestAsync(
+        string? knownEntityTag, CancellationToken cancellationToken = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(_baseUri, "api/v2/updates/stable/manifest"));
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        if (TryParseManifestEntityTag(knownEntityTag, out var conditional))
+            request.Headers.IfNoneMatch.Add(conditional);
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new V2ApiException("更新检查超时；沐影盘仍可正常使用。");
+        }
+        catch (HttpRequestException exception)
+        {
+            throw new V2ApiException("无法安全检查更新；沐影盘仍可正常使用。", inner: exception);
+        }
+
+        using (response)
+        {
+            var entityTag = response.Headers.ETag is { IsWeak: false } tag ? tag.Tag : null;
+            if (response.StatusCode == HttpStatusCode.NotModified)
+                return new StableManifestResult(null, entityTag, NotModified: true);
+
+            var body = await ReadBoundedAsync(response.Content, cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                throw CreateApiError(response.StatusCode, body);
+            return new StableManifestResult(body, entityTag, NotModified: false);
+        }
+    }
+
+    /// <summary>
+    /// True when <paramref name="value"/> is a strong tag wrapping exactly 64 hex digits
+    /// — the shape this server issues for the manifest.
+    /// </summary>
+    /// <remarks>
+    /// The value is a cached string reflected back to the server in a request header, so
+    /// it is checked against the expected shape rather than trusted. Anything else is
+    /// dropped, and the check simply transfers the body as it did before.
+    /// </remarks>
+    private static bool TryParseManifestEntityTag(string? value, out EntityTagHeaderValue entityTag)
+    {
+        entityTag = null!;
+        if (value is null || value.Length != 66 || value[0] != '"' || value[^1] != '"')
+            return false;
+        for (var index = 1; index < 65; index++)
+        {
+            if (!Uri.IsHexDigit(value[index])) return false;
+        }
+
+        entityTag = new EntityTagHeaderValue(value, isWeak: false);
+        return true;
+    }
 
     public async Task DownloadUpdatePackageAsync(string packageId, string sha256, long expectedSize,
         string partialPath, IProgress<long>? receivedBytes = null, CancellationToken cancellationToken = default)

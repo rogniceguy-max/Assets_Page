@@ -4,21 +4,25 @@ using System.Windows;
 using System.ComponentModel;
 using System.Windows.Data;
 using System.Windows.Input;
+using System.Windows.Threading;
 using MuYingDrive.NativeWpf.Infrastructure;
 using MuYingDrive.NativeWpf.Models;
 using MuYingDrive.NativeWpf.Services;
+using MuYingDrive.NativeWpf.Views;
 
 namespace MuYingDrive.NativeWpf.ViewModels;
 
-public sealed class FilesViewModel : ObservableObject, IFileBrowser
+public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
 {
     private readonly TransferViewModel _transfers;
     private readonly WindowsFilePickerService _filePicker = new();
+    private readonly SmbSpaceResolver _spaces;
     private readonly SmbFileCatalog _catalog;
+    private readonly SmbFileMutations _mutations;
     private string _searchText = string.Empty;
     private bool _isGridView = true;
     private string _spaceTitle = string.Empty;
-    private int _selectedCount;
+    private IReadOnlyList<DriveFileItem> _selection = [];
     private string _currentRoot = string.Empty;
     private string _currentDirectory = string.Empty;
     private bool _isLoading;
@@ -33,7 +37,11 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser
     {
         ArgumentNullException.ThrowIfNull(session);
         _transfers = transfers;
-        _catalog = new SmbFileCatalog(settings, session.User);
+        // One resolver for both halves: reads and writes must not disagree about what
+        // "inside the share" means, which is what happened when each carried its own copy.
+        _spaces = new SmbSpaceResolver(settings, session.User);
+        _catalog = new SmbFileCatalog(_spaces);
+        _mutations = new SmbFileMutations(_spaces);
         _departmentName = session.User.Department;
         Files = [];
         ItemsView = CollectionViewSource.GetDefaultView(Files);
@@ -54,10 +62,74 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser
         ClearSelectionCommand = new RelayCommand(_ => SelectionRequested?.Invoke(SelectionRequest.Clear));
         OpenCommand = new RelayCommand<DriveFileItem>(OpenItem);
         DownloadCommand = new RelayCommand<DriveFileItem>(DownloadItem);
-        UnsupportedEditCommand = new RelayCommand<string>(ShowDemoNotice);
         DetailsCommand = new RelayCommand<DriveFileItem>(ShowDetails);
         UploadCommand = new RelayCommand(_ => PickUpload(), _ => CanUpload);
         NavigateUpCommand = new RelayCommand(_ => NavigateUp(), _ => CanNavigateUp);
+        UploadFolderCommand = new AsyncRelayCommand(_ => UploadFolderAsync(), _ => CanUpload);
+        RenameCommand = new AsyncRelayCommand(
+            parameter => RenameAsync(parameter as DriveFileItem), _ => CanModify);
+        DuplicateCommand = new AsyncRelayCommand(
+            parameter => DuplicateAsync(parameter as DriveFileItem), _ => CanModify);
+        DeleteCommand = new AsyncRelayCommand(
+            parameter => DeleteAsync(parameter as DriveFileItem), _ => CanModify);
+        // 移动到 keeps its menu entry and keeps saying so. Moving needs a destination
+        // picker that browses the NAS, which is a separate piece of work; continuing to
+        // explain that is better than silently removing an entry the user has seen.
+        UnsupportedEditCommand = new RelayCommand<string>(ShowNotYetAvailable, _ => CanModify);
+
+        // So a finished upload shows up without the user navigating away and back.
+        _transfers.UploadCompleted += HandleUploadCompleted;
+    }
+
+    private DispatcherTimer? _refreshTimer;
+
+    /// <summary>
+    /// Reloads the listing when an upload finishes in the folder currently on screen.
+    /// </summary>
+    /// <remarks>
+    /// Coalesced through a short timer: a folder upload completes hundreds of files in
+    /// quick succession, and re-reading the directory once per file would spend the whole
+    /// transfer re-enumerating. Uploads into any other folder are ignored — the user is
+    /// not looking at them, and each refresh is a round trip to the NAS.
+    /// </remarks>
+    private void HandleUploadCompleted(string directory)
+    {
+        if (!string.Equals(
+                directory.TrimEnd(Path.DirectorySeparatorChar),
+                _currentDirectory.TrimEnd(Path.DirectorySeparatorChar),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _refreshTimer ??= CreateRefreshTimer();
+        _refreshTimer.Stop();
+        _refreshTimer.Start();
+    }
+
+    private DispatcherTimer CreateRefreshTimer()
+    {
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            _ = LoadCurrentDirectoryAsync(preserveSelection: true);
+        };
+        return timer;
+    }
+
+    /// <summary>
+    /// Detaches from the transfer queue.
+    /// </summary>
+    /// <remarks>
+    /// Without this the browser keeps being told about uploads after the workspace is torn
+    /// down, and reloads a directory nothing is showing any more.
+    /// </remarks>
+    public void Dispose()
+    {
+        _transfers.UploadCompleted -= HandleUploadCompleted;
+        _refreshTimer?.Stop();
+        _refreshTimer = null;
     }
 
     public event Action<SelectionRequest>? SelectionRequested;
@@ -89,7 +161,7 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser
                 OnPropertyChanged(nameof(CurrentPathLabel));
         }
     }
-    public int SelectedCount { get => _selectedCount; private set => SetProperty(ref _selectedCount, value); }
+    public int SelectedCount => _selection.Count;
     public string SelectedLabel => SelectedCount == 1 ? "已选择 1 项" : $"已选择 {SelectedCount} 项";
     public bool HasSelection => SelectedCount > 0;
     public bool IsReadOnly => _currentSpace == DriveSpaceKind.OtherDepartment;
@@ -100,7 +172,7 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser
         {
             if (SetProperty(ref _isLoading, value))
             {
-                OnPropertyChanged(nameof(CanUpload));
+                RefreshWriteState();
                 OnPropertyChanged(nameof(IsEmpty));
             }
         }
@@ -120,13 +192,25 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser
     public bool HasError => !string.IsNullOrWhiteSpace(ErrorMessage);
     public bool IsEmpty => !IsLoading && !HasError && ItemsView.IsEmpty;
     public string EmptyMessage => string.IsNullOrWhiteSpace(SearchText) ? "此文件夹为空" : "没有匹配的文件";
-    public bool CanUpload => _smbConnected && !IsReadOnly && !IsLoading;
+    /// <summary>
+    /// Whether this space accepts writes at all: connected, not the read-only other
+    /// department, and not mid-reload.
+    /// </summary>
+    /// <remarks>
+    /// Both write affordances come from this one condition. They used to disagree —
+    /// <see cref="CanModify"/> was the constant true, so the edit menu appeared while the
+    /// NAS was offline and inside the read-only space, and choosing an entry explained that
+    /// it was unimplemented rather than that it was not allowed here.
+    /// </remarks>
+    private bool CanWrite => _smbConnected && !IsReadOnly && !IsLoading;
+
+    public bool CanUpload => CanWrite;
 
     /// <summary>
-    /// Employees may rename, move, copy and delete. The shared view uses this to omit
-    /// those menu entries for the read-only tour.
+    /// Whether rename, duplicate and delete are offered here. The shared view uses this to
+    /// omit those menu entries entirely, for the read-only space and for the tour.
     /// </summary>
-    public bool CanModify => true;
+    public bool CanModify => CanWrite;
 
     public string LoadingMessage => "正在读取 NAS 文件…";
     public bool CanNavigateUp => !string.Equals(_currentDirectory, _currentRoot, StringComparison.OrdinalIgnoreCase);
@@ -154,10 +238,18 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser
     public RelayCommand ClearSelectionCommand { get; }
     public RelayCommand<DriveFileItem> OpenCommand { get; }
     public RelayCommand<DriveFileItem> DownloadCommand { get; }
-    public RelayCommand<string> UnsupportedEditCommand { get; }
     public RelayCommand<DriveFileItem> DetailsCommand { get; }
     public RelayCommand UploadCommand { get; }
     public RelayCommand NavigateUpCommand { get; }
+
+    // Async for the four write operations: a folder copy or a recursive delete can take
+    // minutes, and these disable themselves while running, which is the only progress
+    // indication a directory copy can honestly give.
+    public AsyncRelayCommand UploadFolderCommand { get; }
+    public AsyncRelayCommand RenameCommand { get; }
+    public AsyncRelayCommand DuplicateCommand { get; }
+    public AsyncRelayCommand DeleteCommand { get; }
+    public RelayCommand<string> UnsupportedEditCommand { get; }
 
     // Explicit interface implementations: the concrete command types stay available for
     // RaiseCanExecuteChanged, while the shared view sees only ICommand.
@@ -167,6 +259,10 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser
     ICommand IFileBrowser.ToggleGridCommand => ToggleGridCommand;
     ICommand IFileBrowser.ToggleListCommand => ToggleListCommand;
     ICommand IFileBrowser.UploadCommand => UploadCommand;
+    ICommand IFileBrowser.UploadFolderCommand => UploadFolderCommand;
+    ICommand IFileBrowser.RenameCommand => RenameCommand;
+    ICommand IFileBrowser.DuplicateCommand => DuplicateCommand;
+    ICommand IFileBrowser.DeleteCommand => DeleteCommand;
     ICommand IFileBrowser.UnsupportedEditCommand => UnsupportedEditCommand;
     ICommand IFileBrowser.DetailsCommand => DetailsCommand;
 
@@ -194,18 +290,48 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser
         _currentDirectory = _currentRoot;
         OnPropertyChanged(nameof(CurrentPathLabel));
         OnPropertyChanged(nameof(IsReadOnly));
-        OnPropertyChanged(nameof(CanUpload));
         OnPropertyChanged(nameof(CanNavigateUp));
+        RefreshWriteState();
         NavigateUpCommand.RaiseCanExecuteChanged();
-        UploadCommand.RaiseCanExecuteChanged();
         _ = LoadCurrentDirectoryAsync();
     }
 
-    public void UpdateSelectionCount(int selectedCount)
+    /// <summary>
+    /// Records what the list has selected.
+    /// </summary>
+    /// <remarks>
+    /// The items, not a count: rename, duplicate and delete act on the selection, and the
+    /// count is only ever a display of it.
+    /// </remarks>
+    public void UpdateSelection(IReadOnlyList<DriveFileItem> items)
     {
-        SelectedCount = selectedCount;
+        _selection = items ?? [];
+        OnPropertyChanged(nameof(SelectedCount));
         OnPropertyChanged(nameof(SelectedLabel));
         OnPropertyChanged(nameof(HasSelection));
+        DeleteCommand.RaiseCanExecuteChanged();
+        DuplicateCommand.RaiseCanExecuteChanged();
+        RenameCommand.RaiseCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// Re-announces everything that depends on being connected, writable and idle.
+    /// </summary>
+    /// <remarks>
+    /// Both the visibility of the edit entries and their enabled state hang off one
+    /// condition, so they are refreshed together. Announcing them from separate places is
+    /// how the menu ends up still offering rename after a switch to the read-only space.
+    /// </remarks>
+    private void RefreshWriteState()
+    {
+        OnPropertyChanged(nameof(CanUpload));
+        OnPropertyChanged(nameof(CanModify));
+        UploadCommand.RaiseCanExecuteChanged();
+        UploadFolderCommand.RaiseCanExecuteChanged();
+        RenameCommand.RaiseCanExecuteChanged();
+        DuplicateCommand.RaiseCanExecuteChanged();
+        DeleteCommand.RaiseCanExecuteChanged();
+        UnsupportedEditCommand.RaiseCanExecuteChanged();
     }
 
     private void SetViewMode(bool showGrid)
@@ -216,7 +342,7 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser
         }
 
         SelectionRequested?.Invoke(SelectionRequest.Clear);
-        UpdateSelectionCount(0);
+        UpdateSelection([]);
         IsGridView = showGrid;
     }
 
@@ -267,25 +393,278 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser
         }
     }
 
-    private void ShowDemoNotice(string? operation)
-    {
-        MessageBox.Show($"“{operation}”尚未接入 NAS。当前版本开放文件浏览、单文件上传和下载。", "功能尚未开放", MessageBoxButton.OK, MessageBoxImage.Information);
-    }
-
     private void PickUpload()
     {
-        var path = _filePicker.PickSingleFile();
-        if (!string.IsNullOrWhiteSpace(path))
+        var paths = _filePicker.PickFiles();
+        if (paths.Count == 0) return;
+        _ = UploadAsync(paths.Select(path => (path, Path.GetFileName(path))).ToArray());
+    }
+
+    private async Task UploadFolderAsync()
+    {
+        var folder = _filePicker.PickFolder();
+        if (string.IsNullOrWhiteSpace(folder)) return;
+
+        LocalUploadPlan plan;
+        try
         {
-            var destination = Path.Combine(_currentDirectory, Path.GetFileName(path));
-            if (File.Exists(destination) || Directory.Exists(destination))
+            plan = LocalUploadWalker.Enumerate(folder);
+        }
+        catch (Exception exception) when (IsMutationFailure(exception))
+        {
+            MessageBox.Show(exception.Message, "无法读取文件夹", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (plan.Files.Count == 0 && plan.Directories.Count <= 1)
+        {
+            MessageBox.Show("所选文件夹是空的。", "无法上传", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        try
+        {
+            // Created up front rather than left to each transfer's implicit parent creation:
+            // that would never produce an empty subfolder, and a permission problem would
+            // arrive as one failed transfer per file instead of one clear message.
+            await _mutations.EnsureDirectoriesAsync(
+                _currentSpace, plan.Directories.Select(relative => Path.Combine(_currentDirectory, relative)).ToArray());
+        }
+        catch (Exception exception) when (IsMutationFailure(exception))
+        {
+            MessageBox.Show(exception.Message, "无法创建文件夹", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        await UploadAsync(plan.Files.Select(entry => (entry.LocalPath, entry.RelativePath)).ToArray());
+        // So the new folders are visible while the transfers are still running.
+        await LoadCurrentDirectoryAsync();
+    }
+
+    /// <summary>
+    /// Queues uploads, giving each one a free name at its destination.
+    /// </summary>
+    /// <remarks>
+    /// The free name is resolved here, before the transfer is queued, because the engine
+    /// refuses a destination that already exists. The names claimed by earlier entries in
+    /// this same batch are tracked: without that, two files called <c>report.pdf</c> in one
+    /// selection would both resolve against a directory where neither exists yet, both be
+    /// given the same name, and the second would fail instead of becoming
+    /// <c>report (2).pdf</c>. That is what lets a folder upload run to the end without
+    /// stopping to ask anything.
+    /// </remarks>
+    private async Task UploadAsync(IReadOnlyList<(string LocalPath, string RelativePath)> entries)
+    {
+        if (!CanUpload || entries.Count == 0) return;
+
+        var claimed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var rejected = new List<string>();
+        var queued = 0;
+
+        foreach (var (localPath, relativePath) in entries)
+        {
+            var destinationDirectory = Path.GetDirectoryName(Path.Combine(_currentDirectory, relativePath));
+            var name = Path.GetFileName(relativePath);
+            if (string.IsNullOrEmpty(destinationDirectory) || string.IsNullOrEmpty(name)) continue;
+
+            string freeName;
+            try
             {
-                MessageBox.Show("目标位置已有同名项目，上传不会覆盖。", "无法上传", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
+                freeName = _mutations.ResolveFreeName(_currentSpace, destinationDirectory, name, claimed);
             }
-            _ = _transfers.AddUploadAsync(path, destination);
+            catch (InvalidOperationException exception)
+            {
+                // One unusable name must not abandon the other two hundred.
+                rejected.Add($"{name}：{exception.Message}");
+                continue;
+            }
+
+            claimed.Add(freeName);
+            await _transfers.AddUploadAsync(localPath, Path.Combine(destinationDirectory, freeName));
+            queued++;
+        }
+
+        if (rejected.Count > 0)
+        {
+            var shown = string.Join("\n", rejected.Take(10));
+            var more = rejected.Count > 10 ? $"\n…还有 {rejected.Count - 10} 项" : string.Empty;
+            MessageBox.Show($"以下 {rejected.Count} 项未能加入上传：\n\n{shown}{more}",
+                "部分文件未上传", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        else if (queued > 1)
+        {
+            MessageBox.Show($"已将 {queued} 项加入传输列表。文件名重复时会自动加序号，不会覆盖。",
+                "开始上传", MessageBoxButton.OK, MessageBoxImage.Information);
         }
     }
+
+    private async Task RenameAsync(DriveFileItem? item)
+    {
+        if (item is null || !CanModify) return;
+
+        // Pre-select the name without its extension: renaming almost always keeps the
+        // extension, and this makes that a single typed word rather than a careful edit.
+        var extension = item.IsDirectory ? string.Empty : Path.GetExtension(item.Name);
+        var dialog = new TextInputWindow(
+            "重命名", $"为“{item.Name}”输入新名称。", item.Name, "重命名", item.Name.Length - extension.Length);
+        ShowOwned(dialog);
+        if (dialog.ShowDialog() != true) return;
+
+        var newName = dialog.Value.Trim();
+        if (string.Equals(newName, item.Name, StringComparison.Ordinal)) return;
+
+        await RunMutationAsync($"无法重命名“{item.Name}”",
+            () => _mutations.RenameAsync(_currentSpace, item.FullPath, newName));
+    }
+
+    private async Task DuplicateAsync(DriveFileItem? clicked)
+    {
+        var targets = TargetsFor(clicked);
+        if (targets.Count == 0 || !CanModify) return;
+
+        var failures = new List<string>();
+        foreach (var target in targets)
+        {
+            try
+            {
+                await _mutations.DuplicateInPlaceAsync(_currentSpace, target.FullPath);
+            }
+            catch (Exception exception) when (IsMutationFailure(exception))
+            {
+                failures.Add($"{target.Name}：{exception.Message}");
+            }
+        }
+
+        await FinishMutationAsync("部分项目未能复制", failures);
+    }
+
+    private async Task DeleteAsync(DriveFileItem? clicked)
+    {
+        var targets = TargetsFor(clicked);
+        if (targets.Count == 0 || !CanModify) return;
+
+        // Folders are counted for real before the question is asked. A dialog that promises
+        // "3 items" and then removes 900 is worse than giving no number at all.
+        var listing = new List<string>();
+        foreach (var target in targets)
+        {
+            if (!target.IsDirectory)
+            {
+                listing.Add(target.Name);
+                continue;
+            }
+
+            try
+            {
+                var contained = await _mutations.CountContainedAsync(_currentSpace, target.FullPath);
+                listing.Add($"{target.Name}（文件夹，内含 {contained} 项）");
+            }
+            catch (Exception exception) when (IsMutationFailure(exception))
+            {
+                listing.Add($"{target.Name}（文件夹）");
+            }
+        }
+
+        var dialog = new ConfirmDialog(
+            targets.Count == 1 ? "确认删除" : $"确认删除这 {targets.Count} 项",
+            "删除后无法撤销。",
+            listing,
+            "删除");
+        ShowOwned(dialog);
+        if (dialog.ShowDialog() != true) return;
+
+        var failures = new List<string>();
+        foreach (var target in targets)
+        {
+            try
+            {
+                await _mutations.DeleteAsync(_currentSpace, target.FullPath);
+            }
+            catch (Exception exception) when (IsMutationFailure(exception))
+            {
+                failures.Add($"{target.Name}：{exception.Message}");
+            }
+        }
+
+        await FinishMutationAsync("部分项目未能删除", failures);
+    }
+
+    /// <summary>
+    /// Runs one operation, reports its failure, and reloads so the list matches the share.
+    /// </summary>
+    /// <remarks>
+    /// The reload happens whether or not the operation succeeded: a recursive delete that
+    /// failed halfway has still changed the folder, and leaving a stale listing on screen
+    /// would invite the user to act on rows that no longer exist.
+    /// </remarks>
+    private async Task RunMutationAsync(string failureTitle, Func<Task> operation)
+    {
+        try
+        {
+            await operation();
+        }
+        catch (Exception exception) when (IsMutationFailure(exception))
+        {
+            MessageBox.Show(exception.Message, failureTitle, MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        finally
+        {
+            await LoadCurrentDirectoryAsync();
+        }
+    }
+
+    private async Task FinishMutationAsync(string failureTitle, IReadOnlyList<string> failures)
+    {
+        if (failures.Count > 0)
+        {
+            var shown = string.Join("\n", failures.Take(10));
+            var more = failures.Count > 10 ? $"\n…还有 {failures.Count - 10} 项" : string.Empty;
+            MessageBox.Show($"{shown}{more}", failureTitle, MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        await LoadCurrentDirectoryAsync();
+    }
+
+    /// <summary>
+    /// What an action applies to: the whole selection when the clicked row is part of it,
+    /// otherwise just the clicked row.
+    /// </summary>
+    /// <remarks>
+    /// Right-clicking a row that is not selected selects it first (see the view's
+    /// right-button handler), so in practice the two agree; this covers the case where a
+    /// selection is made and a different row is acted on without the view having caught up.
+    /// </remarks>
+    private IReadOnlyList<DriveFileItem> TargetsFor(DriveFileItem? clicked)
+    {
+        if (clicked is not null) return _selection.Contains(clicked) ? _selection : [clicked];
+        return _selection;
+    }
+
+    private static bool IsMutationFailure(Exception exception) =>
+        exception is IOException or UnauthorizedAccessException or InvalidOperationException
+            or NotSupportedException or System.Security.SecurityException
+            or System.ComponentModel.Win32Exception;
+
+    /// <summary>Owns a dialog to the main window so it centres there rather than on the screen.</summary>
+    private static void ShowOwned(Window dialog)
+    {
+        if (Application.Current?.MainWindow is { IsLoaded: true } owner) dialog.Owner = owner;
+    }
+
+    /// <summary>
+    /// Says so, for the one menu entry that is still a placeholder.
+    /// </summary>
+    /// <remarks>
+    /// Rename, duplicate and delete are wired to the NAS now; 移动到 is not, because moving
+    /// needs a destination picker that browses the NAS. The entry stays visible and states
+    /// why rather than vanishing.
+    /// </remarks>
+    private static void ShowNotYetAvailable(string? operation)
+    {
+        MessageBox.Show($"“{operation}”尚未接入。重命名、复制和删除已经可以使用。",
+            "功能尚未开放", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
 
     private void DownloadItem(DriveFileItem? item)
     {
@@ -326,7 +705,11 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser
             "文件信息", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
-    private async Task LoadCurrentDirectoryAsync()
+    /// <param name="preserveSelection">
+    /// Keep whatever is selected. Set by the refresh that follows a finished upload, which
+    /// can fire many times in a row while a folder transfers.
+    /// </param>
+    private async Task LoadCurrentDirectoryAsync(bool preserveSelection = false)
     {
         var requestId = Interlocked.Increment(ref _loadRequestId);
         if (!_smbConnected)
@@ -352,8 +735,14 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser
                 Files.Add(item);
             ItemsView.Refresh();
             OnPropertyChanged(nameof(IsEmpty));
-            SelectionRequested?.Invoke(SelectionRequest.Clear);
-            UpdateSelectionCount(0);
+            // A reload driven by a finished upload keeps the selection: the user may well be
+            // selecting something else while a long folder upload runs, and clearing it every
+            // few hundred milliseconds would make the list unusable until the upload ended.
+            if (!preserveSelection)
+            {
+                SelectionRequested?.Invoke(SelectionRequest.Clear);
+                UpdateSelection([]);
+            }
         }
         catch (UnauthorizedAccessException)
         {

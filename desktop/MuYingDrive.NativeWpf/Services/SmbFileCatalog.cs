@@ -14,6 +14,12 @@ public enum DriveSpaceKind
 /// Lists the immediate children of the authenticated user's virtual SMB spaces.
 /// Paths are always resolved beneath the configured UNC share root.
 /// </summary>
+/// <remarks>
+/// Read-only by construction. Every question about where a path may point is answered by
+/// <see cref="SmbSpaceResolver"/>, which the write operations share, so the two halves
+/// cannot drift apart on what "inside the share" means. This type only turns a directory
+/// into rows.
+/// </remarks>
 public sealed class SmbFileCatalog
 {
     private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -26,42 +32,13 @@ public sealed class SmbFileCatalog
         ".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".wmv", ".mpeg", ".mpg"
     };
 
-    private readonly string _shareRoot;
-    private readonly V2UserSession _user;
+    private readonly SmbSpaceResolver _spaces;
 
-    public SmbFileCatalog(NasClientSettings settings, V2UserSession user)
-    {
-        ArgumentNullException.ThrowIfNull(settings);
-        _user = user ?? throw new ArgumentNullException(nameof(user));
-        _shareRoot = Path.GetFullPath(settings.ShareRoot.TrimEnd('\\'));
-        if (!_shareRoot.StartsWith("\\\\", StringComparison.Ordinal))
-            throw new ArgumentException("SMB 共享根目录必须是 UNC 路径。", nameof(settings));
-    }
+    public SmbFileCatalog(SmbSpaceResolver spaces) =>
+        _spaces = spaces ?? throw new ArgumentNullException(nameof(spaces));
 
     /// <summary>Resolves one of the four UI space selectors to its UNC directory.</summary>
-    public string GetSpacePath(DriveSpaceKind kind)
-    {
-        var ownKey = _user.GroupType switch
-        {
-            "film" => "film",
-            "writing" => "writing",
-            _ => throw new InvalidOperationException("当前账号没有有效的部门信息。")
-        };
-
-        var key = kind switch
-        {
-            DriveSpaceKind.Department => ownKey,
-            DriveSpaceKind.Public => "public",
-            DriveSpaceKind.Personal => "personal",
-            DriveSpaceKind.OtherDepartment => ownKey == "film" ? "writing" : "film",
-            _ => throw new ArgumentOutOfRangeException(nameof(kind))
-        };
-
-        if (!_user.Spaces.TryGetValue(key, out var virtualPath) || string.IsNullOrWhiteSpace(virtualPath))
-            throw new InvalidOperationException("服务端没有返回该空间的路径。");
-
-        return ResolveVirtualPath(virtualPath);
-    }
+    public string GetSpacePath(DriveSpaceKind kind) => _spaces.GetSpacePath(kind);
 
     /// <summary>Enumerates only immediate children; reparse points are omitted to prevent traversal outside the share.</summary>
     public Task<IReadOnlyList<DriveFileItem>> EnumerateAsync(DriveSpaceKind kind, CancellationToken cancellationToken = default)
@@ -72,12 +49,7 @@ public sealed class SmbFileCatalog
     public Task<IReadOnlyList<DriveFileItem>> EnumerateDirectoryAsync(
         DriveSpaceKind kind, string directory, CancellationToken cancellationToken = default)
     {
-        var root = GetSpacePath(kind);
-        directory = Path.GetFullPath(directory);
-        var rootPrefix = root.TrimEnd('\\') + "\\";
-        if (!directory.Equals(root, StringComparison.OrdinalIgnoreCase) &&
-            !directory.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("目录路径超出当前空间范围。");
+        directory = _spaces.RequireReadablePath(kind, directory);
         var readOnly = kind == DriveSpaceKind.OtherDepartment;
         return Task.Run<IReadOnlyList<DriveFileItem>>(() =>
         {
@@ -133,22 +105,6 @@ public sealed class SmbFileCatalog
             return results.OrderByDescending(item => item.IsDirectory)
                 .ThenBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
         }, cancellationToken);
-    }
-
-    private string ResolveVirtualPath(string virtualPath)
-    {
-        if (virtualPath.Contains('\\') || virtualPath.Contains(':') || virtualPath.Any(char.IsControl))
-            throw new InvalidOperationException("服务端返回了无效的空间路径。");
-
-        var segments = virtualPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (segments.Length == 0 || segments.Any(segment => segment is "." or ".."))
-            throw new InvalidOperationException("服务端返回了无效的空间路径。");
-
-        var resolved = Path.GetFullPath(Path.Combine(new[] { _shareRoot }.Concat(segments).ToArray()));
-        var rootPrefix = _shareRoot.EndsWith('\\') ? _shareRoot : _shareRoot + "\\";
-        if (!resolved.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("空间路径超出 SMB 共享范围。");
-        return resolved;
     }
 
     private static string FormatSize(long bytes)

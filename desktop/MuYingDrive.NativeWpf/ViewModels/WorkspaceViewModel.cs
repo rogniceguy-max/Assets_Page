@@ -212,6 +212,9 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     public async ValueTask DisposeAsync()
     {
+        // The browser subscribes to the transfer queue to refresh after an upload; it has
+        // to let go before the queue it listens to is torn down.
+        Files?.Dispose();
         _feedback?.Dispose();
         _main.PropertyChanged -= HandleMainPropertyChanged;
         if (_disposeExtra is not null) await _disposeExtra().ConfigureAwait(true);

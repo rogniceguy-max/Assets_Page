@@ -21,16 +21,33 @@ public sealed class ResumableTransferEngine : IAsyncDisposable
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ConcurrentDictionary<string, RuntimeTask> _tasks = new(StringComparer.Ordinal);
     private readonly SynchronizationContext? _eventContext;
+    /// <summary>
+    /// Bounds how many transfers run at once, or null to leave it unbounded as it always
+    /// was. Cancelled on dispose so a worker waiting here cannot outlive the engine.
+    /// </summary>
+    private readonly SemaphoreSlim? _workerSlots;
+    private readonly CancellationTokenSource _shutdown = new();
     private bool _initialized;
     private bool _disposed;
 
+    /// <param name="maxConcurrentWorkers">
+    /// How many transfers may run at once, or null for no limit — the behaviour every
+    /// existing caller gets, so downloads and single uploads are untouched. A cap matters
+    /// when one action queues many files: without it, dropping a folder of two hundred in
+    /// starts two hundred simultaneous SMB streams, which is slower than a handful at a
+    /// time and makes the queue impossible to read.
+    /// </param>
     public ResumableTransferEngine(string accountId, string? stateRoot = null, int chunkSize = 4 * 1024 * 1024,
-        SynchronizationContext? eventContext = null)
+        SynchronizationContext? eventContext = null, int? maxConcurrentWorkers = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(accountId);
         if (chunkSize is < 64 * 1024 or > 64 * 1024 * 1024)
             throw new ArgumentOutOfRangeException(nameof(chunkSize), "Chunk size must be between 64 KiB and 64 MiB.");
+        if (maxConcurrentWorkers is < 1)
+            throw new ArgumentOutOfRangeException(nameof(maxConcurrentWorkers), "至少要允许一个传输同时进行。");
 
+        if (maxConcurrentWorkers is int limit)
+            _workerSlots = new SemaphoreSlim(limit, limit);
         _chunkSize = chunkSize;
         _eventContext = eventContext ?? SynchronizationContext.Current;
         var root = Path.GetFullPath(stateRoot ?? Path.Combine(
@@ -255,8 +272,61 @@ public sealed class ResumableTransferEngine : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Waits for a worker slot when the engine is capped, reporting the wait as queued.
+    /// </summary>
+    /// <returns>False when the engine is shutting down and this task must not start.</returns>
+    /// <remarks>
+    /// The task is marked <see cref="ResumableTransferStatus.Queued"/> while it waits and
+    /// put back to Running once it has a slot, so the transfer page shows a queue rather
+    /// than many rows all claiming to be in progress. Pause is still honoured: the worker
+    /// body checks for it at each chunk, so a task paused while queued stops as soon as it
+    /// is admitted.
+    /// </remarks>
+    private async Task<bool> AcquireWorkerSlotAsync(RuntimeTask task)
+    {
+        if (_workerSlots is null) return true;
+
+        lock (task.Sync)
+        {
+            if (task.Status == ResumableTransferStatus.Running)
+            {
+                task.Status = ResumableTransferStatus.Queued;
+                task.LastActivityUtc = DateTimeOffset.UtcNow;
+            }
+        }
+        Publish(task);
+
+        try
+        {
+            await _workerSlots.WaitAsync(_shutdown.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+
+        if (_disposed)
+        {
+            _workerSlots.Release();
+            return false;
+        }
+
+        lock (task.Sync)
+        {
+            if (task.Status == ResumableTransferStatus.Queued)
+            {
+                task.Status = ResumableTransferStatus.Running;
+                task.LastActivityUtc = DateTimeOffset.UtcNow;
+            }
+        }
+        Publish(task);
+        return true;
+    }
+
     private async Task RunTransferAsync(RuntimeTask task)
     {
+        if (!await AcquireWorkerSlotAsync(task).ConfigureAwait(false)) return;
         try
         {
             ValidateSource(task);
@@ -372,6 +442,13 @@ public sealed class ResumableTransferEngine : IAsyncDisposable
             }
             try { await SaveAsync(task, CancellationToken.None).ConfigureAwait(false); } catch { }
             Publish(task);
+        }
+        finally
+        {
+            // Released whatever happened — completed, failed, paused or cancelled. A slot
+            // held past the worker's death would quietly shrink the queue's capacity for
+            // the rest of the session.
+            _workerSlots?.Release();
         }
     }
 
@@ -605,6 +682,11 @@ public sealed class ResumableTransferEngine : IAsyncDisposable
         {
             if (_disposed) return;
             _disposed = true;
+            // Released first, and before the runners are awaited: a worker parked in
+            // AcquireWorkerSlotAsync is not paused by PauseRequested — it is waiting on a
+            // semaphore — so without this it would sit there until a slot happened to free,
+            // and Task.WhenAll below would wait for it. That is a shutdown deadlock.
+            _shutdown.Cancel();
             foreach (var task in _tasks.Values)
             {
                 lock (task.Sync) task.PauseRequested = true;
@@ -613,6 +695,7 @@ public sealed class ResumableTransferEngine : IAsyncDisposable
         }
         finally { _gate.Release(); }
         try { await Task.WhenAll(runners).ConfigureAwait(false); } catch { }
+        _shutdown.Dispose();
     }
 
     private sealed class RuntimeTask

@@ -12,8 +12,14 @@ namespace MuYingDrive.NativeWpf.ViewModels;
 /// The employee file page and the visitor tour render the same view. They differ only
 /// in the data source and in whether write affordances exist: <see cref="CanUpload"/>
 /// and <see cref="CanModify"/> let the view omit them entirely rather than showing
-/// disabled buttons. The tour's view model returns false for both, and the backend
-/// offers no write route at all, so this is presentation, not the security boundary.
+/// disabled buttons. The tour's view model returns false for both.
+///
+/// WPF binds against the runtime type rather than this interface, so every member here
+/// must exist on both implementations or the shared view raises a binding error — the
+/// render harness fails the build for exactly that reason. Adding a command to this
+/// interface is therefore what forces the tour to give an answer for it, rather than
+/// letting one be forgotten and discovered at runtime. The tour's answer is a no-op whose
+/// CanExecute is false; the real boundary is the NAS ACL behind the SMB session.
 /// </remarks>
 public interface IFileBrowser
 {
@@ -33,7 +39,7 @@ public interface IFileBrowser
     /// <summary>True when upload is offered here at all.</summary>
     bool CanUpload { get; }
 
-    /// <summary>True when rename / move / copy / delete are offered here at all.</summary>
+    /// <summary>True when rename / duplicate / delete are offered here at all.</summary>
     bool CanModify { get; }
 
     bool CanNavigateUp { get; }
@@ -51,11 +57,28 @@ public interface IFileBrowser
     ICommand ToggleGridCommand { get; }
     ICommand ToggleListCommand { get; }
     ICommand UploadCommand { get; }
+    ICommand UploadFolderCommand { get; }
+    ICommand RenameCommand { get; }
+    ICommand DuplicateCommand { get; }
+    ICommand DeleteCommand { get; }
+    /// <summary>
+    /// The entry that is a placeholder rather than a feature: 移动到, which needs a folder
+    /// picker that browses the NAS and is not built yet. It is carried in the contract so
+    /// its menu item keeps resolving — a binding to a member one view model lacks is a
+    /// runtime error in the shared view, not a hidden row.
+    /// </summary>
     ICommand UnsupportedEditCommand { get; }
     ICommand DetailsCommand { get; }
 
     event Action<SelectionRequest>? SelectionRequested;
 
-    /// <summary>Called by the view whenever the list selection changes.</summary>
-    void UpdateSelectionCount(int count);
+    /// <summary>
+    /// Called by the view whenever the list selection changes, with the items selected.
+    /// </summary>
+    /// <remarks>
+    /// The items rather than a count: rename, duplicate and delete all act on what is
+    /// selected, and a count alone would leave each of them reaching back into the view to
+    /// find out what it was.
+    /// </remarks>
+    void UpdateSelection(IReadOnlyList<DriveFileItem> items);
 }

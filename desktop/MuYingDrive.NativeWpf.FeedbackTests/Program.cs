@@ -67,6 +67,65 @@ internal static class Program
             workspace.NavigateCommand.Execute("文件");
             Assert(ReferenceEquals(workspace.CurrentContent, files) && files.SearchText == "fixture-browse-filter", "Navigation must retain file browsing state.");
 
+            // --- the names a duplicate gets ---------------------------------------------
+            Assert(UniqueName.WithSuffix("照片.jpg", 2) == "照片 (2).jpg", "A duplicate is numbered before its extension.");
+            Assert(UniqueName.WithSuffix("照片 (2).jpg", 3) == "照片 (3).jpg", "Numbering a numbered name must not stack suffixes.");
+            Assert(UniqueName.WithSuffix("archive.tar.gz", 2) == "archive.tar (2).gz", "Only the last extension separates the suffix.");
+            Assert(UniqueName.WithSuffix(".gitignore", 2) == ".gitignore (2)", "A leading dot belongs to the name, not the extension.");
+            Assert(UniqueName.WithoutSuffix("照片 (2).jpg") == "照片.jpg", "The existing suffix is stripped for the next candidate.");
+            Assert(UniqueName.WithoutSuffix("照片.jpg") == "照片.jpg", "A plain name is already a base name.");
+
+            // --- what a write may be called ----------------------------------------------
+            foreach (var bad in new[]
+                     {
+                         "", "   ", ".", "..", "a\\b", "a/b", "a:b", "a*b", "a?b", "a\"b", "a<b", "a>b", "a|b",
+                         "CON", "con.txt", "nul", "LPT1.log", "trailing.", "trailing ", "line\nbreak"
+                     })
+            {
+                var rejected = false;
+                try { SmbSpaceResolver.ValidateNameSegment(bad); }
+                catch (InvalidOperationException) { rejected = true; }
+                Assert(rejected, $"The name '{bad.Replace("\n", "\\n")}' must be refused.");
+            }
+            Assert(SmbSpaceResolver.ValidateNameSegment("正常的名字 (2).jpg") == "正常的名字 (2).jpg",
+                "An ordinary name passes through unchanged.");
+
+            // --- where a write may land ---------------------------------------------------
+            var resolver = new SmbSpaceResolver(settings, session.User);
+            var department = resolver.GetSpacePath(DriveSpaceKind.Department);
+            Assert(resolver.IsWithinSpace(DriveSpaceKind.Department, department), "The space root is inside itself.");
+            Assert(resolver.RequireWritablePath(DriveSpaceKind.Department, Path.Combine(department, "素材", "a.png")).Length > 0,
+                "A path inside the space is a valid write target.");
+            var walkedOut = false;
+            try { resolver.RequireWritablePath(DriveSpaceKind.Department, Path.Combine(department, "..", "elsewhere")); }
+            catch (InvalidOperationException) { walkedOut = true; }
+            Assert(walkedOut, "A path that walks out of the space must be refused.");
+            // The link walk must not reject an ordinary path, or browsing would break the
+            // moment it was added to the read side.
+            SmbSpaceResolver.EnsureNoReparsePoints(department);
+
+            // --- what a folder selection expands to ---------------------------------------
+            var walkRoot = Path.Combine(Path.GetTempPath(), "muying-walk-" + Guid.NewGuid().ToString("N"));
+            var chosen = Path.Combine(walkRoot, "素材");
+            Directory.CreateDirectory(Path.Combine(chosen, "子目录"));
+            Directory.CreateDirectory(Path.Combine(chosen, "空目录"));
+            File.WriteAllText(Path.Combine(chosen, "a.txt"), "a");
+            File.WriteAllText(Path.Combine(chosen, "子目录", "b.txt"), "b");
+            var plan = LocalUploadWalker.Enumerate(chosen);
+            Assert(plan.Files.Count == 2, "Both files are found.");
+            Assert(plan.Files.All(entry => entry.RelativePath.StartsWith("素材" + Path.DirectorySeparatorChar)),
+                "Relative paths keep the chosen folder as their first segment.");
+            Assert(plan.Directories.Contains(Path.Combine("素材", "空目录")),
+                "An empty folder is still in the plan; otherwise the uploaded shape is not the chosen shape.");
+            Directory.Delete(walkRoot, recursive: true);
+
+            // The tour renders the same FilesView from a different view model, and WPF binds
+            // against the runtime type rather than IFileBrowser — so rendering it here is the
+            // only thing that catches a member the employee side has and the tour does not.
+            // Its constructor is offline; only InitializeAsync talks to the API.
+            var visitorApi = new V2ApiClient(new V2ApiClientOptions(new Uri("https://feedback-test.invalid"), new string('0', 64)));
+            var visitor = new VisitorViewModel(main, visitorApi);
+
             foreach (var theme in new[] { "Light", "Dark" })
             {
                 application.Resources.MergedDictionaries.Clear();
@@ -80,6 +139,25 @@ internal static class Program
                 Render(new WorkspaceView { DataContext = workspace }, 900, 600, 96, Path.Combine(output, $"workspace-collapsed-{theme}.png"));
                 workspace.ToggleSidebarCommand.Execute(null);
                 Render(new TransferView { DataContext = workspace.Transfers }, 960, 480, 96, Path.Combine(output, $"transfer-failure-{theme}.png"));
+                Render(new FilesView { DataContext = visitor }, 1100, 680, 96, Path.Combine(output, $"tour-{theme}.png"));
+
+                // The two dialogs are new windows, and the render harness is what proves
+                // their XAML resolves against the shared theme dictionaries.
+                var confirm = new ConfirmDialog(
+                    "确认删除", "删除后无法撤销。", ["素材（文件夹，内含 42 项）", "旧版封面.png"], "删除");
+                Assert(((Button)confirm.FindName("CancelButton")!).IsDefault,
+                    "Enter must cancel the delete dialog rather than confirm it.");
+                var confirmContent = (FrameworkElement)confirm.Content;
+                confirm.Content = null;
+                Render(confirmContent, 460, 340, 96, Path.Combine(output, $"confirm-{theme}.png"));
+                confirm.Close();
+
+                var rename = new TextInputWindow("重命名", "为“照片.jpg”输入新名称。", "照片.jpg", "重命名", 2);
+                Assert(rename.Value == "照片.jpg", "The rename box starts from the current name.");
+                var renameContent = (FrameworkElement)rename.Content;
+                rename.Content = null;
+                Render(renameContent, 440, 260, 96, Path.Combine(output, $"rename-{theme}.png"));
+                rename.Close();
                 typeof(FeedbackViewModel).GetProperty(nameof(FeedbackViewModel.CanManage))!.SetValue(model, true);
                 typeof(FeedbackViewModel).GetProperty(nameof(FeedbackViewModel.Detail))!.SetValue(model, item);
                 model.SelectedStatus = item.Status;
@@ -107,6 +185,8 @@ internal static class Program
                 typeof(FeedbackViewModel).GetProperty(nameof(FeedbackViewModel.IsBusy))!.SetValue(model, false);
                 foreach (var savedItem in saved) model.Items.Add(savedItem);
             }
+            visitor.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            visitorApi.Dispose();
             Assert(bindingErrors.Messages.Count == 0, string.Join("\n", bindingErrors.Messages));
             workspace.DisposeAsync().AsTask().GetAwaiter().GetResult(); main.Dispose();
             Console.WriteLine("PASS: draft privacy gate, image limits, anonymous serialization, retained workspace/queue instances, Light/Dark list/detail/form/empty/loading/error rendering, 150%/200% rendering; no binding errors.");

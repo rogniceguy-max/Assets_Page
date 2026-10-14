@@ -58,20 +58,24 @@
         <ContextMenu x:Key="FileContextMenu">
             <MenuItem Header="打开" Command="{Binding PlacementTarget.Tag.OpenCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                       CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
-            <MenuItem Header="重命名" Command="{Binding PlacementTarget.Tag.UnsupportedEditCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                      CommandParameter="{Binding RelativeSource={RelativeSource Self}, Path=Header}"
+            <MenuItem Header="重命名" Command="{Binding PlacementTarget.Tag.RenameCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                       Visibility="{Binding PlacementTarget.Tag.CanModify, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVisibility}}" />
+            <!-- Still a placeholder: moving needs a picker that browses the NAS for a
+                 destination. It keeps saying so rather than quietly disappearing. -->
             <MenuItem Header="移动到" Command="{Binding PlacementTarget.Tag.UnsupportedEditCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                       CommandParameter="{Binding RelativeSource={RelativeSource Self}, Path=Header}"
                       Visibility="{Binding PlacementTarget.Tag.CanModify, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVisibility}}" />
-            <MenuItem Header="复制" Command="{Binding PlacementTarget.Tag.UnsupportedEditCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                      CommandParameter="{Binding RelativeSource={RelativeSource Self}, Path=Header}"
+            <!-- Duplicate applies to the whole selection, so it is handed the row that was
+                 clicked and decides for itself whether that row is part of one. -->
+            <MenuItem Header="复制" Command="{Binding PlacementTarget.Tag.DuplicateCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                       Visibility="{Binding PlacementTarget.Tag.CanModify, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVisibility}}" />
             <Separator Visibility="{Binding PlacementTarget.Tag.CanModify, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVisibility}}" />
             <MenuItem Header="下载" Command="{Binding PlacementTarget.Tag.DownloadCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                       CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
-            <MenuItem Header="删除" Command="{Binding PlacementTarget.Tag.UnsupportedEditCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                      CommandParameter="{Binding RelativeSource={RelativeSource Self}, Path=Header}"
+            <MenuItem Header="删除" Command="{Binding PlacementTarget.Tag.DeleteCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                       Visibility="{Binding PlacementTarget.Tag.CanModify, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVisibility}}" />
             <Separator />
             <MenuItem Header="文件信息" Command="{Binding PlacementTarget.Tag.DetailsCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
@@ -155,6 +159,7 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <Grid Grid.Column="0">
                 <TextBox Style="{StaticResource TextBox.Search}" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
@@ -178,7 +183,9 @@
             <Button Grid.Column="3" Style="{StaticResource ListToggleButton}" Command="{Binding ToggleListCommand}" ToolTip="列表视图" AutomationProperties.Name="列表视图" Margin="0,0,12,0">
                 <controls:LucideIcon Icon="List" Width="16" Height="16" Stroke="{DynamicResource Brush.Text.Secondary}" />
             </Button>
-            <Button Grid.Column="4" Style="{StaticResource Button.Primary}" Command="{Binding UploadCommand}" Content="上传" MinWidth="84"
+            <Button Grid.Column="4" Style="{StaticResource Button.Secondary}" Command="{Binding UploadFolderCommand}" Content="上传文件夹" Margin="0,0,6,0"
+                    Visibility="{Binding CanUpload, Converter={StaticResource BoolToVisibility}}" />
+            <Button Grid.Column="5" Style="{StaticResource Button.Primary}" Command="{Binding UploadCommand}" Content="上传" MinWidth="84"
                     Visibility="{Binding CanUpload, Converter={StaticResource BoolToVisibility}}" />
         </Grid>
 
