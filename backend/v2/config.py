@@ -20,6 +20,7 @@ class Settings:
     public_root: Path
     update_releases_dir: Path | None
     installer_dir: Path | None
+    project_docs_root: Path | None
 
 
 def load_settings() -> Settings:
@@ -30,6 +31,7 @@ def load_settings() -> Settings:
     visitor_socket = os.environ.get("MUYING_V2_VISITOR_SOCKET")
     update_releases_dir = os.environ.get("MUYING_V2_UPDATE_RELEASES_DIR")
     installer_dir = os.environ.get("MUYING_V2_INSTALLER_DIR")
+    project_docs_root = os.environ.get("MUYING_V2_PROJECT_DOCS_ROOT")
     return Settings(
         bind_host=os.environ.get("MUYING_V2_BIND_HOST", "127.0.0.1"),
         port=int(os.environ.get("MUYING_V2_PORT", "8443")),
@@ -44,4 +46,7 @@ def load_settings() -> Settings:
         update_releases_dir=Path(update_releases_dir).absolute() if update_releases_dir else None,
         # Same treatment: an unset directory means the download routes answer 503.
         installer_dir=Path(installer_dir).absolute() if installer_dir else None,
+        # Unset means the project-workbook routes are not served at all. Set it to the
+        # directory holding one folder per project.
+        project_docs_root=Path(project_docs_root).absolute() if project_docs_root else None,
     )

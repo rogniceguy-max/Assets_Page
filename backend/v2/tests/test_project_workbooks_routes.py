@@ -1,0 +1,202 @@
+"""The three read routes, driven through the host's real handler.
+
+The projector tests cover what a workbook becomes. These cover the wiring around it: that the
+routes are reachable, that a signed-out caller gets 401 rather than the router's catch-all 503,
+that the unimplemented half answers 503 instead of pretending, and that a file id cannot be
+crafted into naming something outside its project.
+
+Exercised against a temporary project root built from the real 孟婆 workbook, so the sheet and
+beat counts are the production ones rather than a fixture's.
+"""
+from __future__ import annotations
+
+import base64
+import io
+import json
+import shutil
+import sys
+import tempfile
+import unittest
+from email.parser import BytesParser
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from backend.v2.project_workbooks.nas_adapter import NasSecurity, NasWorkbookServices, NasWorkflowServices  # noqa: E402
+from backend.v2.project_workbooks.projects_api import ProjectsApi  # noqa: E402
+from backend.v2.server import create_handler  # noqa: E402
+from backend.v2.service import ApiError  # noqa: E402
+
+SAMPLES = Path(r"C:\Users\CHEN\Desktop\temp\mengpo-workflow-audit\sources")
+MASTER = SAMPLES / "孟婆2_场景节拍表.xlsx"
+SINGLE = SAMPLES / "孟婆2_场景节拍表_第26集.xlsx"
+
+TOKEN = "employee-session"
+
+
+class StubApp:
+    def __init__(self, root: Path):
+        self.db_path = root / "stub.db"
+
+    def session(self, token):
+        if token != TOKEN:
+            raise ApiError(401, "SESSION_INVALID", "登录状态已失效，请重新登录。")
+        return {"authenticated": True, "user": {"id": 4242, "username": "fixture-only"}}
+
+
+class StubConnection:
+    """`handle()` asks the socket for its timeout before reading; there is no socket here."""
+
+    def gettimeout(self):
+        return 20
+
+    def settimeout(self, _value):
+        return None
+
+
+class WorkbookRouteTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if not MASTER.is_file() or not SINGLE.is_file():
+            raise unittest.SkipTest("孟婆 samples are not present on this machine")
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name) / "项目文档"
+        self.root.mkdir()
+        project = self.root / "孟婆"
+        project.mkdir()
+        shutil.copy(MASTER, project / MASTER.name)
+        shutil.copy(SINGLE, project / SINGLE.name)
+        # An Excel lock file and a non-workbook must not appear as documents.
+        (project / "~$孟婆2_场景节拍表.xlsx").write_bytes(b"lock")
+        (project / "剧本.docx").write_bytes(b"not a workbook")
+        (self.root / "空项目").mkdir()
+
+        self.app = StubApp(Path(self.temp.name))
+        self.api = ProjectsApi(
+            NasSecurity(self.app.session),
+            NasWorkbookServices(self.root),
+            workflow=NasWorkflowServices(self.root))
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def request(self, method, path, token=TOKEN, body=b"", content_type=None, extra_headers=None):
+        values = {"Host": "localhost"}
+        if token:
+            values["Authorization"] = f"Bearer {token}"
+        if content_type:
+            values["Content-Type"] = content_type
+        values.update(extra_headers or {})
+        values["Content-Length"] = str(len(body))
+        raw = (f"{method} {path} HTTP/1.1\r\n" +
+               "".join(f"{k}: {v}\r\n" for k, v in values.items()) + "\r\n").encode("ascii") + body
+        handler_type = create_handler(self.app, project_workbooks=self.api)
+        handler = handler_type.__new__(handler_type)
+        handler.rfile = io.BytesIO(raw)
+        handler.wfile = io.BytesIO()
+        handler.close_connection = True
+        handler.connection = StubConnection()
+        handler.handle_one_request()
+        envelope, response_body = handler.wfile.getvalue().split(b"\r\n\r\n", 1)
+        status_line, response_headers = envelope.split(b"\r\n", 1)
+        return int(status_line.split()[1]), dict(BytesParser().parsebytes(response_headers).items()), response_body
+
+    def projects(self):
+        status, _, body = self.request("GET", "/api/v2/project-workbooks/projects")
+        self.assertEqual(200, status, body[:200])
+        return json.loads(body)["items"]
+
+    # --- listing ---------------------------------------------------------------------------
+
+    def test_projects_lists_every_directory_including_empty_ones(self):
+        # 孟婆 has workbooks; 空项目 has none and is still a project rather than being hidden.
+        self.assertEqual(sorted(["空项目", "孟婆"]),
+                         sorted(item["name"] for item in self.projects()))
+        self.assertTrue(all(item["id"].isdigit() for item in self.projects()))
+
+    def test_projects_rejects_a_query_string(self):
+        self.assertEqual(422, self.request("GET", "/api/v2/project-workbooks/projects?x=1")[0])
+
+    def test_files_lists_only_workbooks(self):
+        project_id = next(item["id"] for item in self.projects() if item["name"] == "孟婆")
+        status, _, body = self.request("GET", f"/api/v2/project-workbooks?project_id={project_id}")
+        self.assertEqual(200, status, body[:200])
+        items = json.loads(body)["items"]
+        self.assertEqual(sorted([MASTER.name, SINGLE.name]), sorted(item["name"] for item in items))
+        # The lock file and the docx are not documents.
+        self.assertNotIn("~$孟婆2_场景节拍表.xlsx", [item["name"] for item in items])
+        for item in items:
+            for key in ("id", "name", "template_kind", "version", "project_id", "revision_of", "revision_label"):
+                self.assertIn(key, item)
+
+    def test_an_unknown_project_is_not_found(self):
+        self.assertEqual(404, self.request("GET", "/api/v2/project-workbooks?project_id=999999")[0])
+
+    # --- opening ---------------------------------------------------------------------------
+
+    def test_opening_returns_every_sheet_of_the_real_workbook(self):
+        project_id = next(item["id"] for item in self.projects() if item["name"] == "孟婆")
+        _, _, body = self.request("GET", f"/api/v2/project-workbooks?project_id={project_id}")
+        master = next(item for item in json.loads(body)["items"] if item["name"] == MASTER.name)
+
+        status, _, document_body = self.request("GET", f"/api/v2/project-workbooks/{master['id']}")
+        self.assertEqual(200, status, document_body[:200])
+        document = json.loads(document_body)
+
+        self.assertEqual(31, len(document["sheets"]))
+        beats = [row for sheet in document["sheets"] if sheet["kind"] == "scene_beats"
+                 for row in sheet["scene_rows"]]
+        self.assertEqual(209, len(beats))
+        self.assertIn("使用说明", [sheet["name"] for sheet in document["sheets"] if sheet["kind"] == "generic"])
+
+    def test_a_crafted_file_id_cannot_name_a_file_outside_the_project(self):
+        # The id is base64 over the project id and the file name; an id naming a path must be refused rather
+        # than joined onto the project directory.
+        project_id = next(item["id"] for item in self.projects() if item["name"] == "孟婆")
+        crafted = base64.urlsafe_b64encode(f"{project_id}\x00../../../etc/passwd".encode()).decode().rstrip("=")
+        self.assertEqual(422, self.request("GET", f"/api/v2/project-workbooks/{crafted}")[0])
+
+    def test_a_malformed_file_id_is_rejected_as_a_bad_request(self):
+        # Not a valid encoding at all, so it is a malformed request rather than a missing file.
+        self.assertEqual(422, self.request("GET", "/api/v2/project-workbooks/bm90aGluZw")[0])
+
+    def test_a_well_formed_but_absent_file_is_not_found(self):
+        project_id = next(item["id"] for item in self.projects() if item["name"] == "孟婆")
+        absent = base64.urlsafe_b64encode(f"{project_id}\x00nope.xlsx".encode()).decode().rstrip("=")
+        self.assertEqual(404, self.request("GET", f"/api/v2/project-workbooks/{absent}")[0])
+
+    # --- auth and the unimplemented half ----------------------------------------------------
+
+    def test_a_missing_session_is_401_not_503(self):
+        # Without the ApiError -> ApiFault translation the router's catch-all would report a
+        # signed-out user as a broken server, which is a misleading thing to debug.
+        self.assertEqual(401, self.request("GET", "/api/v2/project-workbooks/projects", token=None)[0])
+        self.assertEqual(401, self.request("GET", "/api/v2/project-workbooks/projects", token="wrong")[0])
+
+    def test_creating_a_template_says_not_implemented_rather_than_pretending(self):
+        # A body that passes the route's own validation, so the answer comes from the missing
+        # adapter rather than from a rejected request.
+        body = json.dumps({"template_kind": "scene_beats", "project_id": "1",
+                           "operation_id": "0123456789abcdef"}).encode("utf-8")
+        status, _, response = self.request(
+            "POST", "/api/v2/project-workbooks/create", body=body, content_type="application/json")
+        self.assertEqual(503, status, response[:200])
+        self.assertIn("STORAGE_UNAVAILABLE", response.decode("utf-8"))
+
+    def test_importing_a_workbook_says_not_implemented_rather_than_pretending(self):
+        status, _, response = self.request(
+            "POST", "/api/v2/project-workbooks/import", body=b"PK\x03\x04",
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            extra_headers={"X-Project-Id": "1", "X-Operation-Id": "0123456789abcdef",
+                           "X-File-Name": "x.xlsx"})
+        self.assertEqual(503, status, response[:200])
+        self.assertIn("STORAGE_UNAVAILABLE", response.decode("utf-8"))
+
+    def test_the_host_sends_its_own_404_for_paths_it_does_not_own(self):
+        self.assertEqual(404, self.request("GET", "/api/v2/not-a-workbook-route")[0])
+
+
+if __name__ == "__main__":
+    unittest.main()

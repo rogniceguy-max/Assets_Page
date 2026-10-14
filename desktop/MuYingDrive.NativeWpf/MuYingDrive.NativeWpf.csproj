@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\MuYingDrive.UpdateCore\MuYingDrive.UpdateCore.csproj" />
+    <ProjectReference Include="..\MuYingDrive.ProjectWorkbooks\MuYingDrive.ProjectWorkbooks.csproj" />
     <None Update="Assets\Demo\*.jpg" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Assets\Demo\*.mp4" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Assets\Demo\README.md" CopyToOutputDirectory="PreserveNewest" />
