@@ -3,6 +3,7 @@ using System.ComponentModel;
 using MuYingDrive.NativeWpf.Infrastructure;
 using MuYingDrive.NativeWpf.Models;
 using MuYingDrive.NativeWpf.Services;
+using MuYingDrive.NativeWpf.Views;
 
 namespace MuYingDrive.NativeWpf.ViewModels;
 
@@ -100,7 +101,7 @@ public sealed class WorkspaceViewModel : ObservableObject
     /// 项目 entry itself made when there was no page behind it — the entry is not offered as
     /// working until it is.
     /// </remarks>
-    public RelayCommand? CreateProjectCommand { get; set; }
+    public System.Windows.Input.ICommand? CreateProjectCommand { get; set; }
 
     /// <summary>Why the + is disabled, or what it will do.</summary>
     public string CreateProjectToolTip { get; set; } = "项目创建服务尚未接入。";
@@ -248,7 +249,7 @@ public sealed class WorkspaceViewModel : ObservableObject
             }
         };
 
-        if (projectWorkbooks is not null)
+        if (projectWorkbooks is not null && main.ApiClient is { } createApi)
         {
             workspace.ProjectListLoader = async () =>
             {
@@ -270,6 +271,36 @@ public sealed class WorkspaceViewModel : ObservableObject
             // Not awaited: the sidebar fills in when it fills in, and the workspace is usable
             // — 图片, 个人空间, 传输, 反馈 — while it does.
             _ = workspace.LoadProjectsAsync();
+
+            workspace.CreateProjectToolTip = "新建项目";
+            workspace.CreateProjectCommand = new AsyncRelayCommand(async _ =>
+            {
+                var dialog = new TextInputWindow(
+                    "新建项目", "为项目取一个名字。创建后会生成节拍表和资产表。", string.Empty, "创建", 0)
+                {
+                    Owner = System.Windows.Application.Current?.MainWindow
+                };
+                if (dialog.ShowDialog() != true) return;
+                var name = dialog.Value.Trim();
+                if (name.Length == 0) return;
+
+                try
+                {
+                    await createApi.CreateProjectSpaceAsync(session.SessionToken, name);
+                }
+                catch (Exception error)
+                {
+                    // The server knows which rule was broken — a taken name, an unusable one —
+                    // and its sentence is the one to show. A silent failure here would look
+                    // like the + doing nothing at all.
+                    System.Windows.MessageBox.Show(
+                        error.Message, "无法创建项目",
+                        System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+                    return;
+                }
+
+                await workspace.LoadProjectsAsync();
+            });
         }
 
         workspace.Session = session;

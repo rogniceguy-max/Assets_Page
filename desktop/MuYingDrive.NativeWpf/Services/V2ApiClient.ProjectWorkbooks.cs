@@ -1,4 +1,7 @@
+using System.Net;
 using System.Net.Http;
+using System.Net.Http.Json;
+using System.Text.Json;
 namespace MuYingDrive.NativeWpf.Services;
 
 /// <summary>
@@ -42,4 +45,64 @@ public sealed partial class V2ApiClient
 
     /// <summary>The absolute root the workbook endpoints live under.</summary>
     public Uri ProjectWorkbookRoot => new(_baseUri, "api/v2/project-workbooks/");
+
+    /// <summary>
+    /// Creates a project space, throwing a message fit to show the user on failure.
+    /// </summary>
+    /// <remarks>
+    /// Not in the workbook library: that package models reading and editing workbooks, and
+    /// this is the host's own route (PROJECT_SPACE_V1.md). Its own client is created per
+    /// call and disposed — creating a project is rare, and a long-lived client here would
+    /// have to be owned and disposed by whoever held the command.
+    /// </remarks>
+    public async Task CreateProjectSpaceAsync(
+        string bearerToken, string name, CancellationToken cancellationToken = default)
+    {
+        using var client = CreateProjectWorkbookClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(_baseUri, "api/v2/project-spaces"));
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearerToken);
+        request.Content = JsonContent.Create(new { name });
+
+        using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        if (response.IsSuccessStatusCode) return;
+
+        // The server's own sentence when there is one — it knows which rule was broken,
+        // and it is the only place that does. Otherwise a status-based fallback, because a
+        // bare status code tells the user nothing they can act on.
+        var detail = await ReadErrorMessageAsync(response, cancellationToken).ConfigureAwait(false);
+        throw new InvalidOperationException(detail ?? response.StatusCode switch
+        {
+            HttpStatusCode.Conflict => "已存在同名项目，请换一个名称。",
+            HttpStatusCode.UnprocessableEntity => "项目名称无效，请检查后重试。",
+            HttpStatusCode.Unauthorized => "登录状态已失效，请重新登录。",
+            HttpStatusCode.ServiceUnavailable => "项目服务暂时不可用，请稍后重试。",
+            _ => "创建项目失败，请稍后重试。"
+        });
+    }
+
+    private static async Task<string?> ReadErrorMessageAsync(
+        HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            using var document = JsonDocument.Parse(body);
+            foreach (var name in new[] { "message", "error", "detail" })
+            {
+                if (document.RootElement.ValueKind != JsonValueKind.Object) break;
+                if (!document.RootElement.TryGetProperty(name, out var value)) continue;
+                if (value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } text)
+                    return text;
+                if (value.ValueKind == JsonValueKind.Object &&
+                    value.TryGetProperty("message", out var nested) &&
+                    nested.ValueKind == JsonValueKind.String && nested.GetString() is { Length: > 0 } nestedText)
+                    return nestedText;
+            }
+        }
+        catch (JsonException)
+        {
+            // Not JSON; the status-based fallback is the answer.
+        }
+        return null;
+    }
 }
