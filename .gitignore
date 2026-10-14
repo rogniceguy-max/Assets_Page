@@ -59,18 +59,9 @@ desktop/MuYingDrive.NativeWpf/nas-client.json
 # OS
 Thumbs.db
 
-# Build outputs from the isolated desktop spikes.
-spikes/**/bin/
-spikes/**/obj/
-spikes/**/target/
-
 # Desktop project build outputs.
 desktop/**/bin/
 desktop/**/obj/
-
-# Keep the frontend utility file trackable despite the generic Python lib/ rule.
-!frontend/src/lib/
-!frontend/src/lib/utils.ts
 
 # Release signing material. The private key is the update root of trust and must
 # never be committed; only the public key anchors under
