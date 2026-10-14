@@ -27,12 +27,14 @@ public enum SpaceMediaKind
 /// </remarks>
 public sealed class SpaceScope
 {
-    public SpaceScope(string root, bool canWrite, SpaceMediaKind media = SpaceMediaKind.All)
+    public SpaceScope(string root, bool canWrite, SpaceMediaKind media = SpaceMediaKind.All,
+                      bool flatten = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(root);
         Root = Path.GetFullPath(root);
         CanWrite = canWrite;
         Media = media;
+        Flatten = flatten;
     }
 
     /// <summary>The directory this scope resolves to, normalized.</summary>
@@ -48,6 +50,21 @@ public sealed class SpaceScope
     public SpaceMediaKind Media { get; }
 
     /// <summary>
+    /// Whether to walk the whole tree and list only the files in it, rather than one
+    /// directory's children.
+    /// </summary>
+    /// <remarks>
+    /// For the global 图片 and 视频 views, which are an answer to "where is that picture"
+    /// across every project at once. Making the user open a project, then a folder, then
+    /// another folder before they can see a picture is not that answer — the tree in the
+    /// sidebar is where you go when you already know which project you want.
+    ///
+    /// Folders are deliberately not listed in a flattened view: they would be rows you
+    /// cannot usefully open, since the view is already showing what is inside them.
+    /// </remarks>
+    public bool Flatten { get; }
+
+    /// <summary>
     /// Whether a file with this extension belongs in this scope. Directories are not put
     /// through this — a media view still has to let the user walk into the folders the
     /// media is organised in.
@@ -60,5 +77,8 @@ public sealed class SpaceScope
     };
 
     /// <summary>The same scope, showing only one kind of media.</summary>
-    public SpaceScope WithMedia(SpaceMediaKind media) => new(Root, CanWrite, media);
+    public SpaceScope WithMedia(SpaceMediaKind media) => new(Root, CanWrite, media, Flatten);
+
+    /// <summary>The same scope, flattened or not.</summary>
+    public SpaceScope WithFlatten(bool flatten) => new(Root, CanWrite, Media, flatten);
 }

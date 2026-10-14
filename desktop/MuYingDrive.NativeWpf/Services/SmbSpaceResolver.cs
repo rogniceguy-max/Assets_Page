@@ -118,7 +118,8 @@ public sealed class SmbSpaceResolver
     /// and lets the user walk in, which is honest about what it knows.
     /// </remarks>
     public SpaceScope ResolveProjectsScope(SpaceMediaKind media) =>
-        new(Path.GetFullPath(Path.Combine(_shareRoot, ProjectFolderName)), canWrite: false, media);
+        new(Path.GetFullPath(Path.Combine(_shareRoot, ProjectFolderName)), canWrite: false, media,
+            flatten: true);
 
     /// <summary>Whether <paramref name="path"/> sits inside the given scope.</summary>
     public bool IsWithinSpace(SpaceScope scope, string path) =>

@@ -64,6 +64,12 @@ public sealed class ProjectWorkbookPage : IDisposable
     public Task OpenWorkbookAsync(string projectId, string fileId) =>
         ViewModel.ExecuteAsync(async () =>
         {
+            // The page loads its lists lazily, and opening a workbook from the sidebar is
+            // allowed to be the first thing that ever happens to it. Without this the lookup
+            // below runs against an empty list: the first click failed and the second worked,
+            // which reads as "clicking twice fixes it" rather than as a race.
+            if (ViewModel.Projects.Count == 0) await ViewModel.InitializeAsync();
+
             var project = ViewModel.Projects.FirstOrDefault(p => p.Id == projectId)
                 ?? throw new InvalidOperationException("找不到该项目，可能已被删除。");
             if (!ReferenceEquals(project, ViewModel.SelectedProject))

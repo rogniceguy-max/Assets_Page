@@ -169,6 +169,22 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
     public string SelectedLabel => SelectedCount == 1 ? "已选择 1 项" : $"已选择 {SelectedCount} 项";
     public bool HasSelection => SelectedCount > 0;
     public bool IsReadOnly => !_scope.CanWrite;
+
+    private string _truncationNotice = string.Empty;
+
+    /// <summary>
+    /// Set when the view is showing only part of what it found.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="ErrorMessage"/> on purpose: nothing failed, but the list is
+    /// not the whole answer, and a user who cannot tell the difference will conclude that a
+    /// picture is missing from the archive rather than off the end of the list.
+    /// </remarks>
+    public string TruncationNotice
+    {
+        get => _truncationNotice;
+        private set => SetProperty(ref _truncationNotice, value);
+    }
     public bool IsLoading
     {
         get => _isLoading;
@@ -319,6 +335,9 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
         _scope = scope;
         SpaceTitle = title;
         _currentRoot = _scope.Root;
+        // Belongs to the listing that produced it, not to the browser: carrying it into the
+        // next scope would claim a limit that is no longer being applied.
+        TruncationNotice = string.Empty;
         _currentDirectory = _currentRoot;
         OnPropertyChanged(nameof(CurrentPathLabel));
         OnPropertyChanged(nameof(IsReadOnly));
@@ -758,7 +777,23 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
         UploadCommand.RaiseCanExecuteChanged();
         try
         {
-            var items = await _catalog.EnumerateDirectoryAsync(_scope, _currentDirectory);
+            // The global 图片 and 视频 entries list media from every project at once, with no
+            // folders to walk through; every other scope is one directory's children.
+            IReadOnlyList<DriveFileItem> items;
+            if (_scope.Flatten)
+            {
+                var listing = await _catalog.EnumerateFlattenedAsync(_scope);
+                items = listing.Items;
+                TruncationNotice = listing.Truncated
+                    ? $"内容较多，仅显示前 {SmbFileCatalog.FlattenedLimit} 项。"
+                    : string.Empty;
+            }
+            else
+            {
+                items = await _catalog.EnumerateDirectoryAsync(_scope, _currentDirectory);
+                TruncationNotice = string.Empty;
+            }
+
             if (requestId != _loadRequestId)
                 return;
 

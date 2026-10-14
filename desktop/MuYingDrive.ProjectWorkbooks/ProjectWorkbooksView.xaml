@@ -97,8 +97,14 @@
  </UserControl.Resources>
  <Grid Margin="24">
   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-  <StackPanel Grid.Row="0"><TextBlock Text="项目" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,16"/>
-   <ComboBox ItemsSource="{Binding Projects}" SelectedItem="{Binding SelectedProject}" DisplayMemberPath="Name" SelectionChanged="OnProjectChanged" IsEnabled="{Binding Ready}" MinWidth="180" MaxWidth="340" HorizontalAlignment="Left" Margin="0,0,0,12" ToolTip="选择项目"/>
+  <!-- HOST ADJUSTMENT. This view is otherwise a copy of the handoff package's, kept
+       diffable against it. The handoff's own design notes say the project home should no
+       longer carry a project switcher or repeated create-template buttons, because the
+       sidebar's project tree is the switcher now. The dropdown was still here, and it
+       rendered the raw record — it showed "ProjectInfo { Id = …, Name = 孟婆 }" rather than
+       a name — while being a second, disagreeing answer to which project is open. Removed;
+       the heading names the project instead. -->
+  <StackPanel Grid.Row="0"><TextBlock Text="{Binding SelectedProject.Name, TargetNullValue=工作簿}" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,16"/>
    <TextBlock Text="{Binding Error}" Foreground="{DynamicResource Brush.Status.Danger}" Margin="0,0,0,8"/>
    <Button Content="重新加载" Click="OnRefresh" HorizontalAlignment="Left" IsEnabled="{Binding Ready}" Visibility="{Binding CanReload, Converter={StaticResource BoolVisibility}}"/>
    <ProgressBar Height="3" IsIndeterminate="True" Visibility="{Binding Busy, Converter={StaticResource BoolVisibility}}" Margin="0,0,0,8"/>
@@ -109,7 +115,10 @@
   <Grid Grid.Row="2" IsEnabled="{Binding Ready}">
    <Grid Visibility="{Binding IsHome, Converter={StaticResource BoolVisibility}}" AllowDrop="True" DragOver="OnWorkbookDragOver" Drop="OnWorkbookDrop" Background="Transparent">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-    <StackPanel><WrapPanel>
+    <!-- The gap below the button row: without it the first file card sat right against the
+         buttons, which reads as one cramped block rather than "actions, then what they act
+         on". -->
+    <StackPanel><WrapPanel Margin="0,0,0,14">
      <Button Content="导入 .xlsx" Click="OnImport" Style="{DynamicResource Button.Primary}"/>
      <Button Content="新建节拍表" Tag="scene_beats" Click="OnCreate"/>
      <Button Content="新建资产表" Tag="asset_review" Click="OnCreate"/>

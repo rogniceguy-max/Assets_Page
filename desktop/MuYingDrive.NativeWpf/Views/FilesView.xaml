@@ -139,6 +139,21 @@
                                Visibility="{Binding IsReadOnly, Converter={StaticResource BoolToVisibility}}" />
                     <TextBlock Text="{Binding ErrorMessage}" FontSize="{StaticResource Typography.FontSize.Caption}" Foreground="{DynamicResource Brush.Status.Danger}"
                                Visibility="{Binding HasError, Converter={StaticResource BoolToVisibility}}" />
+                    <!-- Not an error, but not the whole list either — and the difference
+                         matters most in 图片, where a picture off the end of a long list
+                         looks like a picture that is missing from the archive. -->
+                    <TextBlock Text="{Binding TruncationNotice}" FontSize="{StaticResource Typography.FontSize.Caption}"
+                               Foreground="{DynamicResource Brush.Text.Secondary}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding TruncationNotice}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                 </StackPanel>
                 <Border.Style>
                     <Style TargetType="Border">
