@@ -18,18 +18,6 @@ CREATE TABLE IF NOT EXISTS pwb_scene_origins (
     CHECK(file_id <> origin_file_id),
     FOREIGN KEY(file_id,row_id) REFERENCES pwb_scene_state(file_id,row_id) ON DELETE CASCADE
 );
-CREATE TABLE IF NOT EXISTS pwb_selection_history (
-    id TEXT PRIMARY KEY,
-    file_id TEXT NOT NULL,
-    row_id TEXT NOT NULL,
-    previous_image_id TEXT NULL,
-    image_id TEXT NULL,
-    user_id TEXT NOT NULL,
-    user_name TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    reason TEXT NULL
-);
-CREATE INDEX IF NOT EXISTS pwb_selection_history_scope ON pwb_selection_history(file_id,row_id,created_at,id);
 CREATE TABLE IF NOT EXISTS pwb_operations (
     user_id TEXT NOT NULL,
     operation_id TEXT NOT NULL,

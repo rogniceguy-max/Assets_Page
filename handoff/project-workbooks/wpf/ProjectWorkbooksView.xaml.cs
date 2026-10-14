@@ -59,7 +59,11 @@ public partial class ProjectWorkbooksView : UserControl
     }
     private void OnWorkbookDragOver(object sender, DragEventArgs e) => Drag(e, IsWorkbook);
     private void OnImageDragOver(object sender, DragEventArgs e)
-    { if (Row(sender) is { Row.CanEdit: true }) Drag(e, IsImage); else { e.Effects = DragDropEffects.None; e.Handled = true; } }
+    {
+        var row = Row(sender);
+        if (row?.Row.CanEdit == true && row.Row.ImageFolder != null) Drag(e, IsImage);
+        else { e.Effects = DragDropEffects.None; e.Handled = true; }
+    }
     private async void OnWorkbookDrop(object sender, DragEventArgs e)
     {
         e.Handled = true;
@@ -82,13 +86,6 @@ public partial class ProjectWorkbooksView : UserControl
         var picker = new OpenFileDialog { Filter = "Excel 工作簿 (*.xlsx)|*.xlsx", Multiselect = true };
         if (picker.ShowDialog(Window.GetWindow(this)) == true) await Model.ExecuteAsync(() => ImportPathsAsync(picker.FileNames));
     }
-    private async void OnCreate(object sender, RoutedEventArgs e) => await Model.ExecuteAsync(async () =>
-    {
-        if (Model.HasPendingOperation) throw new InvalidDataException("请先重试或取消待确认的操作。");
-        var kind = (string)((FrameworkElement)sender).Tag;
-        Model.SetPending(new PendingWorkbookOperation(Model.Service.OperationScope, Guid.NewGuid().ToString("D"), RequireProject(), kind, null, null, null));
-        var file = await SubmitPendingAsync(); await Model.OpenAsync(file);
-    });
     private async void OnOpenFile(object sender, RoutedEventArgs e)
     {
         if (((FrameworkElement)sender).DataContext is ProjectFile file) await Model.ExecuteAsync(() => Model.OpenAsync(file));
@@ -111,18 +108,28 @@ public partial class ProjectWorkbooksView : UserControl
     {
         if (Row(sender) is not { } row) return;
         if (!row.Row.CanEdit) return;
-        var selected = Equals(((FrameworkElement)sender).Tag, "selected");
         await Model.ExecuteAsync(async () =>
         {
-            var dialog = new ImagePickerWindow(Model, Model.Document?.File.ProjectId ?? RequireProject(), !selected) { Owner = Window.GetWindow(this) };
+            var dialog = new ImagePickerWindow(Model, Model.Document?.File.ProjectId ?? RequireProject(), row) { Owner = Window.GetWindow(this) };
             dialog.Resources.MergedDictionaries.Add(Resources);
             if (dialog.ShowDialog() != true) return;
             var ids = dialog.SelectedImages.Select(image => image.Asset.Id).ToList();
             if (ids.Count == 0) return;
-            await UpdateImagesWithReasonAsync(row, selected ? ids.Single() : row.Row.SelectedImage?.Id,
-                selected ? row.Row.CandidateImages.Select(a => a.Id) : row.Row.CandidateImages.Select(a => a.Id).Concat(ids));
+            // Removing an attachment in the picker replaces the row with its newer server version.
+            // Use that current version when applying the selected image.
+            row = Model.SelectedSheet?.Assets.FirstOrDefault(item => item.Row.Id == row.Row.Id) ?? row;
+            await Model.UpdateImagesAsync(row, ids.Single(), row.Row.CandidateImages.Select(image => image.Id));
         });
     }
+    private async void OnCreateAsset(object sender, RoutedEventArgs e)
+    {
+        if (Model.Document is not { } document || Model.SelectedSheet is not { IsAsset: true }) return;
+        var dialog = new AssetRowCreateWindow(document.File.Version, Resources) { Owner = Window.GetWindow(this) };
+        if (dialog.ShowDialog() != true || dialog.Request is not { } request) return;
+        await Model.ExecuteAsync(async () => { await Model.CreateAssetRowAsync(request); });
+    }
+    private async void OnRetryAssetRowCreate(object sender, RoutedEventArgs e) =>
+        await Model.ExecuteAsync(async () => { await Model.RetryPendingAssetRowCreateAsync(); });
     private async void OnImageDrop(object sender, DragEventArgs e)
     {
         e.Handled = true;
@@ -134,29 +141,13 @@ public partial class ProjectWorkbooksView : UserControl
             if (paths.Length == 0 || paths.Any(path => !IsImage(path))) throw new InvalidDataException("请拖入 PNG 或 JPEG 图片。");
             if (selected && paths.Length != 1) throw new InvalidDataException("选定只接收一张图片，请将多张图片拖入备选区。");
             if (!selected && row.Row.CandidateImages.Count + paths.Length > 100) throw new InvalidDataException("每行最多保留 100 张备选图片。");
-            var assets = new List<ImageAsset>();
             foreach (var path in paths)
-            {
-                await using var source = File.OpenRead(path);
-                assets.Add(await Model.Service.UploadProjectImageAsync(Model.Document?.File.ProjectId ?? RequireProject(), Path.GetFileName(path), Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" : "image/jpeg", source));
-            }
-            await UpdateImagesWithReasonAsync(row, selected ? assets.Single().Id : row.Row.SelectedImage?.Id,
-                selected ? row.Row.CandidateImages.Select(a => a.Id) : row.Row.CandidateImages.Select(a => a.Id).Concat(assets.Select(a => a.Id)));
+                row = await Model.UploadImageToAssetRowAsync(row, path, selected);
         });
     }
     private async void OnClearSelected(object sender, RoutedEventArgs e)
     {
-        if (Row(sender) is { } row) await Model.ExecuteAsync(() => UpdateImagesWithReasonAsync(row, null, row.Row.CandidateImages.Select(a => a.Id)));
-    }
-    private async void OnUseCandidate(object sender, RoutedEventArgs e)
-    {
-        if (Row(sender) is { } row && ((FrameworkElement)sender).DataContext is ImageItem image)
-            await Model.ExecuteAsync(() => UpdateImagesWithReasonAsync(row, image.Asset.Id, row.Row.CandidateImages.Select(a => a.Id)));
-    }
-    private async void OnRemoveCandidate(object sender, RoutedEventArgs e)
-    {
-        if (Row(sender) is { } row && ((FrameworkElement)sender).DataContext is ImageItem image)
-            await Model.ExecuteAsync(() => Model.UpdateImagesAsync(row, row.Row.SelectedImage?.Id, row.Row.CandidateImages.Where(a => a.Id != image.Asset.Id).Select(a => a.Id)));
+        if (Row(sender) is { } row) await Model.ExecuteAsync(() => Model.UpdateImagesAsync(row, null, row.Row.CandidateImages.Select(a => a.Id)));
     }
     private async void OnPreviewSelected(object sender, RoutedEventArgs e)
     { if (Row(sender) is { Selected: { } image } row) await ReviewAsync(row, image); }
@@ -190,11 +181,6 @@ public partial class ProjectWorkbooksView : UserControl
         if (MessageBox.Show(Window.GetWindow(this), "服务端可能已完成此操作。取消不会删除已导入文件，稍后可重新进入项目查看。仍要取消？", "取消待确认操作", MessageBoxButton.YesNo) == MessageBoxResult.Yes)
             await Model.ExecuteAsync(() => { Model.SetPending(null); return Task.CompletedTask; });
     }
-    private async void OnProjectChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (!_loaded || Model.Busy) return;
-        await Model.ExecuteAsync(async () => { Model.Back(); await Model.RefreshFilesAsync(); });
-    }
     private async void OnImportRevision(object sender, RoutedEventArgs e)
     {
         if (Model.Document is not { } document) return;
@@ -224,39 +210,6 @@ public partial class ProjectWorkbooksView : UserControl
         {
             var snapshot = await Model.Service.OpenAsync(document.File.Id);
             await Model.Service.ExportCurrentAsync(document.File.Id, snapshot.File.Version, picker.FileName);
-        });
-    }
-    private async Task UpdateImagesWithReasonAsync(AssetRowItem row, string? selectedId, IEnumerable<string> candidates)
-    {
-        string? reason = null;
-        if (selectedId != row.Row.SelectedImage?.Id)
-        {
-            reason = WorkflowDialogs.Prompt(Window.GetWindow(this), Resources, selectedId == null ? "清空选定" : "变更选定图片", "可填写选定原因。此操作会记录操作者、时间与图片版本；不会按票数自动选定。");
-            if (reason == null) return;
-        }
-        await Model.UpdateImagesAsync(row, selectedId, candidates, reason);
-    }
-    private async void OnSelectionHistory(object sender, RoutedEventArgs e)
-    {
-        if (Row(sender) is not { } row || Model.Document is not { } document) return;
-        await Model.ExecuteAsync(async () =>
-        {
-            var history = await Model.Service.GetSelectionHistoryAsync(document.File.Id, row.Row.Id);
-            WorkflowDialogs.ShowText(Window.GetWindow(this), Resources, "选定历史", history.Count == 0 ? "暂无选定变更记录。" : string.Join("\n\n", history.Select(entry =>
-                $"{entry.CreatedAt.ToLocalTime():yyyy-MM-dd HH:mm} · {entry.UserName}\n{entry.PreviousImageId ?? "未选定"} → {entry.ImageId ?? "已清空"}\n原因：{entry.Reason ?? "未填写"}")));
-        });
-    }
-    private async void OnCompareRow(object sender, RoutedEventArgs e)
-    {
-        if (Row(sender) is not { } row) return;
-        await Model.ExecuteAsync(async () =>
-        {
-            var images = row.Candidates.Concat(row.Selected == null ? [] : new[] { row.Selected }).DistinctBy(image => image.Asset.Id).ToList();
-            var chosen = WorkflowDialogs.Choose(Window.GetWindow(this), Resources, "选择 2–4 张图片比较", images, image => image.Name + "\n" + image.Details, true);
-            if (chosen == null) return;
-            if (chosen.Count is < 2 or > 4) throw new InvalidDataException("请选择 2–4 张图片。");
-            if (Model.Document is { } document) await Model.RefreshReviewSummariesAsync(document.File.Id, row);
-            var window = new CompareImagesWindow(Model.Service, chosen) { Owner = Window.GetWindow(this) }; WorkflowDialogs.Theme(window, Resources); window.ShowDialog();
         });
     }
     private static SceneRowItem? Scene(object sender) => (sender as FrameworkElement)?.DataContext as SceneRowItem;

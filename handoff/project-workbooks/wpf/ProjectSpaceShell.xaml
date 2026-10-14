@@ -1,0 +1,257 @@
+<UserControl x:Class="MuYingDrive.ProjectWorkbooks.ProjectSpaceShell"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ xmlns:local="clr-namespace:MuYingDrive.ProjectWorkbooks"
+ Loaded="OnLoaded"
+ Background="{DynamicResource Brush.Surface.Canvas}"
+ Foreground="{DynamicResource Brush.Text.Primary}"
+ FontSize="14"
+ FontFamily="{DynamicResource Typography.FontFamily}">
+ <UserControl.Resources>
+  <!-- Local fallbacks are removed on load when the host supplies its active theme. -->
+  <SolidColorBrush x:Key="Brush.Surface.Canvas" Color="#101112"/>
+  <SolidColorBrush x:Key="Brush.Surface.Panel" Color="#191A1C"/>
+  <SolidColorBrush x:Key="Brush.Border.Subtle" Color="#303238"/>
+  <SolidColorBrush x:Key="Brush.Text.Primary" Color="#F0F1F4"/>
+  <SolidColorBrush x:Key="Brush.Text.Secondary" Color="#A8ADB7"/>
+  <SolidColorBrush x:Key="Brush.Accent.Primary" Color="#6058D6"/>
+  <SolidColorBrush x:Key="Brush.Status.Danger" Color="#D14343"/>
+  <FontFamily x:Key="Typography.FontFamily">Inter, Noto Sans SC, Microsoft YaHei UI</FontFamily>
+  <BooleanToVisibilityConverter x:Key="BoolVisibility"/>
+
+  <Style x:Key="Shell.Button" TargetType="Button">
+   <Setter Property="Background" Value="{DynamicResource Brush.Surface.Panel}"/>
+   <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
+   <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Subtle}"/>
+   <Setter Property="BorderThickness" Value="1"/>
+   <Setter Property="Padding" Value="10,7"/>
+   <Setter Property="Margin" Value="0,0,8,0"/>
+   <Setter Property="Cursor" Value="Hand"/>
+   <Setter Property="Template">
+    <Setter.Value>
+     <ControlTemplate TargetType="Button">
+      <Border x:Name="Chrome" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+       <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+      </Border>
+      <ControlTemplate.Triggers>
+       <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Brush.Accent.Primary}"/></Trigger>
+       <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Chrome" Property="BorderThickness" Value="2"/></Trigger>
+       <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Chrome" Property="Opacity" Value="0.45"/></Trigger>
+      </ControlTemplate.Triggers>
+     </ControlTemplate>
+    </Setter.Value>
+   </Setter>
+  </Style>
+  <Style x:Key="Shell.PrimaryButton" TargetType="Button" BasedOn="{StaticResource Shell.Button}">
+   <Setter Property="Background" Value="{DynamicResource Brush.Accent.Primary}"/>
+  </Style>
+  <Style x:Key="Shell.NavigationButton" TargetType="Button" BasedOn="{StaticResource Shell.Button}">
+   <Setter Property="Background" Value="Transparent"/>
+   <Setter Property="BorderThickness" Value="0"/>
+   <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+   <Setter Property="Padding" Value="10,8"/>
+   <Setter Property="Margin" Value="0,1,0,1"/>
+   <Setter Property="Template">
+    <Setter.Value>
+     <ControlTemplate TargetType="Button">
+      <Border x:Name="Chrome" Background="{TemplateBinding Background}" CornerRadius="5" Padding="{TemplateBinding Padding}">
+       <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
+      </Border>
+      <ControlTemplate.Triggers>
+       <DataTrigger Binding="{Binding IsActive}" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Brush.Accent.Primary}"/></DataTrigger>
+       <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Brush.Surface.Panel}"/></Trigger>
+       <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Chrome" Property="Opacity" Value="0.45"/></Trigger>
+      </ControlTemplate.Triggers>
+     </ControlTemplate>
+    </Setter.Value>
+   </Setter>
+  </Style>
+  <Style TargetType="Button" BasedOn="{StaticResource Shell.Button}"/>
+  <Style TargetType="TextBlock">
+   <Setter Property="TextWrapping" Value="Wrap"/>
+  </Style>
+  <Style x:Key="Shell.Caption" TargetType="TextBlock">
+   <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}"/>
+   <Setter Property="FontSize" Value="12"/>
+  </Style>
+  <Style TargetType="TreeViewItem">
+   <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
+   <Setter Property="Background" Value="Transparent"/>
+   <Setter Property="BorderThickness" Value="0"/>
+   <Setter Property="Padding" Value="5,4"/>
+   <Setter Property="Margin" Value="0,1,0,1"/>
+   <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
+   <Style.Triggers>
+    <Trigger Property="IsSelected" Value="True"><Setter Property="Background" Value="{DynamicResource Brush.Accent.Primary}"/></Trigger>
+    <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="{DynamicResource Brush.Surface.Panel}"/></Trigger>
+   </Style.Triggers>
+  </Style>
+  <HierarchicalDataTemplate DataType="{x:Type local:ProjectSpaceNavigationNode}" ItemsSource="{Binding Children}">
+   <StackPanel Orientation="Horizontal" MinHeight="22">
+    <TextBlock Text="{Binding Glyph}" Width="22" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}"/>
+    <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="185"/>
+   </StackPanel>
+  </HierarchicalDataTemplate>
+  <DataTemplate DataType="{x:Type local:ProjectSpaceMediaRecord}">
+   <Border Width="176" Margin="0,0,12,12" Padding="8" Background="{DynamicResource Brush.Surface.Panel}" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" CornerRadius="7">
+    <StackPanel>
+     <Button Tag="{Binding}" Click="OnOpenMedia" Padding="0" BorderThickness="0" Background="Transparent" ToolTip="打开文件">
+      <Grid Height="118" Background="{DynamicResource Brush.Surface.Canvas}">
+       <Image Source="{Binding Preview}" Stretch="UniformToFill"/>
+       <TextBlock Text="▶" FontSize="30" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}">
+        <TextBlock.Style>
+         <Style TargetType="TextBlock">
+          <Setter Property="Visibility" Value="Collapsed"/>
+          <Style.Triggers><DataTrigger Binding="{Binding IsVideo}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers>
+         </Style>
+        </TextBlock.Style>
+       </TextBlock>
+      </Grid>
+     </Button>
+     <TextBlock Text="{Binding Name}" Margin="0,8,0,2" MaxHeight="40" TextTrimming="CharacterEllipsis"/>
+     <TextBlock Text="{Binding Details}" Style="{StaticResource Shell.Caption}" MaxHeight="32"/>
+     <Button Content="移入回收站" Tag="{Binding}" Click="OnArchiveMedia" HorizontalAlignment="Left" Padding="4,3" Margin="0,6,0,0"
+      Visibility="{Binding DataContext.IsProjectScopedMediaPage, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolVisibility}}"/>
+    </StackPanel>
+   </Border>
+  </DataTemplate>
+  <DataTemplate DataType="{x:Type local:ProjectSpaceMediaGroup}">
+   <StackPanel Margin="0,0,0,18">
+    <TextBlock Text="{Binding ProjectName}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
+    <ItemsControl ItemsSource="{Binding Items}">
+     <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+    </ItemsControl>
+   </StackPanel>
+  </DataTemplate>
+  <DataTemplate x:Key="ProjectWorkbookCardTemplate">
+   <Button Tag="{Binding}" Click="OnOpenWorkbookCard" Width="220" Height="104" Margin="0,0,12,12" Padding="12" HorizontalContentAlignment="Stretch">
+    <StackPanel VerticalAlignment="Center">
+     <TextBlock Text="XLSX" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}" Margin="0,0,0,8"/>
+     <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="15"/>
+    </StackPanel>
+   </Button>
+  </DataTemplate>
+  <DataTemplate DataType="{x:Type local:ProjectSpaceRecycleBinRecord}">
+   <Border Margin="0,0,0,8" Padding="12" Background="{DynamicResource Brush.Surface.Panel}" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" CornerRadius="6">
+    <Grid>
+     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+     <StackPanel>
+      <TextBlock Text="{Binding Name}"/>
+      <TextBlock Text="{Binding OriginalFolderPath}" Style="{StaticResource Shell.Caption}" Margin="0,4,0,0"/>
+     </StackPanel>
+     <Button Grid.Column="1" Content="恢复" Tag="{Binding}" Click="OnRestore" VerticalAlignment="Center"/>
+    </Grid>
+   </Border>
+  </DataTemplate>
+ </UserControl.Resources>
+
+ <Grid>
+  <Grid.ColumnDefinitions><ColumnDefinition Width="252"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+  <Border Grid.Column="0" Background="{DynamicResource Brush.Surface.Panel}" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="0,0,1,0">
+   <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Margin="12,14">
+     <TextBlock Text="沐影盘" FontSize="16" FontWeight="SemiBold" Margin="8,0,0,18"/>
+     <ItemsControl ItemsSource="{Binding PrimaryNavigation}">
+      <ItemsControl.ItemTemplate>
+       <DataTemplate>
+        <Button Style="{StaticResource Shell.NavigationButton}" Tag="{Binding Key}" Click="OnPrimaryNavigationClick">
+         <DockPanel LastChildFill="True">
+          <TextBlock Text="{Binding Glyph}" Width="24" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}"/>
+          <TextBlock Text="{Binding Label}" VerticalAlignment="Center"/>
+         </DockPanel>
+        </Button>
+       </DataTemplate>
+      </ItemsControl.ItemTemplate>
+     </ItemsControl>
+
+     <Border Height="1" Background="{DynamicResource Brush.Border.Subtle}" Margin="4,12,4,12"/>
+     <Grid Margin="6,0,0,8">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <TextBlock Text="项目" FontWeight="SemiBold" VerticalAlignment="Center"/>
+      <Button Grid.Column="1" Content="+" Width="30" Height="28" Padding="0" Margin="0" ToolTip="新建项目" Click="OnBeginCreateProject" Style="{StaticResource Shell.Button}"/>
+     </Grid>
+
+     <Border Visibility="{Binding IsCreatingProject, Converter={StaticResource BoolVisibility}}" Background="{DynamicResource Brush.Surface.Canvas}" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" CornerRadius="6" Padding="8" Margin="4,0,4,8">
+      <StackPanel>
+       <TextBox Text="{Binding NewProjectName, UpdateSourceTrigger=PropertyChanged}" ToolTip="项目名称" Padding="7" Background="{DynamicResource Brush.Surface.Panel}" Foreground="{DynamicResource Brush.Text.Primary}" KeyDown="OnCreateProjectKeyDown"/>
+       <WrapPanel Margin="0,8,0,0">
+        <Button Content="创建" Style="{StaticResource Shell.PrimaryButton}" Click="OnCreateProject" IsEnabled="{Binding CanCreateProject}"/>
+        <Button Content="取消" Click="OnCancelCreateProject"/>
+       </WrapPanel>
+      </StackPanel>
+     </Border>
+
+     <TreeView ItemsSource="{Binding ProjectNavigationRoots}" SelectedItemChanged="OnProjectTreeSelectionChanged" Background="Transparent" BorderThickness="0"/>
+    </StackPanel>
+   </ScrollViewer>
+  </Border>
+
+  <Grid Grid.Column="1">
+   <Grid.RowDefinitions><RowDefinition Height="64"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+   <Border Grid.Row="0" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="0,0,0,1" Padding="24,0">
+    <Grid>
+     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+     <StackPanel VerticalAlignment="Center">
+      <TextBlock Text="{Binding PageTitle}" FontSize="16" FontWeight="SemiBold"/>
+      <TextBlock Text="{Binding ScopeText}" Style="{StaticResource Shell.Caption}" Margin="0,2,0,0"/>
+     </StackPanel>
+     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+      <Button Content="重命名项目" Click="OnBeginRenameProject" Visibility="{Binding IsProjectOverview, Converter={StaticResource BoolVisibility}}" IsEnabled="{Binding IsProjectSelected}"/>
+      <Button Content="导入 .xlsx" Click="OnImportWorkbook" Visibility="{Binding CanImportWorkbook, Converter={StaticResource BoolVisibility}}" Style="{StaticResource Shell.PrimaryButton}"/>
+      <Button Content="{Binding UploadButtonText}" Click="OnImportMedia" Visibility="{Binding IsProjectScopedMediaPage, Converter={StaticResource BoolVisibility}}" IsEnabled="{Binding CanUpload}" Style="{StaticResource Shell.PrimaryButton}"/>
+      <Button Content="回收站" Click="OnOpenRecycleBin" Visibility="{Binding CanOpenRecycleBin, Converter={StaticResource BoolVisibility}}"/>
+     </StackPanel>
+    </Grid>
+   </Border>
+
+   <Grid Grid.Row="1" Margin="24">
+    <Grid Visibility="{Binding IsProjectOverview, Converter={StaticResource BoolVisibility}}" AllowDrop="True" DragOver="OnWorkbookDragOver" Drop="OnWorkbookDrop" Background="Transparent">
+     <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+      <StackPanel Visibility="{Binding IsProjectSelected, Converter={StaticResource BoolVisibility}}">
+       <TextBlock Text="本项目工作簿" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,14"/>
+       <ItemsControl ItemsSource="{Binding SelectedProject.Workbooks}" ItemTemplate="{StaticResource ProjectWorkbookCardTemplate}">
+        <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+       </ItemsControl>
+      </StackPanel>
+     </ScrollViewer>
+     <TextBlock Text="使用左侧“项目 +”创建项目。" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}" Visibility="{Binding IsNoProjectSelected, Converter={StaticResource BoolVisibility}}"/>
+    </Grid>
+
+    <Grid Visibility="{Binding IsMediaPage, Converter={StaticResource BoolVisibility}}" AllowDrop="True" DragOver="OnMediaDragOver" Drop="OnMediaDrop" Background="Transparent">
+     <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+      <ItemsControl ItemsSource="{Binding MediaGroups}"/>
+     </ScrollViewer>
+     <Border IsHitTestVisible="False" Visibility="{Binding IsMediaEmpty, Converter={StaticResource BoolVisibility}}" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" CornerRadius="8" Margin="0,0,12,12">
+      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+       <TextBlock Text="{Binding MediaEmptyTitle}" FontSize="16" HorizontalAlignment="Center"/>
+       <TextBlock Text="{Binding MediaEmptyHint}" Style="{StaticResource Shell.Caption}" HorizontalAlignment="Center" Margin="0,6,0,0"/>
+      </StackPanel>
+     </Border>
+    </Grid>
+
+    <Grid Visibility="{Binding IsRecycleBinPage, Converter={StaticResource BoolVisibility}}">
+     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+     <Button Content="返回" Click="OnBackFromRecycleBin" HorizontalAlignment="Left"/>
+     <ScrollViewer Grid.Row="1" Margin="0,12,0,0" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+      <ItemsControl ItemsSource="{Binding RecycleBinItems}"/>
+     </ScrollViewer>
+    </Grid>
+
+    <Grid Visibility="{Binding IsHostContentPage, Converter={StaticResource BoolVisibility}}">
+     <ContentControl Content="{Binding HostContent}"/>
+     <TextBlock Text="内容尚未加载" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}" IsHitTestVisible="False" Visibility="{Binding IsHostContentMissing, Converter={StaticResource BoolVisibility}}"/>
+    </Grid>
+
+    <Border VerticalAlignment="Bottom" HorizontalAlignment="Left" Background="{DynamicResource Brush.Surface.Panel}" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" CornerRadius="5" Padding="8,5" Margin="0,0,0,4" Visibility="{Binding IsRenamingProject, Converter={StaticResource BoolVisibility}}">
+     <StackPanel Orientation="Horizontal">
+      <TextBox Width="180" Text="{Binding RenameProjectName, UpdateSourceTrigger=PropertyChanged}" Padding="6" Background="{DynamicResource Brush.Surface.Canvas}" Foreground="{DynamicResource Brush.Text.Primary}" KeyDown="OnRenameProjectKeyDown"/>
+      <Button Content="保存" Style="{StaticResource Shell.PrimaryButton}" Click="OnRenameProject" IsEnabled="{Binding CanSaveRenameProject}" Margin="8,0,0,0"/>
+      <Button Content="取消" Click="OnCancelRenameProject" Margin="8,0,0,0"/>
+     </StackPanel>
+    </Border>
+
+    <TextBlock Text="{Binding StatusMessage}" Foreground="{DynamicResource Brush.Status.Danger}" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="0,0,0,8"/>
+   </Grid>
+  </Grid>
+ </Grid>
+</UserControl>

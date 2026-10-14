@@ -2,6 +2,8 @@
 
 **v3 precedence:** read `WORKFLOW_V3.md` and `openapi-workflow-v3.json` first. They override overlapping project/import/image/search/scene/export rules below, including the obsolete 20 MiB upload limit. This file remains the baseline for unchanged DTO fields and legacy requests. `example-scene-v3.json` uses fictional data and illustrates preservation of all six legacy note columns and explicit multi-row origins.
 
+**Project-space update:** for current navigation and media semantics, read [`PROJECT_SPACE_V1.md`](PROJECT_SPACE_V1.md). Its project/personal-space model, row-folder mapping, aggregate media listing and soft-delete/restore behavior supersede this file's earlier project selector and simple image-detach assumptions. The endpoints below remain useful for unchanged workbook/review behavior.
+
 Additive v2 review routes and DTOs are defined in `REVIEWS.md` and `openapi-reviews.yaml`: good/bad votes per image, independent comments, author-only editing and asset-wide general discussion. Existing file/image endpoints below retain their wire format.
 
 `example-document.json` and `example-update-images.json` are shape examples with fictional IDs, not live data, seeded database records, or evidence of a successful request. The update illustrates selecting a candidate while keeping it in the candidate collection.

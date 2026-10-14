@@ -2,6 +2,8 @@
 
 本文件为本次前后端实现共同依据。仍是独立合并包，未接入宿主或运行。JSON snake_case，认证/ACL/错误格式/ID验证继续沿用。所有新增依赖缺失时明确503，不能假数据成功。
 
+**项目空间补充：**当前导航、项目/个人空间权限、资产行图片文件夹和回收站语义以[`PROJECT_SPACE_V1.md`](PROJECT_SPACE_V1.md)为准。此补充取代本文件中的旧“先选择项目”导航及“移除只解除表格引用”假设；节拍、评论、评价、修订、导出字段仍使用本文件的 v3 工作流契约。它仍是独立合并包，尚未接入宿主。
+
 ## 项目、修订、导入、导出
 
 Base `/api/v2/project-workbooks`。
@@ -33,14 +35,14 @@ ReviewComment追加 `resolved:bool, resolution_note:string|null, can_resolve:boo
 - 评论正文仅作者编辑删除；修改正文使已解决意见重新待处理，清除旧解决说明，避免新意见看似已落实；处理状态变化增长评论版本。投票仍好/不好/撤回，不等于最终选定，更不改变红黄绿。
 - 打开时取最新；v3.1去掉常驻刷新，失败时可重新加载，成功写入更新当前讨论。重新打开可查看其他成员的新意见。不宣称实时推送或跨设备已读状态。
 
-## 素材检索、版本、比较与选定历史
+## 素材检索、版本与关联
 
 ImageAsset追加 `project_id:string|null, category:string|null, variant:string|null, revision_label:string|null`。image id必须对应不可变字节版本，覆盖同路径需新id；名称不做身份。
 - GET `/image-assets?project_id=...&q=...&category=...&cursor=...&page_size=40` -> `{items:ImageAsset[],next_cursor:string|null}`；project_id必填于v3客户端，category可省略或角色/场景；q为名称/形态关键词，最多200字符；page_size 1–100，cursor不透明。结果按稳定顺序分页，授权过滤在分页前，不能把漏页称完整。旧无查询可兼容旧接口。
 - POST image-assets 带X-Project-Id，作为归属/可关联范围；服务器校验权限。若Host还未提供项目检索，返回503，不退回全库。
 - AssetRow追加 `variant:string|null, can_edit:bool`。每行是具体用途/形态，仍单张选定、多张备选。未知或尚未填形态允许null，不猜测。
-- PUT images原请求可加 `selection_reason:string|null` 最多4000字符；只在选定发生变化时记录事件。
-- GET `/{file_id}/asset-rows/{row_id}/selection-history` -> `{items:[{id,previous_image_id,image_id,user_name,created_at,reason}]}`，image_id及previous允许null；身份从会话获取。更换/清空都记录，候选增删不冒充选定变更；同事务权限检查、版本更新、历史落库。高票不自动选定。
+- 图片更新只提交 expected_version、selected_image_id 与 candidate_image_ids；移除选定图片直接清空该引用。接口不接收选定原因，不记录选定变化历史，也不提供历史查询接口。
+- 好/不好评价不自动决定选定；图片 ID 对应不可变版本，更换内容须新 ID。
 
 ## 有界流式传输
 
@@ -52,4 +54,4 @@ JSON请求64KiB（节拍更新允许256KiB以容纳20000字符），JSON响应25
 
 保持宿主主题与“项目”入口。只允许xlsx导入/两模板新建。顶部项目及集数切换、节拍搜索/等级筛选；v3.1正文默认全文显示，点击行看批注，保留上下文与六列来源批注。可编辑规划/等级、打开节拍讨论、查看并手工关联旧行。新建按钮简化为“新建节拍表”“新建资产表”，删除常驻刷新与首页拖入说明；失败恢复不等于常规刷新功能，不新增轮询或自动重试写请求。
 
-素材选择先显示当前页元数据，缩略图有限并发加载；搜索/类别过滤及加载下一页。资产行按需加载图，主表先出现；至少提供2–4图并排查看和放大。关联剧本/分镜仅作为宿主现有文件功能的接入说明，本包不增加DOCX转换或全能分镜编辑器。
+素材选择先显示当前页元数据，缩略图有限并发加载；搜索/类别过滤及加载下一页。资产行按需加载图，主表先出现；图片查看支持放大。关联剧本/分镜仅作为宿主现有文件功能的接入说明，本包不增加DOCX转换或全能分镜编辑器。

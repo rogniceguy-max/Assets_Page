@@ -409,10 +409,6 @@ class ProjectsApi:
                     raise invalid()
                 version = review_version(int(query["expected_version"][0]))
                 return stream_response(self._workflow().export_current(actor, parts[0], version), workbook=True)
-            if len(parts) == 4 and parts[1] == "asset-rows" and parts[3] == "selection-history" and method == "GET":
-                if query:
-                    raise invalid()
-                return json_response(200, {"items": self._workflow().selection_history(actor, parts[0], parts[2])})
             if len(parts) in (3, 4) and parts[1] == "scene-rows" and method == "PUT":
                 value = object_body(headers, body, SCENE_JSON_LIMIT)
                 if query:
@@ -429,11 +425,9 @@ class ProjectsApi:
                 raise invalid()
             if len(parts) == 4 and parts[1] == "asset-rows" and parts[3] == "images" and method == "PUT":
                 value = object_body(headers, body)
-                has_reason = "selection_reason" in value
-                reason = optional_text(value.pop("selection_reason", None), 4000)
-                if has_reason or self.workflow is not None:
+                if self.workflow is not None:
                     change = validate_image_change(value)
-                    return json_response(200, self._workflow().replace_images(actor, parts[0], parts[2], *change, reason))
+                    return json_response(200, self._workflow().replace_images(actor, parts[0], parts[2], *change))
                 change = validate_image_change(value)
                 return json_response(200, svc.replace_images(actor, parts[0], parts[2], *change))
         raise ApiFault(404, "NOT_FOUND", "接口不存在。")

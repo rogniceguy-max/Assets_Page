@@ -251,6 +251,43 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
         ImageType(mediaType); _ = Id(projectId);
         return UploadAsync<ImageAsset>("image-assets", fileName, mediaType, source, new Dictionary<string, string> { ["X-Project-Id"] = projectId }, ct);
     }
+    public Task<AssetRow> UploadImageToAssetRowAsync(string fileId, string rowId, string projectId,
+        string folderId, long expectedRowVersion, bool selected, string fileName, string mediaType,
+        Stream source, CancellationToken ct = default)
+    {
+        ImageType(mediaType); Version(expectedRowVersion);
+        _ = Id(projectId); _ = Id(folderId);
+        var headers = new Dictionary<string, string>
+        {
+            ["X-Project-Id"] = projectId,
+            ["X-Asset-Folder-Id"] = folderId,
+            ["X-Expected-Row-Version"] = expectedRowVersion.ToString(CultureInfo.InvariantCulture),
+            ["X-Asset-Image-Role"] = selected ? "selected" : "candidate"
+        };
+        // The endpoint stores the image in the row folder and updates the row atomically.
+        return UploadAsync<AssetRow>(RowRoute(fileId, rowId, "asset-rows") + "/images",
+            fileName, mediaType, source, headers, ct);
+    }
+    public Task<CreateAssetRowResult> CreateAssetRowAsync(string fileId, string sheetId,
+        CreateAssetRowRequest request, CancellationToken ct = default)
+    {
+        Version(request.ExpectedWorkbookVersion);
+        _ = Id(request.OperationId);
+        LimitedText(request.Category, 200, nonEmpty: true);
+        LimitedText(request.Name, 200, nonEmpty: true);
+        LimitedText(request.Variant, 200);
+        LimitedText(request.Appearance, 4000);
+        var route = $"{FileId(fileId)}/sheets/{Id(sheetId)}/asset-rows";
+        return ReadAsync<CreateAssetRowResult>(HttpMethod.Post, route, JsonBody(request), ct);
+    }
+    public Task<ArchiveAssetRowImageResult> ArchiveAssetRowImageAsync(string fileId, string rowId,
+        string imageId, long expectedRowVersion, CancellationToken ct = default)
+    {
+        Version(expectedRowVersion);
+        var route = RowRoute(fileId, rowId, "asset-rows") + "/images/" + Id(imageId) + "/trash";
+        return ReadAsync<ArchiveAssetRowImageResult>(HttpMethod.Post, route,
+            JsonBody(new { expected_version = expectedRowVersion }), ct);
+    }
     public Task<SceneRow> UpdateSceneAsync(string fileId, string rowId, UpdateSceneRequest request, CancellationToken ct = default)
     {
         Version(request.ExpectedVersion);
@@ -270,9 +307,6 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
         }
         return ReadAsync<SceneRow>(HttpMethod.Put, RowRoute(fileId, rowId, "scene-rows") + "/origins", JsonBody(request), ct);
     }
-    public Task<IReadOnlyList<SelectionHistoryEntry>> GetSelectionHistoryAsync(string fileId, string rowId, CancellationToken ct = default) =>
-        ListAsync<SelectionHistoryEntry>(RowRoute(fileId, rowId, "asset-rows") + "/selection-history", ct);
-
     public Task<WorkbookDocument> OpenAsync(string fileId, CancellationToken ct = default) => ReadAsync<WorkbookDocument>(HttpMethod.Get, FileId(fileId), null, ct);
     public async Task<byte[]> GetImageContentAsync(string assetId, bool thumbnail, CancellationToken ct = default)
     {
@@ -285,7 +319,7 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
     }
     public Task<AssetRow> UpdateImagesAsync(string fileId, string rowId, UpdateImagesRequest request, CancellationToken ct = default)
     {
-        Version(request.ExpectedVersion); LimitedText(request.SelectionReason, 4000);
+        Version(request.ExpectedVersion);
         if (request.SelectedImageId != null) _ = Id(request.SelectedImageId);
         if (request.CandidateImageIds == null || request.CandidateImageIds.Count > 100 || request.CandidateImageIds.Distinct(StringComparer.Ordinal).Count() != request.CandidateImageIds.Count)
             throw new InvalidDataException("备选图片需为最多 100 个唯一图片。");

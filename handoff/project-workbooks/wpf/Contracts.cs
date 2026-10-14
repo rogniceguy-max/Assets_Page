@@ -22,7 +22,14 @@ public sealed record AssetRow(string Id, long Version, string? Category, string?
 {
     public string? Variant { get; init; }
     public bool CanEdit { get; init; }
+    public ProjectSpaceAssetFolderRecord? ImageFolder { get; init; }
+    public long? WorkbookVersion { get; init; }
 }
+public sealed record CreateAssetRowRequest(long ExpectedWorkbookVersion, string OperationId,
+    string Category, string Name, string? Variant, string? Appearance);
+public sealed record CreateAssetRowResult(AssetRow Row, long WorkbookVersion);
+public sealed record ArchiveAssetRowImageResult(AssetRow Row, long WorkbookVersion,
+    ProjectSpaceRecycleBinRecord RecycleBinItem);
 public sealed record LegacyNote(string Label, string? Text, string? SourceCell);
 public sealed record SceneOrigin(string FileId, string RowId);
 public sealed record SceneRow(string Id, long Version, string? SceneNumber, string? BeatNumber,
@@ -39,12 +46,9 @@ public sealed record GenericRow(string Id, Dictionary<string, string?> Cells);
 public sealed record WorkbookSheet(string Id, string Name, string Kind, List<AssetRow> AssetRows,
     List<SceneRow> SceneRows, List<GenericColumn> Columns, List<GenericRow> GenericRows);
 public sealed record WorkbookDocument(ProjectFile File, List<WorkbookSheet> Sheets, string Fidelity, List<string> Notices);
-public sealed record UpdateImagesRequest(long ExpectedVersion, string? SelectedImageId, List<string> CandidateImageIds,
-    string? SelectionReason = null);
+public sealed record UpdateImagesRequest(long ExpectedVersion, string? SelectedImageId, List<string> CandidateImageIds);
 public sealed record UpdateSceneRequest(long ExpectedVersion, string? LabelLevel, string? BreakdownPlan);
 public sealed record UpdateSceneOriginsRequest(long ExpectedVersion, List<SceneOrigin> Origins);
-public sealed record SelectionHistoryEntry(string Id, string? PreviousImageId, string? ImageId,
-    string UserName, DateTimeOffset CreatedAt, string? Reason);
 public sealed record ReviewSummary(string? ImageId, int Good, int Bad, int CommentCount, string? MyVerdict);
 public sealed record ReviewComment(string Id, string UserId, string UserName, string Text, long Version,
     DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, bool CanEdit, bool CanDelete)
@@ -76,9 +80,15 @@ public interface IProjectWorkbookService
     Task<ImageSearchPage> SearchImagesAsync(string projectId, string? q = null, string? category = null,
         string? cursor = null, int pageSize = 40, CancellationToken ct = default);
     Task<ImageAsset> UploadProjectImageAsync(string projectId, string fileName, string mediaType, Stream source, CancellationToken ct = default);
+    Task<AssetRow> UploadImageToAssetRowAsync(string fileId, string rowId, string projectId,
+        string folderId, long expectedRowVersion, bool selected, string fileName, string mediaType,
+        Stream source, CancellationToken ct = default);
+    Task<CreateAssetRowResult> CreateAssetRowAsync(string fileId, string sheetId,
+        CreateAssetRowRequest request, CancellationToken ct = default);
+    Task<ArchiveAssetRowImageResult> ArchiveAssetRowImageAsync(string fileId, string rowId,
+        string imageId, long expectedRowVersion, CancellationToken ct = default);
     Task<SceneRow> UpdateSceneAsync(string fileId, string rowId, UpdateSceneRequest request, CancellationToken ct = default);
     Task<SceneRow> UpdateSceneOriginsAsync(string fileId, string rowId, UpdateSceneOriginsRequest request, CancellationToken ct = default);
-    Task<IReadOnlyList<SelectionHistoryEntry>> GetSelectionHistoryAsync(string fileId, string rowId, CancellationToken ct = default);
     Task<IReadOnlyList<ReviewSummary>> GetReviewSummariesForRowAsync(string fileId, string rowId, string rowKind, CancellationToken ct = default);
     Task<ReviewThread> GetReviewThreadForRowAsync(string fileId, string rowId, string rowKind, string? imageId, CancellationToken ct = default);
     Task<ReviewThread> AddCommentForRowAsync(string fileId, string rowId, string rowKind, AddReviewCommentRequest request, CancellationToken ct = default);

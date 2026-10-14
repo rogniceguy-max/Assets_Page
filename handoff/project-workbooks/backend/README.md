@@ -10,8 +10,8 @@
 |---|---|
 | projects_api.py | 全量v1/v2/v3分发、请求验证、鉴权入口、有界暂存上传与流式响应 |
 | workflow_services.py | v3宿主 Protocol、StreamAsset、同事务ExportTouch协议 |
-| workflow_store.py / workflow_schema.sql | 真实SQLite节拍规划/等级/来源事务、防环、幂等helper、选定历史schema |
-| image_relations.py / images_schema.sql | 原子选定/备选关系、版本检查、选定历史及export版本回调 |
+| workflow_store.py / workflow_schema.sql | 真实SQLite节拍规划/等级/来源事务、防环、幂等helper |
+| image_relations.py / images_schema.sql | 原子选定/备选关系、版本检查及export版本回调 |
 | review_store.py / reviews_v3_schema.sql | asset/scene隔离、单人单票、多评论、作者修改删除、独立处理权限与版本 |
 | migrate_reviews_v2_to_v3.sql | 仅针对此前独立包v2评价表的可选一次性迁移草案 |
 | reviews_schema.sql | v2旧schema留档；新装无需应用 |
@@ -42,7 +42,7 @@ if projects.handle(self):
 
 必须在原 `_read_json()` 之前接线，保留TLS、证书验证、session失效、socket/并发限制。Security.authenticate接收小写header键，从bearer得到可信principal；缺失/过期401。宿主已知错误转ApiFault，不能向客户端返回exception原文、token或路径。
 
-v2无query文件/素材列表与旧create JSON仍保留；新项目筛选不能退回全库。workflow已配置时，旧shape图片PUT也走workflow.replace_images，reason默认null，避免绕过历史和export版本。HTTP上传统一调用stream接口，v2缺项目头时传None，由宿主明确旧scope或报错，不猜默认管理员项目。
+v2无query文件/素材列表与旧create JSON仍保留；新项目筛选不能退回全库。workflow已配置时，旧shape图片PUT也走workflow.replace_images，确保同事务更新关系与export版本。图片关联不收集原因，也不保留选定历史。HTTP上传统一调用stream接口，v2缺项目头时传None，由宿主明确旧scope或报错，不猜默认管理员项目。
 
 dispatch(bytes)仅供已自行限流读取的宿主；v3 bytes上传包装BytesIO给stream adapter，不是大文件推荐入口。dispatch可能返回stream Response，发送者必须按length发送、保留headers并关闭stream；未知异常由调用者净化兜底。handle已提供这些处理。
 
@@ -69,7 +69,7 @@ dispatch(bytes)仅供已自行限流读取的宿主；v3 bytes上传包装BytesI
 | revisions | 同一真实修订链、权限过滤、可打开旧版；总表/单集不自动同链 |
 | export_current | expected_version一致、跨表完整快照；保留源sheet/未知列/原六列，写当前规划、图片及带目标/作者/时间的讨论表；未实现503绝不返回原件 |
 | update_scene / update_origins | 可委派SceneStore同名方法；源字段完整投影仍来自宿主 |
-| replace_images / selection_history | 可委派ImageRelations.replace/selection_history，同事务图关系/历史/export版本 |
+| replace_images | 可委派ImageRelations.replace，同事务更新图片关系与export版本 |
 
 路由不猜测/修补宿主DTO。adapter必须返回全部必需数组与新字段，安全URL段ID，文件ID不能取create/import/image-assets/projects，版本正整数；未知sheet/列要保留或明确不支持。原story_content只读；六个legacy_notes即便空也保留label/source_cell，不给旧批注冒认作者；scene/cast_context只从同场原文继承。
 
@@ -85,11 +85,11 @@ SceneStore(connect,access,origin_access,export_touch)。在成功导入/创建�
 
 只写红黄绿/null与≤20000Unicode字符规划，原文不改。最多100个唯一来源；同项目其他修订、真实行、可读取由OriginAccess验证。参考来源账本用递归查询+BEGIN IMMEDIATE防环；宿主若另有来源图，必须合并为同一权威图，不能只查半张图。来源只做关联，不复制评论，不用显示beat作主键。
 
-### 图片关系与选定历史
+### 图片关系
 
-ImageRelations(connect,row_access,image_access,principal,export_touch)。RowAccess返回category/name/appearance/variant/can_edit；ImageAccess现接收file_id,row_id,write关键字，写时检查目标项目可关联权，读历史仅验证旧不可变版本可见性；principal返回可信ReviewPrincipal。
+ImageRelations(connect,row_access,image_access,export_touch)。RowAccess返回category/name/appearance/variant/can_edit；ImageAccess接收file_id,row_id,write关键字，检查图片是否存在、可见且可关联。
 
-单选、多备选、expected_version冲突409。前后selected不同（含清空）才记用户/时间/前后图/reason；候选增删不冒充选定事件。图关系与历史和export version同事务。高票不自动选定；移除引用不删源图/历史讨论。
+单选、多备选、expected_version冲突409。选定与备选只保存当前关系，不记录选定原因或变化历史；候选增删不会改变选定。图片关系与export version同事务。高票不自动选定；移除引用不删源图或已有评论评价。
 
 ### 资产/节拍讨论与处理
 
@@ -111,4 +111,4 @@ helper不启停事务，不能回滚NAS写入。宿主须先验证/落不可变�
 
 ## 合并后待验证（本次没有执行）
 
-权限/跨项目/跨类型；64MiB流与真实25.7MiB图片、断连清理；完整31sheet、原六列、上下文；20k规划、版本冲突/来源环；同ID重试及内容冲突；修订不搬评论；评审与处理权限；选定历史原子性；导出版本冲突、真实完整xlsx、保存失败不截断已有目标。执行时机由用户与正在重构的AI协调。
+权限/跨项目/跨类型；64MiB流与真实25.7MiB图片、断连清理；完整31sheet、原六列、上下文；20k规划、版本冲突/来源环；同ID重试及内容冲突；修订不搬评论；评审与处理权限；图片引用原子替换；导出版本冲突、真实完整xlsx、保存失败不截断已有目标。执行时机由用户与正在重构的AI协调。

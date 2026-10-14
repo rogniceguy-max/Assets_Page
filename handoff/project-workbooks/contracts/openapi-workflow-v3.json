@@ -577,59 +577,7 @@
                                                                                                             }
                                                                                                         ]
                                                                                      },
-                  "/api/v2/project-workbooks/{file_id}/asset-rows/{row_id}/selection-history":  {
-                                                                                                    "get":  {
-                                                                                                                "operationId":  "selectionHistoryV3",
-                                                                                                                "parameters":  [
 
-                                                                                                                               ],
-                                                                                                                "responses":  {
-                                                                                                                                  "200":  {
-                                                                                                                                              "description":  "Authoritative result; requires host adapters and current ACL",
-                                                                                                                                              "content":  {
-                                                                                                                                                              "application/json":  {
-                                                                                                                                                                                       "schema":  {
-                                                                                                                                                                                                      "type":  "object",
-                                                                                                                                                                                                      "properties":  {
-                                                                                                                                                                                                                         "items":  {
-                                                                                                                                                                                                                                       "type":  "array",
-                                                                                                                                                                                                                                       "items":  {
-                                                                                                                                                                                                                                                     "$ref":  "#/components/schemas/SelectionEvent"
-                                                                                                                                                                                                                                                 }
-                                                                                                                                                                                                                                   }
-                                                                                                                                                                                                                     },
-                                                                                                                                                                                                      "required":  [
-                                                                                                                                                                                                                       "items"
-                                                                                                                                                                                                                   ],
-                                                                                                                                                                                                      "additionalProperties":  false
-                                                                                                                                                                                                  }
-                                                                                                                                                                                   }
-                                                                                                                                                          }
-                                                                                                                                          },
-                                                                                                                                  "default":  {
-                                                                                                                                                  "$ref":  "./openapi.yaml#/components/responses/Error"
-                                                                                                                                              }
-                                                                                                                              }
-                                                                                                            },
-                                                                                                    "parameters":  [
-                                                                                                                       {
-                                                                                                                           "name":  "file_id",
-                                                                                                                           "in":  "path",
-                                                                                                                           "required":  true,
-                                                                                                                           "schema":  {
-                                                                                                                                          "type":  "string"
-                                                                                                                                      }
-                                                                                                                       },
-                                                                                                                       {
-                                                                                                                           "name":  "row_id",
-                                                                                                                           "in":  "path",
-                                                                                                                           "required":  true,
-                                                                                                                           "schema":  {
-                                                                                                                                          "type":  "string"
-                                                                                                                                      }
-                                                                                                                       }
-                                                                                                                   ]
-                                                                                                },
                   "/api/v2/project-workbooks/{file_id}/scene-rows/{row_id}/review-summaries":  {
                                                                                                    "get":  {
                                                                                                                "operationId":  "SceneSummariesV3",
@@ -1601,48 +1549,7 @@
                                                                       ],
                                                          "additionalProperties":  false
                                                      },
-                                       "SelectionEvent":  {
-                                                              "type":  "object",
-                                                              "properties":  {
-                                                                                 "id":  {
-                                                                                            "type":  "string"
-                                                                                        },
-                                                                                 "previous_image_id":  {
-                                                                                                           "type":  [
-                                                                                                                        "string",
-                                                                                                                        "null"
-                                                                                                                    ]
-                                                                                                       },
-                                                                                 "image_id":  {
-                                                                                                  "type":  [
-                                                                                                               "string",
-                                                                                                               "null"
-                                                                                                           ]
-                                                                                              },
-                                                                                 "user_name":  {
-                                                                                                   "type":  "string"
-                                                                                               },
-                                                                                 "created_at":  {
-                                                                                                    "type":  "string",
-                                                                                                    "format":  "date-time"
-                                                                                                },
-                                                                                 "reason":  {
-                                                                                                "type":  [
-                                                                                                             "string",
-                                                                                                             "null"
-                                                                                                         ]
-                                                                                            }
-                                                                             },
-                                                              "required":  [
-                                                                               "id",
-                                                                               "previous_image_id",
-                                                                               "image_id",
-                                                                               "user_name",
-                                                                               "created_at",
-                                                                               "reason"
-                                                                           ],
-                                                              "additionalProperties":  false
-                                                          },
+
                                        "ReviewSummary":  {
                                                              "$ref":  "./openapi-reviews.yaml#/components/schemas/ReviewSummary"
                                                          },
@@ -1803,14 +1710,7 @@
                                                                                                                      },
                                                                                                            "maxItems":  100,
                                                                                                            "uniqueItems":  true
-                                                                                                       },
-                                                                               "selection_reason":  {
-                                                                                                        "type":  [
-                                                                                                                     "string",
-                                                                                                                     "null"
-                                                                                                                 ],
-                                                                                                        "maxLength":  4000
-                                                                                                    }
+                                                                                                       }
                                                                            },
                                                             "required":  [
                                                                              "expected_version",

@@ -73,7 +73,13 @@ public sealed class SheetItem(WorkbookSheet sheet)
 
 public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) : ObservableModel
 {
+    private sealed record PendingAssetRowCreate(string FileId, string SheetId, string ProjectId, CreateAssetRowRequest Request);
+    private PendingAssetRowCreate? _pendingAssetRowCreate;
+
     public IProjectWorkbookService Service { get; } = service;
+    public event Action<ProjectSpaceAssetFolderRecord>? AssetFolderCreated;
+    public event Action<ProjectSpaceRecycleBinRecord>? AssetImageArchived;
+    public event Action? BackToProjectRequested;
     public ObservableCollection<ProjectFile> Files { get; } = [];
     public ObservableCollection<ProjectInfo> Projects { get; } = [];
     private ProjectInfo? _selectedProject;
@@ -107,6 +113,8 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
     public PendingWorkbookOperation? PendingOperation { get; private set; }
     public string PendingText => PendingOperation == null ? "" : $"待确认：{PendingOperation.Description}。可继续重试这次操作。";
     public bool HasPendingOperation => PendingOperation != null;
+    public bool HasPendingAssetRowCreate => _pendingAssetRowCreate != null;
+    public bool CanCreateAssetRow => !HasPendingAssetRowCreate;
     public void SetPending(PendingWorkbookOperation? operation)
     {
         if (operation == null && PendingOperation != null) PendingWorkbookOperation.Remove(PendingOperation.Scope, PendingOperation.OperationId);
@@ -116,10 +124,20 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
     }
     public async Task InitializeAsync()
     {
+        var requestedProjectId = SelectedProject?.Id;
         var projects = await Service.ListProjectsAsync();
         Projects.Clear(); foreach (var project in projects) Projects.Add(project);
         PendingOperation = PendingWorkbookOperation.Load(Service.OperationScope); Changed(nameof(PendingText)); Changed(nameof(HasPendingOperation));
-        SelectedProject = Projects.FirstOrDefault(p => p.Id == PendingOperation?.ProjectId) ?? Projects.FirstOrDefault();
+        SelectedProject = Projects.FirstOrDefault(p => p.Id == requestedProjectId)
+            ?? Projects.FirstOrDefault(p => p.Id == PendingOperation?.ProjectId)
+            ?? Projects.FirstOrDefault();
+        await RefreshFilesAsync();
+    }
+
+    public async Task SelectProjectAsync(ProjectInfo project)
+    {
+        SelectedProject = Projects.FirstOrDefault(item => item.Id == project.Id) ?? project;
+        ClearDocument();
         await RefreshFilesAsync();
     }
 
@@ -156,7 +174,12 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         Sheets.Clear(); foreach (var sheet in sheets) Sheets.Add(sheet);
         SelectedSheet = Sheets.FirstOrDefault(s => s.IsScene || s.IsAsset) ?? Sheets.FirstOrDefault();
     }
-    public void Back() { Document = null; SelectedSheet = null; Sheets.Clear(); }
+    public void Back()
+    {
+        ClearDocument();
+        BackToProjectRequested?.Invoke();
+    }
+    private void ClearDocument() { Document = null; SelectedSheet = null; Sheets.Clear(); }
     public async Task<ImageItem> MakeImageAsync(ImageAsset image)
     {
         var item = new ImageItem(image, null); await EnsureThumbnailAsync(item); return item;
@@ -210,17 +233,138 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         finally { item.SummaryLoading = false; }
     }
     public void SceneChanged() => Changed(nameof(VisibleScenes));
-    public async Task UpdateImagesAsync(AssetRowItem item, string? selectedId, IEnumerable<string> candidateIds, string? reason = null)
+    public async Task UpdateImagesAsync(AssetRowItem item, string? selectedId, IEnumerable<string> candidateIds)
     {
-        if (Document == null || SelectedSheet == null) return;
+        var document = Document;
+        var sheet = SelectedSheet;
+        if (document == null || sheet == null) return;
         if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行图片的权限。");
         var ids = candidateIds.Distinct(StringComparer.Ordinal).ToList();
         if (ids.Count > 100) throw new InvalidDataException("每行最多保留 100 张备选图片。");
-        var sheet = SelectedSheet;
-        var updated = await Service.UpdateImagesAsync(Document.File.Id, item.Row.Id,
-            new UpdateImagesRequest(item.Row.Version, selectedId, ids, reason));
+        var updated = await Service.UpdateImagesAsync(document.File.Id, item.Row.Id,
+            new UpdateImagesRequest(item.Row.Version, selectedId, ids));
         // Replace only after server success. A conflict never mutates local references and never retries.
         var index = sheet.Assets.IndexOf(item);
         if (index >= 0) sheet.Assets[index] = MakeRow(updated);
+        if (Document is { } currentDocument && currentDocument.File.Id == document.File.Id &&
+            currentDocument.File.Version == document.File.Version && updated.WorkbookVersion is { } workbookVersion)
+            Document = currentDocument with { File = currentDocument.File with { Version = workbookVersion } };
     }
+
+    public async Task<CreateAssetRowResult> CreateAssetRowAsync(CreateAssetRowRequest request)
+    {
+        var document = Document;
+        var sheet = SelectedSheet;
+        if (document == null || sheet == null || !sheet.IsAsset)
+            throw new InvalidDataException("请先打开资产表。");
+        var projectId = document.File.ProjectId ?? SelectedProject?.Id
+            ?? throw new InvalidDataException("资产表没有关联项目。");
+        if (request.ExpectedWorkbookVersion != document.File.Version ||
+            !Guid.TryParseExact(request.OperationId, "N", out _) ||
+            string.IsNullOrWhiteSpace(request.Category) || request.Category.Length > 200 ||
+            string.IsNullOrWhiteSpace(request.Name) || request.Name.Length > 200 ||
+            (request.Variant?.Length ?? 0) > 200 || (request.Appearance?.Length ?? 0) > 4000)
+            throw new InvalidDataException("资产信息无效或工作簿已变更，请重新加载后重试。");
+        if (_pendingAssetRowCreate is { } pending)
+        {
+            if (pending.Request.OperationId != request.OperationId || pending.FileId != document.File.Id ||
+                pending.SheetId != sheet.Sheet.Id || pending.ProjectId != projectId)
+                throw new InvalidDataException("上次资产创建结果待确认，请先重试同一操作。");
+        }
+        else
+        {
+            _pendingAssetRowCreate = new PendingAssetRowCreate(document.File.Id, sheet.Sheet.Id, projectId, request);
+            Changed(nameof(HasPendingAssetRowCreate));
+            Changed(nameof(CanCreateAssetRow));
+        }
+
+        try
+        {
+            var result = await Service.CreateAssetRowAsync(document.File.Id, sheet.Sheet.Id, request);
+            if (result.WorkbookVersion < request.ExpectedWorkbookVersion)
+                throw new InvalidDataException("服务端返回的工作簿版本无效，请重新加载确认。");
+            if (result.Row.ImageFolder is not { } folder || folder.ProjectId != projectId || folder.AssetRowId != result.Row.Id)
+                throw new InvalidDataException("资产行已保存，但接口没有返回有效的图片文件夹映射；请重新加载项目树。");
+
+            var existingIndex = sheet.Assets.ToList().FindIndex(item => item.Row.Id == result.Row.Id);
+            if (existingIndex >= 0) sheet.Assets[existingIndex] = MakeRow(result.Row);
+            else sheet.Assets.Add(MakeRow(result.Row));
+            if (Document is { } currentDocument && currentDocument.File.Id == document.File.Id &&
+                currentDocument.File.Version == document.File.Version)
+                Document = currentDocument with { File = currentDocument.File with { Version = result.WorkbookVersion } };
+            _pendingAssetRowCreate = null;
+            Changed(nameof(HasPendingAssetRowCreate));
+            Changed(nameof(CanCreateAssetRow));
+            AssetFolderCreated?.Invoke(folder);
+            return result;
+        }
+        catch (WorkbookApiException ex) when (ex.StatusCode is >= 400 and < 500 and not 408)
+        {
+            // A definite client rejection did not create a row. Keep only outcomes that may be unknown.
+            _pendingAssetRowCreate = null;
+            Changed(nameof(HasPendingAssetRowCreate));
+            Changed(nameof(CanCreateAssetRow));
+            throw;
+        }
+    }
+
+    public Task<CreateAssetRowResult> RetryPendingAssetRowCreateAsync()
+    {
+        var pending = _pendingAssetRowCreate ?? throw new InvalidDataException("没有待确认的资产创建操作。");
+        if (Document?.File.Id != pending.FileId || SelectedSheet?.Sheet.Id != pending.SheetId)
+            throw new InvalidDataException("请重新打开原资产表，再重试这次操作。");
+        return CreateAssetRowAsync(pending.Request);
+    }
+
+    public async Task<ArchiveAssetRowImageResult> ArchiveAssetRowImageAsync(AssetRowItem item, ImageItem image)
+    {
+        var document = Document;
+        var sheet = SelectedSheet;
+        if (document == null || sheet == null)
+            throw new InvalidDataException("工作表已关闭，请重新打开后操作。");
+        if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行图片的权限。");
+
+        var result = await Service.ArchiveAssetRowImageAsync(
+            document.File.Id, item.Row.Id, image.Asset.Id, item.Row.Version);
+        if (result.WorkbookVersion < document.File.Version)
+            throw new InvalidDataException("服务端返回的工作簿版本无效，请重新加载确认。");
+
+        var index = sheet.Assets.IndexOf(item);
+        if (index >= 0) sheet.Assets[index] = MakeRow(result.Row);
+        if (Document is { } currentDocument && currentDocument.File.Id == document.File.Id &&
+            currentDocument.File.Version == document.File.Version)
+            Document = currentDocument with { File = currentDocument.File with { Version = result.WorkbookVersion } };
+        AssetImageArchived?.Invoke(result.RecycleBinItem);
+        return result;
+    }
+
+    public async Task<AssetRowItem> UploadImageToAssetRowAsync(AssetRowItem item, string path, bool selected)
+    {
+        var document = Document;
+        var sheet = SelectedSheet;
+        if (document == null || sheet == null || !sheet.Assets.Any(candidate => candidate.Row.Id == item.Row.Id))
+            throw new InvalidDataException("工作表已关闭，请重新打开后操作。");
+        if (item.Row.ImageFolder is not { } folder)
+            throw new InvalidDataException("此资产行尚未关联图片文件夹，请重新加载或检查服务端数据。");
+        if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行图片的权限。");
+
+        var projectId = document.File.ProjectId ?? SelectedProject?.Id
+            ?? throw new InvalidDataException("资产表没有关联项目。");
+        var mediaType = Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase)
+            ? "image/png" : "image/jpeg";
+        await using var source = File.OpenRead(path);
+        var updated = await Service.UploadImageToAssetRowAsync(
+            document.File.Id, item.Row.Id, projectId, folder.Id, item.Row.Version,
+            selected, Path.GetFileName(path), mediaType, source);
+        if (updated.WorkbookVersion is { } workbookVersion && workbookVersion < document.File.Version)
+            throw new InvalidDataException("服务端返回的工作簿版本无效，请重新加载确认。");
+        var replacement = MakeRow(updated);
+        var currentIndex = sheet.Assets.ToList().FindIndex(candidate => candidate.Row.Id == item.Row.Id);
+        if (currentIndex >= 0) sheet.Assets[currentIndex] = replacement;
+        if (Document is { } currentDocument && currentDocument.File.Id == document.File.Id &&
+            currentDocument.File.Version == document.File.Version && updated.WorkbookVersion is { } updatedWorkbookVersion)
+            Document = currentDocument with { File = currentDocument.File with { Version = updatedWorkbookVersion } };
+        return replacement;
+    }
+
 }

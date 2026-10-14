@@ -1,10 +1,20 @@
 # Merge acceptance checklist — not executed
 
+## Project space and navigation — not executed
+
+- Left navigation has exactly the global items 图片、视频、个人空间、传输、反馈 and a separate 项目 + group. Project creation allows a user-supplied name and rename; no department-specific spaces or project selector dropdown remain.
+- Creating a project atomically produces exactly 节拍表 and 资产表, and cards/tree show only the backend-confirmed workbook IDs. Failed or uncertain creation does not render a fake project.
+- Global 图片/视频 views show all shared-project media grouped by project. Project tree media nodes filter to that project; image folder nodes filter to their persisted folder ID. Global views do not silently upload to an arbitrary/default project.
+- Projects are readable/writable by all signed-in users. Personal space is visible/readable/writable only by its owner, enforced by server-side identity rather than a client-supplied user ID.
+- Creating an asset row returns a stable row/folder mapping and creates both atomically; the project navigation tree adds the folder only after confirmation. Dropping multiple candidates sends each image to that folder and updates the same row/media IDs.
+- Removing a candidate through the asset picker soft-hides it in the project recycle bin. Restore returns the same media ID to the original folder and preserves its comments and good/bad reviews; no physical deletion occurs.
+- `11 · 节拍工作表` contents are unchanged by this feature. Do not infer a beat-to-folder mapping.
+
 ## v3.1 UI acceptance — not executed in WPF
 
 - Long scene story/plan renders in full, including all line breaks; no 180/140-character preview clipping or expand button. Click a row or use Enter/Space to open its own notes. Clicking child actions never opens a second unintended window.
 - Opening row details exposes original notes first. Editing and discussion remain reachable; leaving an unsaved draft still prompts.
-- No routine refresh buttons, home drop-description sentence, or old long create-button labels. Create labels are 新建节拍表 and 新建资产表; actual xlsx import/drop restrictions remain.
+- No routine refresh buttons, home drop-description sentence, or duplicate template-create buttons. A project opens with its two default workbook cards; the project overview imports `.xlsx` by file picker or drop.
 - Error recovery remains available after load failures, 409 conflicts and uncertain mutation results. Recovery preserves drafts and requires explicit resubmission, with no automatic mutation retry or hidden version overwrite.
 
 ## v3 real-workflow regression — not executed
@@ -13,11 +23,12 @@
 - Each scene retains all six member-note labels and source cells, including blank values. Nonblank imported notes do not acquire a fabricated logged-in author. Imported original text and other worksheets/columns remain intact.
 - Save breakdown plan and red/yellow/green level with expected_version. Another member's edit must produce409 without discarding the user's draft. Original story text remains read-only; do not recompute manual difficulty from good/bad votes.
 - Link multiple source rows explicitly and inspect their original discussions; missing/unreadable/cross-project/self/cyclic links are rejected. Linking does not copy or merge comments. Asset and scene rows with the same ID remain isolated.
-- Create/import requires a selected project and operation ID. Unknown result can be retried explicitly with the same operation ID and identical bytes/metadata. Changed payload on the same key returns409. Repeated create/import cannot silently duplicate files.
+- Workbook import requires an explicit project ID and accepts only `.xlsx`; unknown result uses the same operation ID and identical bytes/metadata. Changed payload on the same key returns409. Asset-row creation is idempotent by actor/operation ID; a retry cannot create a duplicate row or folder.
 - Scene discussion requires no picture or vote. Resolved comments show resolution notes; body edits reopen them. A stale resolution request returns409; resolution permission does not grant editing someone else's text.
 - Search/select images within the selected project, by name/variant/category, with cursor paging. Next-page items remain reachable; a failed page is not treated as an empty final page. Metadata is visible before thumbnails finish; stale search results cannot replace a later search.
 - Real 26,910,388-byte 幽冥道.png fits the default64MiB upload limit. Validate actual contents; larger-than-limit/chunked/short-body inputs reject without allocating unbounded memory or publishing partial files. WebP previews stay WPF-decodable.
-- Compare2–4 images and zoom/pan; preserve aspect ratio and distinguish names/variants. Comparison does not mutate selections or votes. Selecting a candidate keeps candidates and records selection actor/time/previous/new image/reason atomically; candidates-only changes do not create false selection events.
+- In the picker, remove one linked image at a time into the recycle bin. There is no reason prompt, history screen/API, or selection-history storage. Removal clears the archived image from its asset row but keeps the source and all reviews/comments recoverable; restore returns the image to its original folder.
+- Select an existing candidate through the selected-image picker; retain its candidate reference and existing reviews/comments. Candidate-only changes leave the selected image unchanged. Image previews preserve aspect ratio; zoom/pan remains available in the full-image view.
 - Open table text before loading every image; switching project/file/sheet during async work cannot apply stale images/statistics to the new target. Verify real107-image sample interactively when running is allowed; static source review does not prove performance.
 - Export current workbook with expected snapshot version: saved plans, levels, legacy notes, pictures and review discussion must appear in the agreed workbook layout; unknown source sheets and columns remain. Missing exporter returns503, never the original disguised as current. Verify original download hash still matches original input.
 - Failed/cancelled download/export preserves any pre-existing destination and removes only its own temporary file. Byte limits and deadlines cover the full transfer. Host increments/invalidates file snapshot version for every export-affecting transaction.
@@ -28,14 +39,14 @@ The user prohibited running the application while another AI refactors it. No bu
 ## Compile and wiring
 
 - Build the isolated WPF class library using .NET 8 Windows, then build the host after integration. Resolve XAML bindings/resources and nullable/compiler diagnostics.
-- Navigation entry is after “其他部门”, not between “文件” and “传输”. Existing navigation, theme switching, and files continue working.
-- Host composes authenticated service, view model and view; page activation loads files. API route ownership and relative BaseAddress agree.
+- `ProjectSpaceShell` replaces department/project workspace grouping in the left nav without overwriting unrelated app shell code. Global nav, project tree, project cards, workbook content, host-owned personal-space/transfer/feedback and theme switching work together.
+- Host handles the shell's events through authenticated services; global-media responses are grouped by actual project. Workbook return-to-project, import and asset-folder-created events refresh the correct shell state.
 - Verify source byte validators, backend ACL/storage/template adapters and row image store have real implementations. No success response may be returned by a placeholder adapter.
 
 ## File and template flow
 
-- Drop one/multiple actual .xlsx files onto the project list; no conversion wizard; original filenames remain visible. Mixed non-xlsx input yields an explicit error and does not import silently as another type.
-- New menu has exactly the two approved templates. Each creates an actual empty xlsx, with all expected original template fields, not merely a JSON stub.
+- Drop one/multiple actual .xlsx files onto project overview; no conversion wizard; original filenames remain visible. Mixed non-xlsx input yields an explicit error and does not import silently as another type.
+- New project creates the two approved templates, with actual template fields, as part of the project transaction. No duplicate “new template” buttons appear in the project overview.
 - Original file bytes remain downloadable. Verify hash against uploaded bytes; distinguish original download from export of current image edits.
 - Open all worksheets, including extra/unrecognized sheets/columns. No data disappears when converting to business rows. values_only mode shows its concise notice.
 - Import corrupt ZIP, huge decompressed workbook, unsupported encrypted workbook: reject safely, retain any previously saved project state.
@@ -43,9 +54,9 @@ The user prohibited running the application while another AI refactors it. No bu
 ## Images and concurrency
 
 - Choose one backend image as selected; switch it; clear it; verify authoritative reload after each mutation.
-- Candidates: select/upload multiple, preserve order, remove one, set candidate as selected while retaining candidate reference.
+- Candidates: drag/drop one or more PNG/JPEG files onto the candidate column; store them in the row's persisted image folder and update the row in each confirmed upload. Remove one linked image from the picker through soft-delete and restore it to the original folder. Select an existing project image through the picker while retaining the same media object and review records.
 - Drop two images onto selected: reject explicitly without silently discarding one. Drop xlsx onto an image cell: do not trigger project import. Image-cell drops do not bubble to parent.
-- Image upload success followed by relationship failure leaves previous row relationships intact and displays a safe error. Retrying does not delete unrelated media.
+- Image upload and row/folder relation update are one backend operation with expected-row-version checks. An unknown result does not automatically resubmit; reload and reconcile before another upload.
 - Two clients read version N; first PUT returns N+1; second PUT at N returns 409 without overwriting.
 - A member cannot list/read/associate another member's unauthorized media or edit a read-only workbook. Authorization applies to original download, thumbnails, full images, and row mutations.
 - Session token expiry/refresh works for JSON and image requests. No external image URLs bypass the authenticated service.
@@ -62,7 +73,7 @@ The user prohibited running the application while another AI refactors it. No bu
 ## Persistence
 
 - Restart server and reload: file identities, sheet ordering, stable row IDs and image references persist.
-- Renaming/moving a workbook does not change row-media identity; deleting references never deletes source assets.
+- Renaming a project, workbook, asset row or folder does not change stable IDs. Soft deletion never physically removes source media or review records.
 - Compatibility migration from boolean/string selected/alternative fields is explicit; ambiguous values do not become guessed image IDs.
 
 ## v2 good/bad and comments — not executed

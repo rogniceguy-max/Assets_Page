@@ -58,7 +58,6 @@ internal static class WorkflowDialogs
         return window.ShowDialog() == true ? list.SelectedItems.Cast<ListBoxItem>().Select(item => (T)item.Tag).ToList() : null;
     }
 }
-
 // Image navigation is local to the preview; workbook layouts remain free of horizontal scrolling.
 public sealed class ZoomImageView : DockPanel
 {
@@ -83,24 +82,5 @@ public sealed class ZoomImageView : DockPanel
         _scroll.PreviewMouseMove += (_, e) => { if (_drag is { } start && e.LeftButton == MouseButtonState.Pressed) { var now = e.GetPosition(_scroll); _scroll.ScrollToHorizontalOffset(_startX + start.X - now.X); _scroll.ScrollToVerticalOffset(_startY + start.Y - now.Y); } };
         _scroll.PreviewMouseLeftButtonUp += (_, _) => { _drag = null; _scroll.ReleaseMouseCapture(); };
         _scroll.LostMouseCapture += (_, _) => _drag = null;
-    }
-}
-
-public sealed class CompareImagesWindow : Window
-{
-    public CompareImagesWindow(IProjectWorkbookService service, IReadOnlyList<ImageItem> images)
-    {
-        if (images.Count is < 2 or > 4) throw new ArgumentException("请选择 2–4 张图片比较。");
-        Title = "图片对比"; Width = 1200; Height = 740; WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        var grid = new Grid { Margin = new Thickness(16) }; Content = grid;
-        foreach (var image in images)
-        {
-            grid.ColumnDefinitions.Add(new ColumnDefinition());
-            var panel = new DockPanel { Margin = new Thickness(8) }; Grid.SetColumn(panel, grid.ColumnDefinitions.Count - 1); grid.Children.Add(panel);
-            var description = WorkflowDialogs.Text(image.Name + "\n" + image.Details + "\n" + image.SummaryText, 13); DockPanel.SetDock(description, Dock.Top); panel.Children.Add(description);
-            var preview = new ZoomImageView { Source = image.Preview }; panel.Children.Add(preview);
-            Loaded += async (_, _) => { try { preview.Source = ProjectWorkbooksViewModel.Decode(await service.GetImageContentAsync(image.Asset.Id, false)); }
-                catch { description.Text += "\n大图未能读取，可关闭后重新打开。"; } };
-        }
     }
 }
