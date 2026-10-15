@@ -57,43 +57,59 @@
      </ContextMenu>
     </Border.ContextMenu>
     <StackPanel>
-     <!-- Top Bar: 一行三列 (场景号 | 节拍号 | 制作难度)，完全不抢占下方面积 -->
-     <Grid Margin="12,8,12,8">
+     <!-- Top Bar: 一行三列平均分开 (场景号 | 节拍号 | 制作难度) -->
+     <Grid Margin="12,10,12,10">
       <Grid.ColumnDefinitions>
-       <ColumnDefinition Width="Auto"/>
        <ColumnDefinition Width="*"/>
-       <ColumnDefinition Width="Auto"/>
+       <ColumnDefinition Width="*"/>
+       <ColumnDefinition Width="*"/>
       </Grid.ColumnDefinitions>
-      <!-- 场景号 & 节拍号 -->
-      <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-       <TextBlock Text="场景" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}" FontSize="12" Margin="0,0,5,0"/>
-       <TextBox Text="{Binding SceneNumberDraft, UpdateSourceTrigger=PropertyChanged}"
-                LostFocus="OnSceneFieldLostFocus" KeyDown="OnSceneFieldKeyDown"
-                Width="36" HorizontalContentAlignment="Center"
-                Background="{DynamicResource Brush.Surface.Canvas}"
-                BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
-                Padding="2,2" Foreground="{DynamicResource Brush.Text.Primary}"
-                ToolTip="场景号（失焦或回车保存）" IsEnabled="{Binding Row.CanEdit}"/>
-       <TextBlock Text="-" VerticalAlignment="Center" Margin="6,0" Foreground="{DynamicResource Brush.Text.Secondary}"/>
-       <TextBlock Text="节拍" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}" FontSize="12" Margin="0,0,5,0"/>
-       <TextBox Text="{Binding BeatNumberDraft, UpdateSourceTrigger=PropertyChanged}"
-                LostFocus="OnSceneFieldLostFocus" KeyDown="OnSceneFieldKeyDown"
-                Width="36" HorizontalContentAlignment="Center"
-                Background="{DynamicResource Brush.Surface.Canvas}"
-                BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
-                Padding="2,2" Foreground="{DynamicResource Brush.Text.Primary}"
-                ToolTip="节拍号（失焦或回车保存）" IsEnabled="{Binding Row.CanEdit}"/>
-      </StackPanel>
 
-      <!-- 制作难度 (右侧) -->
-      <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-       <TextBlock Text="制作难度" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}" FontSize="12" Margin="0,0,6,0"/>
-       <ComboBox ItemsSource="{Binding DataContext.LevelFilters, RelativeSource={RelativeSource AncestorType=UserControl}}"
+      <!-- 1. 场景号 (占 1/3) -->
+      <Grid Grid.Column="0" Margin="0,0,16,0">
+       <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="*"/>
+       </Grid.ColumnDefinitions>
+       <TextBlock Text="场景号" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}" FontSize="12" Margin="0,0,8,0"/>
+       <TextBox Grid.Column="1" Text="{Binding SceneNumberDraft, UpdateSourceTrigger=PropertyChanged}"
+                LostFocus="OnSceneFieldLostFocus" KeyDown="OnSceneFieldKeyDown"
+                HorizontalAlignment="Stretch"
+                Background="{DynamicResource Brush.Surface.Canvas}"
+                BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
+                Padding="6,3" Foreground="{DynamicResource Brush.Text.Primary}"
+                ToolTip="场景号（失焦或回车保存）" IsEnabled="{Binding Row.CanEdit}"/>
+      </Grid>
+
+      <!-- 2. 节拍号 (占 1/3) -->
+      <Grid Grid.Column="1" Margin="8,0,8,0">
+       <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="*"/>
+       </Grid.ColumnDefinitions>
+       <TextBlock Text="节拍号" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}" FontSize="12" Margin="0,0,8,0"/>
+       <TextBox Grid.Column="1" Text="{Binding BeatNumberDraft, UpdateSourceTrigger=PropertyChanged}"
+                LostFocus="OnSceneFieldLostFocus" KeyDown="OnSceneFieldKeyDown"
+                HorizontalAlignment="Stretch"
+                Background="{DynamicResource Brush.Surface.Canvas}"
+                BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
+                Padding="6,3" Foreground="{DynamicResource Brush.Text.Primary}"
+                ToolTip="节拍号（失焦或回车保存）" IsEnabled="{Binding Row.CanEdit}"/>
+      </Grid>
+
+      <!-- 3. 制作难度 (占 1/3) -->
+      <Grid Grid.Column="2" Margin="16,0,0,0">
+       <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="*"/>
+       </Grid.ColumnDefinitions>
+       <TextBlock Text="制作难度" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}" FontSize="12" Margin="0,0,8,0"/>
+       <ComboBox Grid.Column="1" ItemsSource="{Binding DataContext.LevelFilters, RelativeSource={RelativeSource AncestorType=UserControl}}"
                  SelectedItem="{Binding LabelLevelDraft}"
                  SelectionChanged="OnSceneLevelSelectionChanged"
-                 Width="95" Padding="4,2"
+                 HorizontalAlignment="Stretch" Padding="6,3"
                  IsEnabled="{Binding Row.CanEdit}"/>
-      </StackPanel>
+      </Grid>
      </Grid>
      <Rectangle Height="1" Fill="{DynamicResource Brush.Border.Subtle}"/>
 
@@ -104,10 +120,10 @@
        <StackPanel>
         <TextBlock Text="故事内容" Style="{DynamicResource Typography.Caption}"/>
         <TextBox Text="{Binding StoryContentDraft, UpdateSourceTrigger=PropertyChanged}"
-                 TextWrapping="Wrap" AcceptsReturn="True" MinHeight="36"
+                 TextWrapping="Wrap" AcceptsReturn="True" MinHeight="44"
                  LostFocus="OnSceneFieldLostFocus" KeyDown="OnSceneFieldKeyDown"
                  Background="Transparent" BorderBrush="{DynamicResource Brush.Border.Subtle}"
-                 BorderThickness="0,0,0,1" Padding="2,4"
+                 BorderThickness="0,0,0,1" Padding="4,4"
                  Foreground="{DynamicResource Brush.Text.Primary}"
                  ToolTip="故事内容（回车换行，失焦自动保存）" IsEnabled="{Binding Row.CanEdit}"/>
        </StackPanel>
@@ -118,7 +134,7 @@
        <StackPanel VerticalAlignment="Top">
         <TextBlock Text="拆分规划" Style="{DynamicResource Typography.Caption}"/>
         <TextBlock Text="{Binding BreakdownPlanDraft}"
-                   TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" Margin="0,5,0,0">
+                   TextTrimming="CharacterEllipsis" TextWrapping="Wrap" MaxHeight="46" Margin="0,5,0,0">
          <TextBlock.Style>
           <Style TargetType="TextBlock">
            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
@@ -140,7 +156,7 @@
        <StackPanel VerticalAlignment="Top">
         <TextBlock Text="批注" Style="{DynamicResource Typography.Caption}"/>
         <TextBlock Text="{Binding NoteDraft}"
-                   TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" Margin="0,5,0,0">
+                   TextTrimming="CharacterEllipsis" TextWrapping="Wrap" MaxHeight="46" Margin="0,5,0,0">
          <TextBlock.Style>
           <Style TargetType="TextBlock">
            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
