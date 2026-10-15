@@ -27,6 +27,7 @@ public sealed record AssetRow(string Id, long Version, string? Category, string?
     public Dictionary<string, long> FieldVersions { get; init; } = [];
     public bool CanEdit { get; init; }
 }
+public sealed record VideoItem(string? Id, string Name, string? Path, string? Duration = null, string? ThumbUrl = null, string? DiscardedAt = null);
 public sealed record LegacyNote(string Label, string? Text, string? SourceCell);
 public sealed record SceneOrigin(string FileId, string RowId);
 public sealed record SceneRow(string Id, long Version, string? SceneNumber, string? BeatNumber,
@@ -38,6 +39,10 @@ public sealed record SceneRow(string Id, long Version, string? SceneNumber, stri
     public string? CastContext { get; init; }
     public List<SceneOrigin> Origins { get; init; } = [];
     public bool CanEdit { get; init; }
+    public string? Note { get; init; }
+    public VideoItem? Video { get; init; }
+    public VideoItem? FinalVideo { get; init; }
+    public List<VideoItem> DiscardedVideos { get; init; } = [];
 }
 public sealed record GenericColumn(string Key, string Label);
 public sealed record GenericRow(string Id, Dictionary<string, string?> Cells);
@@ -53,6 +58,20 @@ public sealed record UpdateSceneRequest(long ExpectedVersion, string? LabelLevel
 {
     public Dictionary<string, long>? ExpectedVersions { get; init; }
 }
+public sealed record UpdateSceneRowRequest(
+    long? ExpectedVersion = null,
+    Dictionary<string, long>? ExpectedVersions = null,
+    string? SceneNumber = null,
+    string? BeatNumber = null,
+    string? StoryContent = null,
+    string? LabelLevel = null,
+    string? BreakdownPlan = null,
+    string? Note = null,
+    string? VideoAction = null,
+    VideoItem? Video = null,
+    string? VideoId = null,
+    string? VideoName = null
+);
 public sealed record UpdateStoryContentRequest(long ExpectedVersion, string? StoryContent);
 public sealed record UpdateAssetRowRequest(long ExpectedVersion, string? Category, string? Name);
 public sealed record UpdateSceneOriginsRequest(long ExpectedVersion, List<SceneOrigin> Origins);
@@ -98,11 +117,13 @@ public interface IProjectWorkbookService
     Task<ImageAsset> RenameImageAsync(string imageId, long expectedVersion, string displayName, CancellationToken ct = default);
     Task<AddSheetResponse> AddSheetAsync(string fileId, string sheetName, CancellationToken ct = default);
     Task<ProjectFile> RenameWorkbookAsync(string fileId, long expectedNameVersion, string displayName, CancellationToken ct = default);
+    Task DeleteWorkbookAsync(string fileId, CancellationToken ct = default);
     Task RenameSheetAsync(string fileId, string sheetId, long expectedNameVersion, string displayName, CancellationToken ct = default);
     Task<SceneRow> CreateSceneRowAsync(string fileId, string sheetId, CancellationToken ct = default);
     Task<AssetRow> CreateAssetRowAsync(string fileId, string sheetId, CancellationToken ct = default);
     Task DeleteRowAsync(string fileId, string rowId, string rowKind, long expectedVersion, CancellationToken ct = default);
     Task<SceneRow> UpdateSceneAsync(string fileId, string rowId, UpdateSceneRequest request, CancellationToken ct = default);
+    Task<SceneRow> UpdateSceneRowAsync(string fileId, string rowId, UpdateSceneRowRequest request, CancellationToken ct = default);
     Task<SceneRow> UpdateStoryContentAsync(string fileId, string rowId, UpdateStoryContentRequest request, CancellationToken ct = default);
     Task<AssetRow> UpdateAssetRowAsync(string fileId, string rowId, UpdateAssetRowRequest request, CancellationToken ct = default);
     Task<SceneRow> UpdateSceneOriginsAsync(string fileId, string rowId, UpdateSceneOriginsRequest request, CancellationToken ct = default);

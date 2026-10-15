@@ -467,6 +467,11 @@ class ProjectsApi:
                 return self._review_route(actor, method, parts, parsed.query, headers, body)
             if len(parts) == 1 and method == "GET":
                 return json_response(200, svc.document(actor, parts[0]))
+            if len(parts) == 1 and method == "DELETE":
+                delete = getattr(self._workflow(), "delete_workbook", None)
+                if delete is None:
+                    raise ApiFault(503, "STORAGE_UNAVAILABLE", "工作簿删除尚未接入。")
+                return json_response(200, delete(actor, parts[0]))
             if len(parts) == 2 and parts[1] == "sheets" and method == "POST":
                 value = object_body(headers, body)
                 sheet_name = review_text(value.get("sheet_name"))
@@ -510,6 +515,12 @@ class ProjectsApi:
                     return json_response(200, self._workflow().update_scene(actor, parts[0], parts[2],
                         expected, value["label_level"],
                         optional_text(value["breakdown_plan"], 20000)))
+                if len(parts) == 3:
+                    expected = value.get("expected_versions", value.get("expected_version", 1))
+                    if isinstance(expected, int) and expected > 0:
+                        expected = review_version(expected)
+                    return json_response(200, self._workflow().update_scene_row(actor, parts[0], parts[2],
+                        expected, value))
                 if len(parts) == 4 and parts[3] == "story-content" and set(value) == {"expected_version", "story_content"}:
                     return json_response(200, self._workflow().update_story_content(actor, parts[0], parts[2],
                         review_version(value["expected_version"]), optional_text(value["story_content"], 20000)))

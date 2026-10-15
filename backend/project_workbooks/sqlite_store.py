@@ -490,6 +490,28 @@ class SqliteProjectWorkbookStore:
         sheet_name = "节拍表" if template_kind == "scene_beats" else "资产表"
         conn.execute("INSERT INTO sheets(id,workbook_id,display_name,kind,position) VALUES(?,?,?,?,0)",
                      (sheet_id, workbook_id, sheet_name, template_kind))
+        if template_kind == "scene_beats":
+            for i in range(1, 9):
+                row_id = _uid()
+                data = {
+                    "scene_number": "1",
+                    "beat_number": str(i),
+                    "story_content": "",
+                    "label_level": None,
+                    "breakdown_plan": None,
+                    "note": None,
+                    "video": None,
+                    "final_video": None,
+                    "discarded_videos": [],
+                    "scene_context": None,
+                    "cast_context": None,
+                    "origins": [],
+                }
+                field_versions = {key: 1 for key in data}
+                conn.execute(
+                    "INSERT INTO workbook_rows(id,sheet_id,kind,position,version,field_versions,data) VALUES(?,?,?,?,1,?,?)",
+                    (row_id, sheet_id, "scene_beats", i - 1, _json(field_versions), _json(data)),
+                )
         payload = {"id": workbook_id, "name": name, "template_kind": template_kind,
                    "version": 1, "name_version": 1, "project_id": project_id,
                    "revision_of": None, "revision_label": None}
@@ -651,6 +673,18 @@ class SqliteProjectWorkbookStore:
         self._signal_change()
         return {"ok": True, "id": row_id, "deleted_at": deleted_at}
 
+    def delete_workbook(self, actor: Any, file_id: str) -> dict[str, Any]:
+        with self._transaction() as conn:
+            workbook = conn.execute("SELECT id, project_id, display_name FROM workbooks WHERE id=?", (file_id,)).fetchone()
+            if workbook is None:
+                raise ApiFault(404, "NOT_FOUND", "工作簿不存在。")
+            conn.execute("DELETE FROM filesystem_operations WHERE workbook_id=?", (file_id,))
+            conn.execute("DELETE FROM legacy_imports WHERE workbook_id=?", (file_id,))
+            conn.execute("DELETE FROM workbooks WHERE id=?", (file_id,))
+            self._event_tx(conn, workbook["project_id"], file_id, "workbook", file_id, ["deleted"])
+        self._signal_change()
+        return {"ok": True, "id": file_id}
+
     def assert_active_row(self, file_id: str, row_id: str) -> None:
         with self._reading() as conn:
             row = conn.execute("""SELECT 1 FROM workbook_rows r JOIN sheets s ON s.id=r.sheet_id
@@ -669,8 +703,21 @@ class SqliteProjectWorkbookStore:
                                     (sheet_id,)).fetchone()["n"]
             row_id = _uid()
             if kind == "scene_beats":
-                data = {"scene_number": None, "beat_number": None, "story_content": "",
-                        "label_level": None, "breakdown_plan": None,
+                last_row = conn.execute(
+                    "SELECT data FROM workbook_rows WHERE sheet_id=? AND kind='scene_beats' AND deleted_at IS NULL ORDER BY position DESC LIMIT 1",
+                    (sheet_id,)).fetchone()
+                next_scene = "1"
+                next_beat = str(position + 1)
+                if last_row:
+                    last_data = _dict(last_row["data"])
+                    next_scene = str(last_data.get("scene_number") or "1")
+                    try:
+                        next_beat = str(int(last_data.get("beat_number") or 0) + 1)
+                    except Exception:
+                        next_beat = str(position + 1)
+                data = {"scene_number": next_scene, "beat_number": next_beat, "story_content": "",
+                        "label_level": None, "breakdown_plan": None, "note": None,
+                        "video": None, "final_video": None, "discarded_videos": [],
                         "scene_context": None, "cast_context": None, "origins": []}
                 field_versions = {key: 1 for key in data}
             else:
@@ -733,6 +780,10 @@ class SqliteProjectWorkbookStore:
                     item["can_edit"] = True
                     projected["asset_rows"].append(item)
                 elif stored["kind"] == "scene_beats":
+                    item.setdefault("note", None)
+                    item.setdefault("video", None)
+                    item.setdefault("final_video", None)
+                    item.setdefault("discarded_videos", [])
                     item["can_edit"] = True
                     projected["scene_rows"].append(item)
                 else:
@@ -979,6 +1030,114 @@ class SqliteProjectWorkbookStore:
                         "breakdown_plan": current_fields.get("breakdown_plan", 1)}
         return self._update_row(actor, file_id, row_id, versions,
             {"label_level": label_level, "breakdown_plan": breakdown_plan}, "scene_beats")
+
+    def update_scene_row(self, actor: Any, file_id: str, row_id: str,
+                         expected_version: Any, changes: Mapping[str, Any]) -> dict[str, Any]:
+        with self._transaction() as conn:
+            row = conn.execute("""SELECT r.*,s.workbook_id,w.project_id
+                FROM workbook_rows r JOIN sheets s ON s.id=r.sheet_id
+                JOIN workbooks w ON w.id=s.workbook_id
+                WHERE r.id=? AND s.workbook_id=? AND r.deleted_at IS NULL AND r.kind='scene_beats'""",
+                (row_id, file_id)).fetchone()
+            if row is None:
+                raise ApiFault(404, "NOT_FOUND", "节拍记录不存在。")
+            data = _dict(row["data"])
+            versions = _dict(row["field_versions"])
+            row_version = int(row["version"])
+
+            if isinstance(expected_version, Mapping):
+                for k, v in expected_version.items():
+                    if int(versions.get(k, 1)) != v:
+                        raise ApiFault(409, "CONFLICT", f"字段 {k} 已被其他人修改，请核对后再保存。")
+            elif isinstance(expected_version, int) and expected_version > 0 and expected_version != row_version:
+                pass
+
+            changed_keys = []
+            for field in ("scene_number", "beat_number", "story_content", "breakdown_plan", "label_level", "note"):
+                if field in changes:
+                    val = changes[field]
+                    if val != data.get(field):
+                        data[field] = val
+                        versions[field] = int(versions.get(field, 1)) + 1
+                        changed_keys.append(field)
+
+            video_action = changes.get("video_action")
+            if video_action == "attach":
+                new_video = changes.get("video")
+                old_video = data.get("video")
+                if old_video:
+                    discarded = list(data.get("discarded_videos") or [])
+                    old_copy = dict(old_video)
+                    old_copy["discarded_at"] = _now()
+                    discarded.append(old_copy)
+                    data["discarded_videos"] = discarded
+                    versions["discarded_videos"] = int(versions.get("discarded_videos", 1)) + 1
+                    changed_keys.append("discarded_videos")
+                data["video"] = new_video
+                versions["video"] = int(versions.get("video", 1)) + 1
+                changed_keys.append("video")
+            elif video_action == "set_final":
+                data["final_video"] = data.get("video")
+                versions["final_video"] = int(versions.get("final_video", 1)) + 1
+                changed_keys.append("final_video")
+            elif video_action == "unset_final":
+                data["final_video"] = None
+                versions["final_video"] = int(versions.get("final_video", 1)) + 1
+                changed_keys.append("final_video")
+            elif video_action == "discard":
+                old_video = data.get("video")
+                if old_video:
+                    discarded = list(data.get("discarded_videos") or [])
+                    old_copy = dict(old_video)
+                    old_copy["discarded_at"] = _now()
+                    discarded.append(old_copy)
+                    data["discarded_videos"] = discarded
+                    versions["discarded_videos"] = int(versions.get("discarded_videos", 1)) + 1
+                    changed_keys.append("discarded_videos")
+                data["video"] = None
+                versions["video"] = int(versions.get("video", 1)) + 1
+                changed_keys.append("video")
+                if data.get("final_video") and old_video and (
+                    data["final_video"].get("id") == old_video.get("id") or
+                    data["final_video"].get("name") == old_video.get("name")
+                ):
+                    data["final_video"] = None
+                    versions["final_video"] = int(versions.get("final_video", 1)) + 1
+                    changed_keys.append("final_video")
+            elif video_action == "restore":
+                video_id = changes.get("video_id")
+                video_name = changes.get("video_name")
+                discarded = list(data.get("discarded_videos") or [])
+                target_video = next((v for v in discarded if (video_id and v.get("id") == video_id) or (video_name and v.get("name") == video_name)), None)
+                if target_video:
+                    discarded = [v for v in discarded if v != target_video]
+                    cur_video = data.get("video")
+                    if cur_video:
+                        cur_copy = dict(cur_video)
+                        cur_copy["discarded_at"] = _now()
+                        discarded.append(cur_copy)
+                    data["discarded_videos"] = discarded
+                    restored_video = dict(target_video)
+                    restored_video.pop("discarded_at", None)
+                    data["video"] = restored_video
+                    versions["video"] = int(versions.get("video", 1)) + 1
+                    versions["discarded_videos"] = int(versions.get("discarded_videos", 1)) + 1
+                    changed_keys.extend(["video", "discarded_videos"])
+            elif "video" in changes:
+                data["video"] = changes["video"]
+                versions["video"] = int(versions.get("video", 1)) + 1
+                changed_keys.append("video")
+
+            if not changed_keys:
+                return self._scene_row_payload(file_id, row_id)
+
+            new_row_version = row_version + 1
+            conn.execute("UPDATE workbook_rows SET data=?,field_versions=?,version=? WHERE id=?",
+                         (_json(data), _json(versions), new_row_version, row_id))
+            conn.execute("UPDATE workbooks SET version=version+1,updated_at=? WHERE id=?", (_now(), file_id))
+            self._event_tx(conn, row["project_id"], file_id, "row", row_id, changed_keys)
+        self._signal_change()
+        return self._scene_row_payload(file_id, row_id)
 
     def update_asset_row(self, actor: Any, file_id: str, row_id: str, expected_version: int,
                          category: Any, name: Any) -> dict[str, Any]:

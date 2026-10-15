@@ -77,6 +77,23 @@ public partial class ProjectWorkbooksView : UserControl
         }
         return null;
     }
+    private static ProjectFileItem? FileItem(object sender)
+    {
+        if (sender is FrameworkElement { DataContext: ProjectFileItem directItem }) return directItem;
+        if (sender is MenuItem menuItem)
+        {
+            if (menuItem.DataContext is ProjectFileItem item) return item;
+            if (menuItem.Parent is ContextMenu { PlacementTarget: FrameworkElement target } && target.DataContext is ProjectFileItem targetItem)
+                return targetItem;
+        }
+        DependencyObject? current = sender as DependencyObject;
+        while (current != null)
+        {
+            if (current is FrameworkElement { DataContext: ProjectFileItem item }) return item;
+            current = VisualTreeHelper.GetParent(current);
+        }
+        return null;
+    }
     private static string[] Paths(DragEventArgs e) => e.Data.GetData(DataFormats.FileDrop) as string[] ?? [];
     private static bool IsWorkbook(string path) => string.Equals(Path.GetExtension(path), ".xlsx", StringComparison.OrdinalIgnoreCase);
     private static bool IsImage(string path) => Path.GetExtension(path).ToLowerInvariant() is ".png" or ".jpg" or ".jpeg";
@@ -140,7 +157,100 @@ public partial class ProjectWorkbooksView : UserControl
     }
     private async void OnOpenFile(object sender, RoutedEventArgs e)
     {
-        if (((FrameworkElement)sender).DataContext is ProjectFile file) await Model.ExecuteAsync(() => Model.OpenAsync(file));
+        var item = FileItem(sender);
+        if (item != null)
+        {
+            await Model.ExecuteAsync(() => Model.OpenAsync(item.File));
+            return;
+        }
+        if (((FrameworkElement)sender).DataContext is ProjectFile file)
+        {
+            await Model.ExecuteAsync(() => Model.OpenAsync(file));
+        }
+    }
+
+    private async void OnCardClick(object sender, MouseButtonEventArgs e)
+    {
+        if (FileItem(sender) is not { } item) return;
+        if (item.IsEditingName) return;
+        if (FromRowControl(e.OriginalSource as DependencyObject, (DependencyObject)sender)) return;
+        e.Handled = true;
+        await Model.ExecuteAsync(() => Model.OpenAsync(item.File));
+    }
+
+    private void OnCardKeyDown(object sender, KeyEventArgs e)
+    {
+        if (FileItem(sender) is not { } item) return;
+        if (item.IsEditingName) return;
+        if (e.Key == Key.F2)
+        {
+            e.Handled = true;
+            item.StartRename();
+            if (sender is DependencyObject container)
+            {
+                Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
+                {
+                    var tb = Descendants(container).OfType<TextBox>().FirstOrDefault();
+                    tb?.Focus();
+                    tb?.SelectAll();
+                }));
+            }
+        }
+        else if (e.Key is Key.Enter or Key.Space)
+        {
+            e.Handled = true;
+            _ = Model.ExecuteAsync(() => Model.OpenAsync(item.File));
+        }
+    }
+
+    private void OnStartRenameFile(object sender, RoutedEventArgs e)
+    {
+        var item = FileItem(sender);
+        if (item == null) return;
+        item.StartRename();
+        if (sender is MenuItem menuItem && menuItem.Parent is ContextMenu { PlacementTarget: DependencyObject container })
+        {
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
+            {
+                var tb = Descendants(container).OfType<TextBox>().FirstOrDefault();
+                tb?.Focus();
+                tb?.SelectAll();
+            }));
+        }
+    }
+
+    private async void OnCardRenameLostFocus(object sender, RoutedEventArgs e)
+    {
+        if (FileItem(sender) is not { } item) return;
+        if (!item.IsEditingName) return;
+        item.IsEditingName = false;
+        await Model.RenameWorkbookAsync(item, item.NameDraft);
+    }
+
+    private async void OnCardRenameKeyDown(object sender, KeyEventArgs e)
+    {
+        if (FileItem(sender) is not { } item) return;
+        if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+            item.IsEditingName = false;
+            await Model.RenameWorkbookAsync(item, item.NameDraft);
+        }
+        else if (e.Key == Key.Escape)
+        {
+            e.Handled = true;
+            item.CancelRename();
+        }
+    }
+
+    private async void OnDeleteWorkbookFromMenu(object sender, RoutedEventArgs e)
+    {
+        if (FileItem(sender) is not { } item) return;
+        if (MessageBox.Show(Window.GetWindow(this), $"确定要删除工作簿「{item.Name}」吗？\n删除后不可恢复。", "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+        await Model.DeleteWorkbookAsync(item);
     }
     private async void OnRefresh(object sender, RoutedEventArgs e) => await Model.ExecuteAsync(async () =>
     {
@@ -270,7 +380,7 @@ public partial class ProjectWorkbooksView : UserControl
         var pending = Model.PendingOperation ?? throw new InvalidDataException("没有待重试操作。");
         var file = await pending.SubmitAsync(Model.Service);
         Model.SetPending(null);
-        if (file.ProjectId == Model.SelectedProject?.Id && !Model.Files.Any(existing => existing.Id == file.Id)) Model.Files.Add(file);
+        if (file.ProjectId == Model.SelectedProject?.Id && !Model.Files.Any(existing => existing.Id == file.Id)) Model.Files.Add(new ProjectFileItem(file));
         Model.ProjectFilesChanged?.Invoke();
         return file;
     }
@@ -349,7 +459,23 @@ public partial class ProjectWorkbooksView : UserControl
             var window = new CompareImagesWindow(Model.Service, chosen) { Owner = Window.GetWindow(this) }; WorkflowDialogs.Theme(window, Resources); window.ShowDialog();
         });
     }
-    private static SceneRowItem? Scene(object sender) => (sender as FrameworkElement)?.DataContext as SceneRowItem;
+    private static SceneRowItem? Scene(object sender)
+    {
+        if (sender is FrameworkElement { DataContext: SceneRowItem directItem }) return directItem;
+        if (sender is MenuItem menuItem)
+        {
+            if (menuItem.DataContext is SceneRowItem item) return item;
+            if (menuItem.Parent is ContextMenu { PlacementTarget: FrameworkElement target } && target.DataContext is SceneRowItem targetItem)
+                return targetItem;
+        }
+        DependencyObject? current = sender as DependencyObject;
+        while (current != null)
+        {
+            if (current is FrameworkElement { DataContext: SceneRowItem item }) return item;
+            current = VisualTreeHelper.GetParent(current);
+        }
+        return null;
+    }
     private static bool FromRowControl(DependencyObject? source, DependencyObject row)
     {
         while (source != null && source != row)
@@ -494,6 +620,162 @@ public partial class ProjectWorkbooksView : UserControl
     {
         if (Scene(sender) is not { } row || Model.Document is not { } document) return;
         await Model.ExecuteAsync(() => { new SceneOriginsWindow(Model, document.File.Id, row, Resources) { Owner = Window.GetWindow(this) }.ShowDialog(); Model.SceneChanged(); return Task.CompletedTask; });
+    }
+
+    private void OnOverlayBackdropClick(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        TryLeaveDetailsPanel();
+    }
+
+    private async void OnAddSceneRow(object sender, RoutedEventArgs e)
+    {
+        if (Model.Document is not { } document || Model.SelectedSheet is not { IsScene: true }) return;
+        await Model.ExecuteAsync(Model.AddSceneRowAsync);
+    }
+
+    private async void OnDeleteSceneRow(object sender, RoutedEventArgs e)
+    {
+        if (Scene(sender) is not { } row || !row.Row.CanEdit) return;
+        var label = $"场景 {row.SceneNumberDraft} · 节拍 {row.BeatNumberDraft}";
+        if (MessageBox.Show(Window.GetWindow(this), $"确定要删除{label}这一行吗？", "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        if (_scenePanelItem != null && ReferenceEquals(_scenePanelItem, row))
+        {
+            HideScenePanel();
+        }
+
+        await Model.ExecuteAsync(() => Model.DeleteSceneRowAsync(row));
+    }
+
+    private async void OnSceneFieldLostFocus(object sender, RoutedEventArgs e)
+    {
+        if (Scene(sender) is not { } row) return;
+        await Model.ExecuteInlineAsync(() => Model.UpdateSceneFieldsAsync(row));
+    }
+
+    private async void OnSceneFieldKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        if (sender is TextBox { AcceptsReturn: true }) return;
+        if (Scene(sender) is not { } row) return;
+        e.Handled = true;
+        if (sender is UIElement ui) ui.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+        await Model.ExecuteInlineAsync(() => Model.UpdateSceneFieldsAsync(row));
+    }
+
+    private async void OnSceneLevelSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_loaded || Model.Busy) return;
+        if (Scene(sender) is not { } row) return;
+        await Model.ExecuteInlineAsync(() => Model.UpdateSceneFieldsAsync(row));
+    }
+
+    private void OnOpenSceneSidebar(object sender, RoutedEventArgs e)
+    {
+        OnSceneDetails(sender, e);
+    }
+
+    private static bool IsVideo(string path)
+    {
+        var ext = Path.GetExtension(path).ToLowerInvariant();
+        return ext is ".mp4" or ".mov" or ".mkv" or ".avi" or ".webm" or ".flv" or ".wmv";
+    }
+
+    private void OnVideoDragOver(object sender, DragEventArgs e)
+    {
+        if (Scene(sender) is { Row.CanEdit: true }) Drag(e, IsVideo);
+        else { e.Effects = DragDropEffects.None; e.Handled = true; }
+    }
+
+    private async void OnVideoDrop(object sender, DragEventArgs e)
+    {
+        e.Handled = true;
+        if (Scene(sender) is not { } row || !row.Row.CanEdit) return;
+        var paths = Paths(e);
+        if (paths.Length == 0 || paths.Any(p => !IsVideo(p)))
+        {
+            MessageBox.Show(Window.GetWindow(this), "请拖入视频文件（如 .mp4, .mov, .mkv 等）。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        var path = paths[0];
+        var videoItem = new VideoItem(
+            Id: Guid.NewGuid().ToString("D"),
+            Name: Path.GetFileName(path),
+            Path: path
+        );
+        await Model.UpdateSceneVideoAsync(row, "attach", videoItem);
+    }
+
+    private async void OnPickVideo(object sender, RoutedEventArgs e)
+    {
+        if (Scene(sender) is not { } row || !row.Row.CanEdit) return;
+        var picker = new OpenFileDialog
+        {
+            Title = "选择关联视频",
+            Filter = "视频文件 (*.mp4;*.mov;*.mkv;*.avi;*.webm)|*.mp4;*.mov;*.mkv;*.avi;*.webm|所有文件 (*.*)|*.*",
+            Multiselect = false
+        };
+        if (picker.ShowDialog(Window.GetWindow(this)) != true) return;
+        var path = picker.FileName;
+        var videoItem = new VideoItem(
+            Id: Guid.NewGuid().ToString("D"),
+            Name: Path.GetFileName(path),
+            Path: path
+        );
+        await Model.UpdateSceneVideoAsync(row, "attach", videoItem);
+    }
+
+    private async void OnSetFinalVideo(object sender, RoutedEventArgs e)
+    {
+        if (Scene(sender) is not { } row || !row.Row.CanEdit) return;
+        await Model.UpdateSceneVideoAsync(row, "set_final");
+    }
+
+    private async void OnUnsetFinalVideo(object sender, RoutedEventArgs e)
+    {
+        if (Scene(sender) is not { } row || !row.Row.CanEdit) return;
+        await Model.UpdateSceneVideoAsync(row, "unset_final");
+    }
+
+    private async void OnDiscardVideo(object sender, RoutedEventArgs e)
+    {
+        if (Scene(sender) is not { } row || !row.Row.CanEdit) return;
+        if (row.Video == null) return;
+        if (MessageBox.Show(Window.GetWindow(this), $"确定将视频「{row.Video.Name}」移入废片库吗？", "移入废片", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
+        await Model.UpdateSceneVideoAsync(row, "discard");
+    }
+
+    private async void OnOpenDiscardedVideos(object sender, RoutedEventArgs e)
+    {
+        if (Scene(sender) is not { } row) return;
+        if (row.DiscardedVideos.Count == 0)
+        {
+            MessageBox.Show(Window.GetWindow(this), "当前节拍没有已移入废片的视频。", "废片库", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var chosen = WorkflowDialogs.Choose(
+            Window.GetWindow(this),
+            Resources,
+            $"场景 {row.SceneNumberDraft} · 节拍 {row.BeatNumberDraft} 废片库",
+            row.DiscardedVideos.ToList(),
+            v => $"{v.Name}\n废弃时间：{v.DiscardedAt ?? "未知"}\n路径：{v.Path ?? "未记录"}",
+            false
+        );
+
+        if (chosen?.Count == 1 && row.Row.CanEdit)
+        {
+            var target = chosen[0];
+            if (MessageBox.Show(Window.GetWindow(this), $"要恢复视频「{target.Name}」为当前关联视频吗？\n当前的关联视频将被移入废片。", "恢复视频", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+            {
+                await Model.UpdateSceneVideoAsync(row, "restore", videoId: target.Id, videoName: target.Name);
+            }
+        }
     }
     private bool _viewportScheduled;
     private void OnWorkbookScroll(object sender, ScrollChangedEventArgs e) => ScheduleViewport();

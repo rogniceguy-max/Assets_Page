@@ -124,42 +124,151 @@ public sealed class AssetRowItem(AssetRow row, ImageItem? selected, IReadOnlyLis
         Changed(nameof(ReviewSnippetText));
     }
 }
+public sealed class ProjectFileItem : ObservableModel
+{
+    private ProjectFile _file;
+    public ProjectFile File { get => _file; private set { _file = value; Changed(); } }
+    public string Id => File.Id;
+    public string Name => File.Name;
+    public string TemplateKind => File.TemplateKind;
+    public long Version => File.Version;
+    public long NameVersion => File.NameVersion;
+
+    private string _nameDraft;
+    public string NameDraft { get => _nameDraft; set { _nameDraft = value; Changed(); } }
+
+    private bool _isEditingName;
+    public bool IsEditingName { get => _isEditingName; set { _isEditingName = value; Changed(); } }
+
+    public ProjectFileItem(ProjectFile file)
+    {
+        _file = file;
+        _nameDraft = file.Name;
+    }
+
+    public void UpdateFile(ProjectFile file)
+    {
+        File = file;
+        if (!IsEditingName) NameDraft = file.Name;
+        Changed(nameof(Name));
+        Changed(nameof(Version));
+        Changed(nameof(NameVersion));
+    }
+
+    public void StartRename()
+    {
+        NameDraft = File.Name;
+        IsEditingName = true;
+    }
+
+    public void CancelRename()
+    {
+        NameDraft = File.Name;
+        IsEditingName = false;
+    }
+}
+
 public sealed class SceneRowItem(SceneRow row) : ObservableModel
 {
     private SceneRow _row = row;
-    private long _storyExpectedVersion = row.FieldVersions.GetValueOrDefault("story_content", row.Version);
-    public long StoryExpectedVersion => _storyExpectedVersion;
     public SceneRow Row
     {
         get => _row;
         set
         {
             _row = value;
-            _storyExpectedVersion = value.FieldVersions.GetValueOrDefault("story_content", value.Version);
-            StoryContentDraft = value.StoryContent;
-            Changed(); Changed(nameof(StoryPreview)); Changed(nameof(PlanPreview));
+            _sceneNumberDraft = value.SceneNumber;
+            _beatNumberDraft = value.BeatNumber;
+            _storyContentDraft = value.StoryContent;
+            _breakdownPlanDraft = value.BreakdownPlan;
+            _noteDraft = value.Note;
+            _labelLevelDraft = value.LabelLevel ?? "未标注";
+            Changed();
+            Changed(nameof(StoryPreview));
+            Changed(nameof(PlanPreview));
+            Changed(nameof(NotePreview));
+            Changed(nameof(Video));
+            Changed(nameof(FinalVideo));
+            Changed(nameof(DiscardedVideos));
+            Changed(nameof(HasVideo));
+            Changed(nameof(IsFinal));
+            Changed(nameof(DiscardedCount));
+            Changed(nameof(HasDiscarded));
+            Changed(nameof(VideoDisplayName));
+            Changed(nameof(FinalBadgeText));
         }
     }
+
+    public long StoryExpectedVersion => Row.FieldVersions.GetValueOrDefault("story_content", Row.Version);
+
+    private string? _sceneNumberDraft = row.SceneNumber;
+    public string? SceneNumberDraft { get => _sceneNumberDraft; set { _sceneNumberDraft = value; Changed(); } }
+
+    private string? _beatNumberDraft = row.BeatNumber;
+    public string? BeatNumberDraft { get => _beatNumberDraft; set { _beatNumberDraft = value; Changed(); } }
+
     private string? _storyContentDraft = row.StoryContent;
     public string? StoryContentDraft { get => _storyContentDraft; set { _storyContentDraft = value; Changed(); } }
+
+    private string? _breakdownPlanDraft = row.BreakdownPlan;
+    public string? BreakdownPlanDraft { get => _breakdownPlanDraft; set { _breakdownPlanDraft = value; Changed(); } }
+
+    private string? _noteDraft = row.Note;
+    public string? NoteDraft { get => _noteDraft; set { _noteDraft = value; Changed(); } }
+
+    private string _labelLevelDraft = row.LabelLevel ?? "未标注";
+    public string LabelLevelDraft { get => _labelLevelDraft; set { _labelLevelDraft = value; Changed(); } }
+
+    public VideoItem? Video => Row.Video;
+    public VideoItem? FinalVideo => Row.FinalVideo;
+    public IReadOnlyList<VideoItem> DiscardedVideos => Row.DiscardedVideos;
+
+    public bool HasVideo => Video != null;
+    public bool IsFinal => FinalVideo != null && Video != null &&
+        (FinalVideo.Id == Video.Id || FinalVideo.Name == Video.Name);
+    public int DiscardedCount => Row.DiscardedVideos.Count;
+    public bool HasDiscarded => DiscardedCount > 0;
+
+    public string VideoDisplayName => Video?.Name ?? "未关联视频";
+    public string FinalBadgeText => IsFinal ? "成片" : "素材";
+
     private bool _isSaving;
     public bool IsSaving { get => _isSaving; internal set { _isSaving = value; Changed(); } }
+
     public string StoryPreview => Row.StoryContent ?? "";
     public string PlanPreview => Row.BreakdownPlan ?? "";
+    public string NotePreview => Row.Note ?? "";
+
     public void ApplyRemote(SceneRow row)
     {
-        var draft = StoryContentDraft;
-        var dirty = !string.Equals(draft, Row.StoryContent, StringComparison.Ordinal);
-        var storyChanged = !string.Equals(row.StoryContent, Row.StoryContent, StringComparison.Ordinal);
         _row = row;
-        if (!dirty || !storyChanged)
-        {
-            _storyExpectedVersion = row.FieldVersions.GetValueOrDefault("story_content", row.Version);
-            StoryContentDraft = dirty ? draft : row.StoryContent;
-        }
-        else StoryContentDraft = draft;
-        Changed(nameof(Row)); Changed(nameof(StoryPreview)); Changed(nameof(PlanPreview));
+        _sceneNumberDraft = row.SceneNumber;
+        _beatNumberDraft = row.BeatNumber;
+        _storyContentDraft = row.StoryContent;
+        _breakdownPlanDraft = row.BreakdownPlan;
+        _noteDraft = row.Note;
+        _labelLevelDraft = row.LabelLevel ?? "未标注";
+        Changed(nameof(Row));
+        Changed(nameof(SceneNumberDraft));
+        Changed(nameof(BeatNumberDraft));
+        Changed(nameof(StoryContentDraft));
+        Changed(nameof(BreakdownPlanDraft));
+        Changed(nameof(NoteDraft));
+        Changed(nameof(LabelLevelDraft));
+        Changed(nameof(StoryPreview));
+        Changed(nameof(PlanPreview));
+        Changed(nameof(NotePreview));
+        Changed(nameof(Video));
+        Changed(nameof(FinalVideo));
+        Changed(nameof(DiscardedVideos));
+        Changed(nameof(HasVideo));
+        Changed(nameof(IsFinal));
+        Changed(nameof(DiscardedCount));
+        Changed(nameof(HasDiscarded));
+        Changed(nameof(VideoDisplayName));
+        Changed(nameof(FinalBadgeText));
     }
+
     private string _discussionText = "讨论 ?";
     public string DiscussionText { get => _discussionText; set { _discussionText = value; Changed(); } }
     internal bool SummaryLoaded { get; set; }
@@ -206,7 +315,7 @@ public sealed class SheetItem(WorkbookSheet sheet)
 public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) : ObservableModel
 {
     public IProjectWorkbookService Service { get; } = service;
-    public ObservableCollection<ProjectFile> Files { get; } = [];
+    public ObservableCollection<ProjectFileItem> Files { get; } = [];
     public ObservableCollection<ProjectInfo> Projects { get; } = [];
     private ProjectInfo? _selectedProject;
     public ProjectInfo? SelectedProject
@@ -242,7 +351,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
     public IEnumerable<SceneRowItem> VisibleScenes => (SelectedSheet?.Scenes.AsEnumerable() ?? []).Where(item =>
         (LevelFilter == "全部等级" || (LevelFilter == "未标注" ? string.IsNullOrWhiteSpace(item.Row.LabelLevel) : item.Row.LabelLevel == LevelFilter)) &&
         (string.IsNullOrWhiteSpace(Search) || string.Join(" ", item.Row.SceneNumber, item.Row.BeatNumber, item.Row.StoryContent,
-            item.Row.BreakdownPlan, item.Row.SceneContext, item.Row.CastContext).Contains(Search, StringComparison.OrdinalIgnoreCase)));
+            item.Row.BreakdownPlan, item.Row.Note, item.Row.Video?.Name, item.Row.SceneContext, item.Row.CastContext).Contains(Search, StringComparison.OrdinalIgnoreCase)));
     public IEnumerable<AssetRowItem> VisibleAssets => (SelectedSheet?.Assets.AsEnumerable() ?? []).Where(item =>
         string.IsNullOrWhiteSpace(Search) ||
         string.Join(" ", item.Row.Category, item.Row.Name, item.Row.Variant, item.Row.Appearance).Contains(Search, StringComparison.OrdinalIgnoreCase));
@@ -298,7 +407,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
     {
         if (SelectedProject == null) { Files.Clear(); return; }
         var files = await Service.ListProjectFilesAsync(SelectedProject.Id);
-        Files.Clear(); foreach (var file in files) Files.Add(file);
+        Files.Clear(); foreach (var file in files) Files.Add(new ProjectFileItem(file));
     }
     /// <summary>
     /// Asked before the open workbook is replaced or closed, and answers whether that is
@@ -314,6 +423,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
     public Action? ProjectFilesChanged { get; set; }
     public event Action<ImageAsset>? ProjectImageChanged;
 
+    public Task OpenAsync(ProjectFileItem item) => OpenAsync(item.File);
     public async Task OpenAsync(ProjectFile file)
     {
         if (ConfirmLeaving?.Invoke() == false) return;
@@ -435,7 +545,18 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
     private async Task RefreshProjectFilesFromEventAsync(string projectId, CancellationToken ct)
     {
         var files = await Service.ListProjectFilesAsync(projectId, ct);
-        Files.Clear(); foreach (var file in files) Files.Add(file);
+        var editingDrafts = Files.Where(f => f.IsEditingName).ToDictionary(f => f.Id, f => f.NameDraft);
+        Files.Clear();
+        foreach (var file in files)
+        {
+            var item = new ProjectFileItem(file);
+            if (editingDrafts.TryGetValue(file.Id, out var draft))
+            {
+                item.IsEditingName = true;
+                item.NameDraft = draft;
+            }
+            Files.Add(item);
+        }
         ProjectFilesChanged?.Invoke();
     }
 
@@ -549,7 +670,9 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         var sheet = SelectedSheet;
         if (Document == null || sheet == null || !sheet.IsScene) return;
         var row = await Service.CreateSceneRowAsync(Document.File.Id, sheet.Sheet.Id);
-        sheet.Scenes.Add(new SceneRowItem(row));
+        var item = new SceneRowItem(row);
+        sheet.Scenes.Add(item);
+        item.ResolveLinkedAssets(ProjectAssets);
         SceneChanged();
     }
 
@@ -735,5 +858,96 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
             AssetChanged();
         }
         finally { item.IsSaving = false; }
+    }
+
+    public async Task RenameWorkbookAsync(ProjectFileItem item, string newName)
+    {
+        var trimmed = newName?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(trimmed) || string.Equals(trimmed, item.Name, StringComparison.Ordinal))
+        {
+            item.CancelRename();
+            return;
+        }
+
+        await ExecuteAsync(async () =>
+        {
+            var updated = await Service.RenameWorkbookAsync(item.Id, item.NameVersion, trimmed);
+            item.UpdateFile(updated);
+            if (Document?.File.Id == item.Id)
+            {
+                Document = Document with { File = updated };
+            }
+        });
+    }
+
+    public async Task DeleteWorkbookAsync(ProjectFileItem item)
+    {
+        await ExecuteAsync(async () =>
+        {
+            await Service.DeleteWorkbookAsync(item.Id);
+            Files.Remove(item);
+            if (Document?.File.Id == item.Id)
+            {
+                Document = null;
+            }
+        });
+    }
+
+    public async Task UpdateSceneFieldsAsync(SceneRowItem item)
+    {
+        if (Document == null) return;
+        if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行的权限。");
+        var sceneChanged = !string.Equals(item.SceneNumberDraft, item.Row.SceneNumber, StringComparison.Ordinal);
+        var beatChanged = !string.Equals(item.BeatNumberDraft, item.Row.BeatNumber, StringComparison.Ordinal);
+        var storyChanged = !string.Equals(item.StoryContentDraft, item.Row.StoryContent, StringComparison.Ordinal);
+        var planChanged = !string.Equals(item.BreakdownPlanDraft, item.Row.BreakdownPlan, StringComparison.Ordinal);
+        var noteChanged = !string.Equals(item.NoteDraft, item.Row.Note, StringComparison.Ordinal);
+        var level = item.LabelLevelDraft == "未标注" ? null : item.LabelLevelDraft;
+        var levelChanged = !string.Equals(level, item.Row.LabelLevel, StringComparison.Ordinal);
+
+        if (!sceneChanged && !beatChanged && !storyChanged && !planChanged && !noteChanged && !levelChanged)
+            return;
+
+        if (item.IsSaving) return;
+        item.IsSaving = true;
+        try
+        {
+            var req = new UpdateSceneRowRequest(
+                ExpectedVersion: item.Row.Version,
+                SceneNumber: item.SceneNumberDraft,
+                BeatNumber: item.BeatNumberDraft,
+                StoryContent: item.StoryContentDraft,
+                BreakdownPlan: item.BreakdownPlanDraft,
+                Note: item.NoteDraft,
+                LabelLevel: level
+            );
+            var updated = await Service.UpdateSceneRowAsync(Document.File.Id, item.Row.Id, req);
+            item.ApplyRemote(updated);
+            item.ResolveLinkedAssets(ProjectAssets);
+            SceneChanged();
+        }
+        finally
+        {
+            item.IsSaving = false;
+        }
+    }
+
+    public async Task UpdateSceneVideoAsync(SceneRowItem item, string action, VideoItem? video = null, string? videoId = null, string? videoName = null)
+    {
+        if (Document == null) return;
+        if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行的权限。");
+        await ExecuteAsync(async () =>
+        {
+            var req = new UpdateSceneRowRequest(
+                ExpectedVersion: item.Row.Version,
+                VideoAction: action,
+                Video: video,
+                VideoId: videoId,
+                VideoName: videoName
+            );
+            var updated = await Service.UpdateSceneRowAsync(Document.File.Id, item.Row.Id, req);
+            item.ApplyRemote(updated);
+            SceneChanged();
+        });
     }
 }

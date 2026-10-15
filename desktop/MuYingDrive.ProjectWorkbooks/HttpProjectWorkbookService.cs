@@ -331,6 +331,10 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
         return ReadAsync<ProjectFile>(HttpMethod.Put, FileId(fileId) + "/name",
             JsonBody(new { expected_name_version = expectedNameVersion, display_name = displayName }), ct);
     }
+    public async Task DeleteWorkbookAsync(string fileId, CancellationToken ct = default)
+    {
+        await ReadAsync<JsonElement>(HttpMethod.Delete, FileId(fileId), null, ct);
+    }
     public Task RenameSheetAsync(string fileId, string sheetId, long expectedNameVersion, string displayName, CancellationToken ct = default)
     {
         _ = Id(sheetId); Version(expectedNameVersion); LimitedText(displayName, 31, nonEmpty: true);
@@ -353,6 +357,24 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
         if (request.LabelLevel is not (null or "红" or "黄" or "绿")) throw new InvalidDataException("等级仅允许红、黄、绿或空。");
         LimitedText(request.BreakdownPlan, 20000);
         return ReadAsync<SceneRow>(HttpMethod.Put, RowRoute(fileId, rowId, "scene-rows"), JsonBody(request, 256 * 1024), ct);
+    }
+    public Task<SceneRow> UpdateSceneRowAsync(string fileId, string rowId, UpdateSceneRowRequest request, CancellationToken ct = default)
+    {
+        var dict = new Dictionary<string, object?>();
+        if (request.ExpectedVersions != null) dict["expected_versions"] = request.ExpectedVersions;
+        else if (request.ExpectedVersion.HasValue) dict["expected_version"] = request.ExpectedVersion.Value;
+        if (request.SceneNumber != null) dict["scene_number"] = request.SceneNumber;
+        if (request.BeatNumber != null) dict["beat_number"] = request.BeatNumber;
+        if (request.StoryContent != null) dict["story_content"] = request.StoryContent;
+        if (request.LabelLevel != null) dict["label_level"] = request.LabelLevel;
+        if (request.BreakdownPlan != null) dict["breakdown_plan"] = request.BreakdownPlan;
+        if (request.Note != null) dict["note"] = request.Note;
+        if (request.VideoAction != null) dict["video_action"] = request.VideoAction;
+        if (request.Video != null) dict["video"] = request.Video;
+        if (request.VideoId != null) dict["video_id"] = request.VideoId;
+        if (request.VideoName != null) dict["video_name"] = request.VideoName;
+
+        return ReadAsync<SceneRow>(HttpMethod.Put, RowRoute(fileId, rowId, "scene-rows"), JsonBody(dict, 256 * 1024), ct);
     }
     public Task<SceneRow> UpdateStoryContentAsync(string fileId, string rowId, UpdateStoryContentRequest request, CancellationToken ct = default)
     {

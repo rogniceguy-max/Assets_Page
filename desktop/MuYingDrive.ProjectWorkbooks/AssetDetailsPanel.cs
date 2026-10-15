@@ -12,7 +12,7 @@ public sealed class AssetDetailsPanel : UserControl
     private readonly ResourceDictionary _resources;
     private readonly ReviewPanel _review;
 
-    public event EventHandler? CloseRequested;
+    public event EventHandler? CloseRequested { add { } remove { } }
     public string Heading { get; }
 
     public AssetDetailsPanel(ProjectWorkbooksViewModel model, string fileId, AssetRowItem item, ResourceDictionary resources)
@@ -29,40 +29,24 @@ public sealed class AssetDetailsPanel : UserControl
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // ReviewPanel
         Content = root;
 
-        // Header: Close button + Title
-        var header = new Grid();
-        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-        var close = new Button
+        // Header: Clean border + title
+        var header = new Border
         {
-            Content = "✕",
-            Width = 28,
-            Height = 28,
-            Padding = new Thickness(0),
-            FontSize = 13,
-            VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Margin = new Thickness(0, 0, 10, 10),
+            Margin = new Thickness(0, 0, 0, 10),
+            Padding = new Thickness(0, 0, 0, 8),
         };
-        close.SetResourceReference(FrameworkElement.StyleProperty, "Button.Secondary");
-        close.Click += (_, _) => CloseRequested?.Invoke(this, EventArgs.Empty);
-        Grid.SetColumn(close, 0);
-        header.Children.Add(close);
+        header.SetResourceReference(Border.BorderBrushProperty, "Brush.Border.Subtle");
+        header.BorderThickness = new Thickness(0, 0, 0, 1);
 
         var title = new TextBlock
         {
             Text = Heading,
-            FontSize = 15,
+            FontSize = 16,
             FontWeight = FontWeights.SemiBold,
             TextWrapping = TextWrapping.Wrap,
             VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            TextAlignment = TextAlignment.Right,
-            Margin = new Thickness(10, 0, 0, 10),
         };
-        Grid.SetColumn(title, 1);
-        header.Children.Add(title);
+        header.Child = title;
 
         Grid.SetRow(header, 0);
         root.Children.Add(header);
