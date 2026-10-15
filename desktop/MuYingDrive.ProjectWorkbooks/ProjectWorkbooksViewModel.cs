@@ -59,12 +59,16 @@ public sealed class AssetRowItem(AssetRow row, ImageItem? selected, IReadOnlyLis
     public bool IsSaving { get => _isSaving; internal set { _isSaving = value; Changed(); } }
     public ImageItem? Selected { get; private set; } = selected;
     public IReadOnlyList<ImageItem> Candidates { get; private set; } = candidates;
+    public bool HasCandidates => Candidates.Count > 0;
+    public bool HasNoCandidates => Candidates.Count == 0;
     public void UpdateFrom(AssetRow row)
     {
         Row = row;
         Selected = row.SelectedImage == null ? null : new ImageItem(row.SelectedImage, null);
         Candidates = row.CandidateImages.Select(asset => new ImageItem(asset, null)).ToList();
         Changed(nameof(Selected)); Changed(nameof(Candidates));
+        Changed(nameof(HasSelected)); Changed(nameof(HasNoSelected));
+        Changed(nameof(HasCandidates)); Changed(nameof(HasNoCandidates));
     }
     public void ApplyRemote(AssetRow row)
     {
@@ -89,6 +93,7 @@ public sealed class AssetRowItem(AssetRow row, ImageItem? selected, IReadOnlyLis
         Candidates = row.CandidateImages.Select(asset => new ImageItem(asset, null)).ToList();
         Changed(nameof(Row)); Changed(nameof(Selected)); Changed(nameof(Candidates));
         Changed(nameof(HasSelected)); Changed(nameof(HasNoSelected));
+        Changed(nameof(HasCandidates)); Changed(nameof(HasNoCandidates));
     }
     public bool HasSelected => Selected != null;
     public bool HasNoSelected => Selected == null;
@@ -285,27 +290,44 @@ public sealed class SceneRowItem(SceneRow row) : ObservableModel
     public string DiscussionText { get => _discussionText; set { _discussionText = value; Changed(); } }
     internal bool SummaryLoaded { get; set; }
     internal bool SummaryLoading { get; set; }
+    private ReviewSummary? _reviewSummary;
+    public void SetSummary(ReviewSummary? summary)
+    {
+        _reviewSummary = summary;
+        var count = summary?.CommentCount;
+        DiscussionText = count == null ? "讨论 ?" : $"讨论 {count}";
+        Changed(nameof(DiscussionText));
+        Changed(nameof(HasReviews));
+        Changed(nameof(ReviewCountText));
+        Changed(nameof(ReviewSnippetText));
+        Changed(nameof(NotePreview));
+    }
+    public bool HasReviews => _reviewSummary is { } summary && summary.CommentCount > 0;
+    public string ReviewCountText => _reviewSummary is { } summary && summary.CommentCount > 0
+        ? $"{summary.CommentCount} 条批注"
+        : string.Empty;
+    public string ReviewSnippetText
+    {
+        get
+        {
+            if (_reviewSummary is not { } summary || summary.CommentCount <= 0)
+            {
+                return !string.IsNullOrWhiteSpace(NoteDraft) ? NoteDraft : string.Empty;
+            }
+            if (!string.IsNullOrWhiteSpace(summary.LatestComment))
+            {
+                var userPrefix = string.IsNullOrWhiteSpace(summary.LatestUser) ? "" : $"{summary.LatestUser}: ";
+                return $"最新: {userPrefix}{summary.LatestComment}";
+            }
+            return "点击查看批注";
+        }
+    }
     public ObservableCollection<LinkedAsset> LinkedAssets { get; } = [];
-    public bool HasLinkedAssets => LinkedAssets.Count > 0;
+    public bool HasLinkedAssets => false;
 
     public void ResolveLinkedAssets(IEnumerable<AssetRowItem> assets)
     {
         LinkedAssets.Clear();
-        var content = string.Join(" ", Row.StoryContent, Row.CastContext, Row.SceneContext);
-        if (string.IsNullOrWhiteSpace(content)) return;
-
-        foreach (var asset in assets)
-        {
-            var name = asset.Row.Name;
-            if (string.IsNullOrWhiteSpace(name)) continue;
-            if (content.Contains(name, StringComparison.OrdinalIgnoreCase))
-            {
-                var linked = new LinkedAsset(asset.Row.Category ?? "角色", name, asset.Row.Appearance, asset.Selected?.Asset ?? asset.Row.CandidateImages.FirstOrDefault());
-                LinkedAssets.Add(linked);
-            }
-        }
-        Changed(nameof(HasLinkedAssets));
-        Changed(nameof(LinkedAssets));
     }
 }
 public sealed record GenericCellItem(string Label, string? Value);
@@ -806,9 +828,10 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
     {
         if (item.SummaryLoading) return; item.SummaryLoading = true;
         try { var summaries = await Service.GetReviewSummariesForRowAsync(fileId, item.Row.Id, "scene-rows");
-            var count = summaries.FirstOrDefault(s => s.ImageId == null)?.CommentCount;
-            item.DiscussionText = count == null ? "讨论 ?" : $"讨论 {count}"; item.SummaryLoaded = true; }
-        catch { item.DiscussionText = "讨论 ?"; }
+            var summary = summaries.FirstOrDefault(s => s.ImageId == null);
+            item.SetSummary(summary);
+            item.SummaryLoaded = true; }
+        catch { item.SetSummary(null); }
         finally { item.SummaryLoading = false; }
     }
     public void SceneChanged() => Changed(nameof(VisibleScenes));

@@ -150,26 +150,32 @@
         </TextBlock>
        </StackPanel>
       </Border>
-      <!-- 3. 批注 (截断展示，点击弹侧栏) -->
+      <!-- 3. 批注 (显示最新批注，点击弹侧栏) -->
       <Border Style="{StaticResource Cell}" Background="Transparent" Cursor="Hand"
-              PreviewMouseLeftButtonUp="OnOpenSceneSidebar" ToolTip="点击打开侧边栏查看/编辑完整批注">
+              PreviewMouseLeftButtonUp="OnOpenSceneSidebar" ToolTip="点击打开侧边栏查看/添加批注">
        <StackPanel VerticalAlignment="Top">
         <TextBlock Text="批注" Style="{DynamicResource Typography.Caption}"/>
-        <TextBlock Text="{Binding NoteDraft}"
-                   TextTrimming="CharacterEllipsis" TextWrapping="Wrap" MaxHeight="46" Margin="0,5,0,0">
-         <TextBlock.Style>
-          <Style TargetType="TextBlock">
-           <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
-           <Style.Triggers>
-            <DataTrigger Binding="{Binding HasNote}" Value="False">
-             <Setter Property="Text" Value="点击添加批注..."/>
-             <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}"/>
-             <Setter Property="Opacity" Value="0.6"/>
-            </DataTrigger>
-           </Style.Triggers>
-          </Style>
-         </TextBlock.Style>
-        </TextBlock>
+        <StackPanel Visibility="{Binding HasReviews, Converter={StaticResource BoolVisibility}}" Margin="0,4,0,0">
+         <TextBlock Text="{Binding ReviewCountText}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}"/>
+         <TextBlock Text="{Binding ReviewSnippetText}" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}"
+                    Margin="0,2,0,0" TextTrimming="CharacterEllipsis" TextWrapping="Wrap" MaxHeight="36"/>
+        </StackPanel>
+        <StackPanel Visibility="{Binding HasReviews, Converter={StaticResource InverseBoolVisibility}}" Margin="0,4,0,0">
+         <TextBlock Text="{Binding NoteDraft}" TextTrimming="CharacterEllipsis" TextWrapping="Wrap" MaxHeight="36">
+          <TextBlock.Style>
+           <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
+            <Style.Triggers>
+             <DataTrigger Binding="{Binding HasNote}" Value="False">
+              <Setter Property="Text" Value="点击添加批注..."/>
+              <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}"/>
+              <Setter Property="Opacity" Value="0.6"/>
+             </DataTrigger>
+            </Style.Triggers>
+           </Style>
+          </TextBlock.Style>
+         </TextBlock>
+        </StackPanel>
        </StackPanel>
       </Border>
       <!-- 4. 关联视频 (固定 160px，支持拖入与右键菜单) -->
@@ -283,7 +289,7 @@
        <Grid Height="120" Background="{DynamicResource Brush.Surface.Canvas}">
         <Border Visibility="{Binding HasNoSelected, Converter={StaticResource BoolVisibility}}"
                 BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
-                Cursor="Hand" Tag="selected" MouseLeftButtonUp="OnPickImages" ToolTip="点击选择或拖入图片">
+                Cursor="Hand" Tag="selected" MouseLeftButtonUp="OnPickSelectedCandidate" ToolTip="点击从本行备选选择或拖入图片">
          <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
           <Path Data="M5 12h14 M12 5v14" Width="14" Height="14" Stretch="Uniform"
                 Stroke="{DynamicResource Brush.Text.Secondary}" StrokeThickness="2"
@@ -295,7 +301,7 @@
               ToolTip="{Binding Selected.Name}">
          <Grid.ContextMenu>
           <ContextMenu>
-           <MenuItem Header="更换图片" Tag="selected" Click="OnPickImages" IsEnabled="{Binding Row.CanEdit}"/>
+           <MenuItem Header="更换图片" Tag="selected" Click="OnPickSelectedCandidate" IsEnabled="{Binding Row.CanEdit}"/>
            <MenuItem Header="查看大图与评价" Click="OnPreviewSelected"/>
            <Separator/>
            <MenuItem Header="从选定清空" Click="OnClearSelected" IsEnabled="{Binding Row.CanEdit}"/>
@@ -304,7 +310,7 @@
           </ContextMenu>
          </Grid.ContextMenu>
          <Image Source="{Binding Selected.Preview}" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-         <Border Background="#88000000" Cursor="Hand" Tag="selected" MouseLeftButtonUp="OnPickImages" ToolTip="点击更换图片">
+         <Border Background="#88000000" Cursor="Hand" Tag="selected" MouseLeftButtonUp="OnPickSelectedCandidate" ToolTip="点击更换图片">
           <Border.Style>
            <Style TargetType="Border">
             <Setter Property="Opacity" Value="0"/>
@@ -326,11 +332,17 @@
      </Border>
      <Border Style="{StaticResource Cell}" AllowDrop="True" Tag="candidates" DragOver="OnImageDragOver" Drop="OnImageDrop">
       <StackPanel>
-       <DockPanel Margin="0,0,0,4">
-        <Button DockPanel.Dock="Right" Content="+ 添加备选" Tag="candidates" Click="OnPickImages" FontSize="11" Padding="6,2" IsEnabled="{Binding Row.CanEdit}"/>
-        <TextBlock Text="备选" Style="{DynamicResource Typography.Caption}" VerticalAlignment="Center"/>
-       </DockPanel>
-       <ItemsControl ItemsSource="{Binding Candidates}">
+       <TextBlock Text="备选" Style="{DynamicResource Typography.Caption}" Margin="0,0,0,6"/>
+       <Grid MinHeight="64">
+        <Border Visibility="{Binding HasNoCandidates, Converter={StaticResource BoolVisibility}}"
+                BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
+                CornerRadius="4" Padding="8,14" Background="Transparent"
+                Cursor="Hand" MouseLeftButtonUp="OnPickCandidateFiles" ToolTip="点击选择或拖入图片到此处作为备选">
+         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+          <TextBlock Text="拖入图片添加备选" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}" Opacity="0.7"/>
+         </StackPanel>
+        </Border>
+        <ItemsControl ItemsSource="{Binding Candidates}" Visibility="{Binding HasCandidates, Converter={StaticResource BoolVisibility}}">
         <ItemsControl.ItemsPanel>
          <ItemsPanelTemplate>
           <WrapPanel/>
@@ -359,7 +371,8 @@
           </Border>
          </DataTemplate>
         </ItemsControl.ItemTemplate>
-       </ItemsControl>
+        </ItemsControl>
+       </Grid>
       </StackPanel>
      </Border>
      <Border Style="{StaticResource Cell}" Background="Transparent" Cursor="Hand"

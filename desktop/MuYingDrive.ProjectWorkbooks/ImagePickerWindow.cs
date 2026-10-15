@@ -40,11 +40,6 @@ public sealed class ImagePickerWindow : Window
         bottom.Children.Add(WorkflowDialogs.Button("确认选择", (_, _) => { if (_busy) return;
             if (!multiple && SelectedImages.Count != 1) { _status.Text = "选定只包含一张图片，请保留一张选择后确认。"; return; }
             if (SelectedImages.Count > 0) DialogResult = true; }));
-        bottom.Children.Add(WorkflowDialogs.Button("比较所选 2–4 张", (_, _) =>
-        {
-            if (SelectedImages.Count is < 2 or > 4) { _status.Text = "请按 Ctrl 选择 2–4 张图片。"; return; }
-            var compare = new CompareImagesWindow(_model.Service, SelectedImages) { Owner = this }; WorkflowDialogs.Theme(compare, Resources); compare.ShowDialog();
-        }));
         _list = new ListBox { ItemsSource = _images, SelectionMode = SelectionMode.Extended, BorderThickness = new Thickness(0) };
         _list.SetResourceReference(BackgroundProperty, "Brush.Surface.Panel"); _list.SetResourceReference(ForegroundProperty, "Brush.Text.Primary");
         ScrollViewer.SetHorizontalScrollBarVisibility(_list, ScrollBarVisibility.Disabled);

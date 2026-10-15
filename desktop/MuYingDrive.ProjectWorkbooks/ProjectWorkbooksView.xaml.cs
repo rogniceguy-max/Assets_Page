@@ -302,11 +302,106 @@ public partial class ProjectWorkbooksView : UserControl
         if (picker.ShowDialog(Window.GetWindow(this)) == true) await Model.ExecuteAsync(async () =>
             await Model.Service.DownloadOriginalToAsync(document.File.Id, picker.FileName));
     }
+    private async void OnPickSelectedCandidate(object sender, RoutedEventArgs e)
+    {
+        if (Row(sender) is not { } row) return;
+        if (!row.Row.CanEdit) return;
+        await PickSelectedCandidateAsync(row);
+    }
+
+    private async Task PickSelectedCandidateAsync(AssetRowItem row)
+    {
+        if (row.Candidates.Count == 0)
+        {
+            var chooseLocal = MessageBox.Show(
+                Window.GetWindow(this),
+                $"资产「{(string.IsNullOrWhiteSpace(row.Row.Name) ? "未命名" : row.Row.Name)}」当前尚未添加任何备选图片。\n\n请将图片直接拖入本行的「备选」列，或者现在从本地选择图片加入备选？",
+                "当前行暂无备选图片",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) == MessageBoxResult.Yes;
+            if (!chooseLocal) return;
+
+            var picker = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "选择图片添加到备选",
+                Filter = "图片文件 (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg",
+                Multiselect = true,
+            };
+            if (picker.ShowDialog(Window.GetWindow(this)) != true || picker.FileNames.Length == 0) return;
+
+            await Model.ExecuteAsync(async () =>
+            {
+                var assets = new List<ImageAsset>();
+                foreach (var path in picker.FileNames)
+                {
+                    await using var source = File.OpenRead(path);
+                    assets.Add(await Model.Service.UploadProjectImageAsync(
+                        Model.Document?.File.ProjectId ?? RequireProject(),
+                        Path.GetFileName(path),
+                        Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" : "image/jpeg",
+                        source));
+                }
+                var allIds = row.Row.CandidateImages.Select(a => a.Id).Concat(assets.Select(a => a.Id)).ToList();
+                await UpdateImagesWithReasonAsync(row, assets.First().Id, allIds);
+            });
+            return;
+        }
+
+        var dialog = new RowCandidatePickerWindow(Model, row, Resources)
+        {
+            Owner = Window.GetWindow(this),
+        };
+        if (dialog.ShowDialog() != true || dialog.ChosenCandidate == null) return;
+
+        var chosenId = dialog.ChosenCandidate.Asset.Id;
+        if (chosenId == row.Selected?.Asset.Id) return;
+
+        await Model.ExecuteAsync(async () =>
+        {
+            await UpdateImagesWithReasonAsync(row, chosenId, row.Row.CandidateImages.Select(a => a.Id));
+        });
+    }
+
+    private async void OnPickCandidateFiles(object sender, RoutedEventArgs e)
+    {
+        if (Row(sender) is not { } row) return;
+        if (!row.Row.CanEdit) return;
+
+        var picker = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "选择图片添加到备选",
+            Filter = "图片文件 (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg",
+            Multiselect = true,
+        };
+        if (picker.ShowDialog(Window.GetWindow(this)) != true || picker.FileNames.Length == 0) return;
+
+        await Model.ExecuteAsync(async () =>
+        {
+            var assets = new List<ImageAsset>();
+            foreach (var path in picker.FileNames)
+            {
+                await using var source = File.OpenRead(path);
+                assets.Add(await Model.Service.UploadProjectImageAsync(
+                    Model.Document?.File.ProjectId ?? RequireProject(),
+                    Path.GetFileName(path),
+                    Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" : "image/jpeg",
+                    source));
+            }
+            var allIds = row.Row.CandidateImages.Select(a => a.Id).Concat(assets.Select(a => a.Id)).ToList();
+            await UpdateImagesWithReasonAsync(row, row.Row.SelectedImage?.Id, allIds);
+        });
+    }
+
     private async void OnPickImages(object sender, RoutedEventArgs e)
     {
         if (Row(sender) is not { } row) return;
         if (!row.Row.CanEdit) return;
         var selected = Equals(((FrameworkElement)sender).Tag, "selected");
+        if (selected)
+        {
+            await PickSelectedCandidateAsync(row);
+            return;
+        }
         await Model.ExecuteAsync(async () =>
         {
             var dialog = new ImagePickerWindow(Model, Model.Document?.File.ProjectId ?? RequireProject(), !selected) { Owner = Window.GetWindow(this) };
@@ -336,7 +431,7 @@ public partial class ProjectWorkbooksView : UserControl
                 assets.Add(await Model.Service.UploadProjectImageAsync(Model.Document?.File.ProjectId ?? RequireProject(), Path.GetFileName(path), Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" : "image/jpeg", source));
             }
             await UpdateImagesWithReasonAsync(row, selected ? assets.Single().Id : row.Row.SelectedImage?.Id,
-                selected ? row.Row.CandidateImages.Select(a => a.Id) : row.Row.CandidateImages.Select(a => a.Id).Concat(assets.Select(a => a.Id)));
+                selected ? row.Row.CandidateImages.Select(a => a.Id).Concat(new[] { assets.Single().Id }) : row.Row.CandidateImages.Select(a => a.Id).Concat(assets.Select(a => a.Id)));
         });
     }
     private async void OnClearSelected(object sender, RoutedEventArgs e)
@@ -357,7 +452,7 @@ public partial class ProjectWorkbooksView : UserControl
     {
         if (Row(sender) is not { } row) return;
         if (row.Selected != null) await ReviewAsync(row, row.Selected);
-        else if (row.Row.CanEdit) OnPickImages(sender, e);
+        else if (row.Row.CanEdit) await PickSelectedCandidateAsync(row);
     }
     private async void OnPreviewCandidate(object sender, RoutedEventArgs e)
     { if (Row(sender) is { } row && ((FrameworkElement)sender).DataContext is ImageItem image) await ReviewAsync(row, image); }
@@ -563,10 +658,18 @@ public partial class ProjectWorkbooksView : UserControl
 
     private bool TryLeaveDetailsPanel()
     {
+        var sItem = _scenePanelItem;
+        var aItem = _assetPanelItem;
+        var doc = Model.Document;
         if (_scenePanel is { } sPanel && !sPanel.TryLeave()) return false;
         if (_assetPanel is { } aPanel && !aPanel.TryLeave()) return false;
         HideScenePanel();
         HideAssetPanel();
+        if (doc != null)
+        {
+            if (sItem != null) _ = Model.RefreshSceneSummaryAsync(doc.File.Id, sItem);
+            if (aItem != null) _ = Model.RefreshReviewSummariesAsync(doc.File.Id, aItem);
+        }
         return true;
     }
 
