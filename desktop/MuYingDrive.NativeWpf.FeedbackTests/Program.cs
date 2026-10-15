@@ -78,8 +78,8 @@ internal static class Program
 
             // --- the shape of the sidebar ---------------------------------------------------
             var navKeys = workspace.NavigationItems.Select(item => item.Key).ToArray();
-            Assert(navKeys.SequenceEqual(["图片", "视频", "个人空间", "传输", "反馈"]),
-                "The global navigation is 图片/视频/个人空间/传输/反馈: " + string.Join("/", navKeys));
+            Assert(navKeys.SequenceEqual(["图片", "视频", "个人空间", "同步", "传输", "反馈"]),
+                "The global navigation is 图片/视频/个人空间/同步/传输/反馈: " + string.Join("/", navKeys));
             Assert(workspace.SpaceItems.Count == 0, "The department spaces are gone from the sidebar.");
             foreach (var gone in new[] { "文件", "本部门", "其他部门", "公共素材" })
             {

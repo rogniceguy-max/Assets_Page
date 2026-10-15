@@ -75,9 +75,9 @@
        <TextBox Grid.Column="1" Text="{Binding SceneNumberDraft, UpdateSourceTrigger=PropertyChanged}"
                 LostFocus="OnSceneFieldLostFocus" KeyDown="OnSceneFieldKeyDown"
                 HorizontalAlignment="Stretch"
-                Background="{DynamicResource Brush.Surface.Canvas}"
-                BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
-                Padding="6,3" Foreground="{DynamicResource Brush.Text.Primary}"
+                Background="Transparent"
+                BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="0,0,0,1"
+                Padding="4,3" Foreground="{DynamicResource Brush.Text.Primary}"
                 ToolTip="场景号（失焦或回车保存）" IsEnabled="{Binding Row.CanEdit}"/>
       </Grid>
 
@@ -91,9 +91,9 @@
        <TextBox Grid.Column="1" Text="{Binding BeatNumberDraft, UpdateSourceTrigger=PropertyChanged}"
                 LostFocus="OnSceneFieldLostFocus" KeyDown="OnSceneFieldKeyDown"
                 HorizontalAlignment="Stretch"
-                Background="{DynamicResource Brush.Surface.Canvas}"
-                BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
-                Padding="6,3" Foreground="{DynamicResource Brush.Text.Primary}"
+                Background="Transparent"
+                BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="0,0,0,1"
+                Padding="4,3" Foreground="{DynamicResource Brush.Text.Primary}"
                 ToolTip="节拍号（失焦或回车保存）" IsEnabled="{Binding Row.CanEdit}"/>
       </Grid>
 

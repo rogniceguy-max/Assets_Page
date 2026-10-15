@@ -97,10 +97,25 @@
                             Background="#B3101113" Visibility="Collapsed">
                         <controls:LucideIcon Icon="Video" Width="15" Height="15" Stroke="#FFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </Border>
-                    <Border x:Name="FilenameBand" Height="38" VerticalAlignment="Bottom" Opacity="0"
-                            Background="#B3101113" Padding="10,0">
-                        <TextBlock Text="{Binding Name}" Foreground="#FFFFFF" FontSize="{StaticResource Typography.FontSize.Label}"
-                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
+                    <Border x:Name="FilenameBand" MinHeight="38" VerticalAlignment="Bottom" Opacity="0"
+                            Background="#D9101113" Padding="10,6">
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="{Binding Name}" Foreground="#FFFFFF" FontSize="{StaticResource Typography.FontSize.Label}"
+                                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
+                            <TextBlock Text="{Binding LogicalPath}" Foreground="#9CA3AF" FontSize="11" Margin="0,2,0,0"
+                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding LogicalPath}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding LogicalPath}" Value="">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
                     </Border>
                 </Grid>
             </controls:RoundedClipBorder>
@@ -226,7 +241,7 @@
                 <ListBox.ItemsPanel><ItemsPanelTemplate><VirtualizingStackPanel IsVirtualizing="True" VirtualizationMode="Recycling" /></ItemsPanelTemplate></ListBox.ItemsPanel>
                 <ListBox.ItemTemplate>
                     <DataTemplate>
-                        <Grid Height="44">
+                        <Grid MinHeight="44" Margin="0,4">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="100" /><ColumnDefinition Width="100" /><ColumnDefinition Width="128" /></Grid.ColumnDefinitions>
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <controls:RoundedClipBorder Width="32" Height="32" CornerRadius="{StaticResource CornerRadius.Small}"
@@ -256,7 +271,22 @@
                                         </controls:LucideIcon>
                                     </Grid>
                                 </controls:RoundedClipBorder>
-                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding LogicalPath}" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}"
+                                               Margin="0,2,0,0" TextTrimming="CharacterEllipsis" ToolTip="{Binding LogicalPath}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding LogicalPath}" Value="">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
                             </StackPanel>
                             <TextBlock Grid.Column="1" Text="{Binding KindLabel}" Foreground="{DynamicResource Brush.Text.Secondary}" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="2" Text="{Binding FileSize}" Foreground="{DynamicResource Brush.Text.Secondary}" VerticalAlignment="Center" />

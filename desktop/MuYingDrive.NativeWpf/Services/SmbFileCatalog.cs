@@ -214,6 +214,19 @@ public sealed class SmbFileCatalog
         var isImage = ImageExtensions.Contains(extension);
         var isVideo = VideoExtensions.Contains(extension);
 
+        var logicalPath = string.Empty;
+        try
+        {
+            var rel = Path.GetRelativePath(scope.Root, path).Replace('\\', '/');
+            if (!string.IsNullOrWhiteSpace(rel) && rel != "." && !string.Equals(rel, info.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                logicalPath = rel;
+            }
+        }
+        catch
+        {
+        }
+
         item = new DriveFileItem
         {
             Id = path,
@@ -228,7 +241,8 @@ public sealed class SmbFileCatalog
             FileSize = isDirectory ? "—" : FormatSize(size),
             KindLabel = isDirectory ? "文件夹" : isImage ? "图片" : isVideo ? "视频" : "文件",
             ModifiedTime = modified,
-            ModifiedLabel = modified.ToString("yyyy/M/d HH:mm")
+            ModifiedLabel = modified.ToString("yyyy/M/d HH:mm"),
+            LogicalPath = logicalPath
         };
         return true;
     }

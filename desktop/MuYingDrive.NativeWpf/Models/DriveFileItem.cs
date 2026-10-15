@@ -24,4 +24,5 @@ public sealed class DriveFileItem : ObservableObject
     public bool IsReadOnly { get; init; }
     public long SizeBytes { get; init; }
     public DateTime ModifiedTime { get; init; }
+    public string LogicalPath { get; init; } = string.Empty;
 }

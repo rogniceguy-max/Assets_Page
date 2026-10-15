@@ -279,12 +279,14 @@ public sealed class WorkspaceViewModel : ObservableObject
             projectWorkbooks.ViewModel.ShareRoot = settings.ShareRoot;
         }
         var files = new FilesViewModel(session, settings, transfers);
+        var sync = new SyncViewModel(projectWorkbooks, settings.ShareRoot);
 
         var chrome = new WorkspaceChrome(
             [
                 new WorkspaceNavItem("图片", "图片", "Image"),
                 new WorkspaceNavItem("视频", "视频", "Video"),
                 new WorkspaceNavItem("个人空间", "个人空间", "UserRound"),
+                new WorkspaceNavItem("同步", "同步", "RefreshCw"),
                 new WorkspaceNavItem("传输", "传输", "Upload"),
                 new WorkspaceNavItem("反馈", "反馈", "CircleHelp"),
             ],
@@ -301,6 +303,7 @@ public sealed class WorkspaceViewModel : ObservableObject
             ["图片"] = files,
             ["视频"] = files,
             ["个人空间"] = files,
+            ["同步"] = sync,
             ["传输"] = transfers,
             ["反馈"] = feedback
         };
@@ -317,16 +320,16 @@ public sealed class WorkspaceViewModel : ObservableObject
             },
             () => main.SignOutAsync(session),
             transfers, feedback,
-            disposeExtra: projectWorkbooks is null
-                ? null
-                : () =>
-                {
-                    projectWorkbooks.Dispose();
-                    return ValueTask.CompletedTask;
-                },
+            disposeExtra: () =>
+            {
+                sync.Dispose();
+                projectWorkbooks?.Dispose();
+                return ValueTask.CompletedTask;
+            },
             onPageActivated: key =>
             {
                 if (key == "反馈") _ = feedback.EnsureLoadedAsync();
+                else if (key == "同步") _ = sync.InitializeAsync();
             });
 
         workspace._projectWorkbooksPage = projectWorkbooks;
