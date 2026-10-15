@@ -18,6 +18,9 @@ public sealed class TransferTask : ObservableObject
     private double _progress;
     private long _bytesTransferred;
     private string? _errorMessage;
+    private bool _isFolderTransfer;
+    private bool? _canRetryOverride;
+    private long _lastRevision = -1;
 
     public TransferTask(ResumableTransferSnapshot snapshot) => Update(snapshot);
 
@@ -27,6 +30,16 @@ public sealed class TransferTask : ObservableObject
     public string Location { get; private set; } = string.Empty;
     public string Size { get; private set; } = string.Empty;
     public long TotalBytes { get; private set; }
+    public bool IsFolderTransfer
+    {
+        get => _isFolderTransfer;
+        private set
+        {
+            if (SetProperty(ref _isFolderTransfer, value))
+                OnPropertyChanged(nameof(IconName));
+        }
+    }
+    public string IconName => IsFolderTransfer ? "Folder" : "File";
     public long BytesTransferred
     {
         get => _bytesTransferred;
@@ -74,9 +87,9 @@ public sealed class TransferTask : ObservableObject
         private set => SetProperty(ref _errorMessage, value);
     }
 
-    public bool CanPause => State == TransferState.Running;
-    public bool CanResume => State is TransferState.Paused or TransferState.Queued;
-    public bool CanRetry => State == TransferState.Failed;
+    public bool CanPause => State is TransferState.Running or TransferState.Queued;
+    public bool CanResume => State == TransferState.Paused;
+    public bool CanRetry => _canRetryOverride ?? State == TransferState.Failed;
     public bool CanCancel => State is TransferState.Queued or TransferState.Running or TransferState.Paused or TransferState.Failed;
 
     public string StateLabel => State switch
@@ -94,25 +107,37 @@ public sealed class TransferTask : ObservableObject
         : $"{Direction} · {FormatSize(BytesTransferred)} / {Size}";
     public string StateBrushKey => State == TransferState.Failed ? "Brush.Status.Danger" : "Brush.Text.Secondary";
 
-    public TransferTask(string id, string name, string direction, long totalBytes, long bytesTransferred, TransferState state, string? error = null)
+    public TransferTask(string id, string name, string direction, long totalBytes, long bytesTransferred,
+        TransferState state, string? error = null, bool isFolderTransfer = false)
     {
         Id = id;
         FileName = name;
         Direction = direction;
+        IsFolderTransfer = isFolderTransfer;
         TotalBytes = totalBytes;
         Size = FormatSize(totalBytes);
         BytesTransferred = bytesTransferred;
-        Progress = totalBytes > 0 ? (double)bytesTransferred / totalBytes * 100 : 0;
+        Progress = totalBytes > 0
+            ? (double)bytesTransferred / totalBytes * 100
+            : state == TransferState.Completed ? 100 : 0;
         State = state;
         ErrorMessage = error;
     }
 
-    public void UpdateManual(long totalBytes, long bytesTransferred, TransferState state, string? error = null)
+    public void UpdateManual(long totalBytes, long bytesTransferred, TransferState state, string? error = null,
+        bool? canRetry = null)
     {
+        if (_canRetryOverride != canRetry)
+        {
+            _canRetryOverride = canRetry;
+            OnPropertyChanged(nameof(CanRetry));
+        }
         TotalBytes = totalBytes;
         Size = FormatSize(totalBytes);
         BytesTransferred = bytesTransferred;
-        Progress = totalBytes > 0 ? (double)bytesTransferred / totalBytes * 100 : 0;
+        Progress = totalBytes > 0
+            ? (double)bytesTransferred / totalBytes * 100
+            : state == TransferState.Completed ? 100 : 0;
         State = state;
         ErrorMessage = error;
         OnPropertyChanged(nameof(TotalBytes));
@@ -125,9 +150,12 @@ public sealed class TransferTask : ObservableObject
 
     public void Update(ResumableTransferSnapshot snapshot)
     {
+        if (snapshot.Revision < _lastRevision) return;
+        _lastRevision = snapshot.Revision;
         Id = snapshot.Id;
-        FileName = snapshot.FileName;
+        FileName = snapshot.FolderContext?.FolderName ?? snapshot.FileName;
         Direction = snapshot.Direction == ResumableTransferDirection.Upload ? "上传" : "下载";
+        IsFolderTransfer = snapshot.FolderContext is not null;
         Location = snapshot.Location;
         TotalBytes = snapshot.TotalBytes;
         Size = FormatSize(TotalBytes);

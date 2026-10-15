@@ -16,10 +16,8 @@ public sealed class TransferViewModel : ObservableObject
 
     public TransferViewModel(long accountId)
     {
-        // A cap on concurrent workers, which only matters now that one action can queue many
-        // files: uploading a folder of two hundred otherwise starts two hundred simultaneous
-        // SMB streams, which is slower than a few at a time and makes the queue unreadable.
-        // Downloads and single uploads behave exactly as before.
+        // A shared cap keeps a folder selection from opening one SMB stream per file.
+        // Single transfers still run immediately when a worker slot is available.
         _engine = new ResumableTransferEngine(
             accountId.ToString(System.Globalization.CultureInfo.InvariantCulture), maxConcurrentWorkers: 4);
         _engine.TransferChanged += HandleTransferChanged;
@@ -56,8 +54,41 @@ public sealed class TransferViewModel : ObservableObject
     public async Task InitializeAsync()
     {
         var restored = await _engine.InitializeAsync();
-        foreach (var snapshot in restored)
-            Upsert(snapshot);
+        var displayItems = new List<(DateTimeOffset LastActivityUtc, TransferTask Task)>();
+
+        foreach (var grouped in restored
+                     .Where(snapshot => IsValidFolderContext(snapshot.FolderContext) &&
+                         snapshot.Status != ResumableTransferStatus.Canceled)
+                     .GroupBy(snapshot => snapshot.FolderContext!.GroupId, StringComparer.Ordinal))
+        {
+            var snapshots = grouped.ToArray();
+            var context = snapshots[0].FolderContext!;
+            var persistedExpectedCounts = snapshots
+                .Select(snapshot => snapshot.FolderContext?.ExpectedChildCount ?? 0)
+                .Where(count => count > 0)
+                .ToArray();
+            var expectedChildCount = Math.Max(snapshots.Length,
+                persistedExpectedCounts.Length > 0 ? persistedExpectedCounts.Min() : snapshots.Length);
+            var folderTask = new TransferTask(context.GroupId, context.FolderName, "上传", 0, 0,
+                TransferState.Queued, isFolderTransfer: true);
+            var group = new FolderTransferGroup(context, expectedChildCount, folderTask,
+                enqueueComplete: true, incompleteMembership: snapshots.Length < expectedChildCount);
+            _folderGroupsById[group.GroupId] = group;
+            foreach (var snapshot in snapshots)
+                RegisterFolderSnapshot(group, snapshot);
+
+            displayItems.Add((snapshots.Max(snapshot => snapshot.LastActivityUtc), folderTask));
+        }
+
+        foreach (var snapshot in restored.Where(snapshot =>
+                     !IsValidFolderContext(snapshot.FolderContext) &&
+                     snapshot.Status != ResumableTransferStatus.Canceled))
+        {
+            displayItems.Add((snapshot.LastActivityUtc, new TransferTask(snapshot)));
+        }
+
+        foreach (var item in displayItems.OrderByDescending(item => item.LastActivityUtc))
+            Tasks.Add(item.Task);
     }
 
     public async Task AddDownloadAsync(DriveFileItem file, string localDestination)
@@ -66,10 +97,8 @@ public sealed class TransferViewModel : ObservableObject
         await StartTransferAsync(() => _engine.StartDownloadAsync(file.FullPath, localDestination));
     }
 
-    public async Task AddUploadAsync(string localSource, string nasDestination)
-    {
-        await StartTransferAsync(() => _engine.StartUploadAsync(localSource, nasDestination));
-    }
+    public Task<bool> AddUploadAsync(string localSource, string nasDestination) =>
+        StartTransferAsync(() => _engine.StartUploadAsync(localSource, nasDestination));
 
     public async Task<bool> PauseAllAsync()
     {
@@ -104,10 +133,12 @@ public sealed class TransferViewModel : ObservableObject
     {
         try
         {
-            var running = _engine.GetTasks().Where(task => task.Status == ResumableTransferStatus.Running).ToArray();
-            await Task.WhenAll(running.Select(task => _engine.PauseAsync(task.Id)));
+            var active = _engine.GetTasks()
+                .Where(task => task.Status is ResumableTransferStatus.Running or ResumableTransferStatus.Queued)
+                .ToArray();
+            await Task.WhenAll(active.Select(task => _engine.PauseAsync(task.Id)));
             var afterPause = _engine.GetTasks().ToDictionary(task => task.Id, StringComparer.Ordinal);
-            return running.All(previous => afterPause.TryGetValue(previous.Id, out var current) &&
+            return active.All(previous => afterPause.TryGetValue(previous.Id, out var current) &&
                 current.Status is ResumableTransferStatus.Paused or ResumableTransferStatus.Completed);
         }
         catch (Exception)
@@ -124,12 +155,11 @@ public sealed class TransferViewModel : ObservableObject
         await _engine.DisposeAsync();
     }
 
-    private async Task StartAsync(Func<Task<ResumableTransferSnapshot>> start)
-    {
-        await RunCommandSafelyAsync(async () => Upsert(await start()), "无法开始传输，请检查目标位置、权限和 NAS 连接后重试。");
-    }
+    private Task<bool> StartAsync(Func<Task<ResumableTransferSnapshot>> start) =>
+        RunCommandSafelyAsync(async () => Upsert(await start()),
+            "无法开始传输，请检查目标位置、权限和 NAS 连接后重试。");
 
-    private async Task StartTransferAsync(Func<Task<ResumableTransferSnapshot>> start)
+    private async Task<bool> StartTransferAsync(Func<Task<ResumableTransferSnapshot>> start)
     {
         await _lifecycleGate.WaitAsync();
         try
@@ -137,9 +167,9 @@ public sealed class TransferViewModel : ObservableObject
             if (!_acceptTransferActions)
             {
                 OperationErrorMessage = "正在准备安全退出，暂时不能开始新的传输。";
-                return;
+                return false;
             }
-            await StartAsync(start);
+            return await StartAsync(start);
         }
         finally { _lifecycleGate.Release(); }
     }
@@ -155,12 +185,13 @@ public sealed class TransferViewModel : ObservableObject
         finally { _lifecycleGate.Release(); }
     }
 
-    private async Task RunCommandSafelyAsync(Func<Task> action, string fallbackMessage)
+    private async Task<bool> RunCommandSafelyAsync(Func<Task> action, string fallbackMessage)
     {
         OperationErrorMessage = string.Empty;
         try
         {
             await action();
+            return true;
         }
         catch (IOException)
         {
@@ -174,102 +205,209 @@ public sealed class TransferViewModel : ObservableObject
         {
             OperationErrorMessage = fallbackMessage;
         }
+        return false;
     }
 
     private sealed class FolderTransferGroup
     {
-        public string GroupId { get; }
-        public string FolderName { get; }
-        public string DestinationDirectory { get; }
+        public TransferFolderContext Context { get; }
+        public string GroupId => Context.GroupId;
+        public string FolderName => Context.FolderName;
+        public string DestinationDirectory => Context.DestinationDirectory;
+        public int ExpectedChildCount { get; private set; }
+        public bool HasIncompleteMembership => _incompleteMembership;
         public TransferTask TaskItem { get; }
         public HashSet<string> ChildTaskIds { get; } = new(StringComparer.Ordinal);
         public Dictionary<string, ResumableTransferSnapshot> Snapshots { get; } = new(StringComparer.Ordinal);
+        private long _totalBytes;
+        private long _bytesTransferred;
+        private int _runningCount;
+        private int _pausedCount;
+        private int _failedCount;
+        private int _completedCount;
+        private bool _enqueueComplete;
+        private readonly bool _incompleteMembership;
+        private string? _firstFailureId;
+        private string? _firstError;
 
-        public FolderTransferGroup(string groupId, string folderName, string destinationDirectory, TransferTask taskItem)
+        public FolderTransferGroup(TransferFolderContext context, int expectedChildCount, TransferTask taskItem,
+            bool enqueueComplete = false, bool incompleteMembership = false)
         {
-            GroupId = groupId;
-            FolderName = folderName;
-            DestinationDirectory = destinationDirectory;
+            Context = context;
+            ExpectedChildCount = Math.Max(0, expectedChildCount);
             TaskItem = taskItem;
+            _enqueueComplete = enqueueComplete;
+            _incompleteMembership = incompleteMembership;
         }
 
-        public void UpdateGroupState()
+        public void ApplySnapshot(ResumableTransferSnapshot snapshot)
         {
-            long totalBytes = 0;
-            long transferred = 0;
-            var anyRunning = false;
-            var anyPaused = false;
-            var anyFailed = false;
-            var allCompleted = Snapshots.Count > 0;
-            string? firstError = null;
-
-            foreach (var s in Snapshots.Values)
+            if (Snapshots.TryGetValue(snapshot.Id, out var previous))
             {
-                totalBytes += s.TotalBytes;
-                transferred += s.BytesTransferred;
-                if (s.Status == ResumableTransferStatus.Running) anyRunning = true;
-                if (s.Status == ResumableTransferStatus.Paused) anyPaused = true;
-                if (s.Status == ResumableTransferStatus.Failed)
+                if (snapshot.Revision < previous.Revision) return;
+                Adjust(previous, -1);
+                if (previous.Status == ResumableTransferStatus.Failed &&
+                    (snapshot.Status != ResumableTransferStatus.Failed || snapshot.Id == _firstFailureId))
                 {
-                    anyFailed = true;
-                    firstError ??= s.Error;
+                    _firstFailureId = null;
+                    _firstError = null;
                 }
-                if (s.Status != ResumableTransferStatus.Completed) allCompleted = false;
             }
 
-            TransferState state = allCompleted
+            Snapshots[snapshot.Id] = snapshot;
+            ChildTaskIds.Add(snapshot.Id);
+            Adjust(snapshot, 1);
+            if (snapshot.Status == ResumableTransferStatus.Failed && _firstFailureId is null)
+            {
+                _firstFailureId = snapshot.Id;
+                _firstError = snapshot.Error;
+            }
+            else if (snapshot.Status == ResumableTransferStatus.Failed && snapshot.Id == _firstFailureId)
+            {
+                _firstError = snapshot.Error;
+            }
+            if (_firstFailureId is null && _failedCount > 0)
+            {
+                var otherFailure = Snapshots.Values.First(item => item.Status == ResumableTransferStatus.Failed);
+                _firstFailureId = otherFailure.Id;
+                _firstError = otherFailure.Error;
+            }
+
+            var allCompleted = _enqueueComplete && ChildTaskIds.Count == ExpectedChildCount &&
+                ExpectedChildCount > 0 && _completedCount == ExpectedChildCount;
+            var incompleteAndFinished = _incompleteMembership && ChildTaskIds.Count > 0 &&
+                _completedCount == ChildTaskIds.Count;
+            var state = incompleteAndFinished
+                ? TransferState.Failed
+                : allCompleted
                 ? TransferState.Completed
-                : anyFailed
+                : _failedCount > 0
                     ? TransferState.Failed
-                    : anyRunning
+                    : _runningCount > 0
                         ? TransferState.Running
-                        : anyPaused
+                        : _pausedCount > 0
                             ? TransferState.Paused
                             : TransferState.Queued;
 
-            TaskItem.UpdateManual(totalBytes, transferred, state, firstError);
+            TaskItem.UpdateManual(_totalBytes, _bytesTransferred, state,
+                _firstError ?? (_incompleteMembership
+                    ? "应用关闭时，文件夹中的部分文件尚未进入传输队列；请重新选择文件夹上传遗漏内容。"
+                    : null), canRetry: _failedCount > 0);
+        }
+
+        public void SealEnqueue()
+        {
+            _enqueueComplete = true;
+            var allCompleted = ChildTaskIds.Count == ExpectedChildCount &&
+                _completedCount == ExpectedChildCount;
+            var state = allCompleted
+                ? TransferState.Completed
+                : _failedCount > 0
+                    ? TransferState.Failed
+                    : _runningCount > 0
+                        ? TransferState.Running
+                        : _pausedCount > 0
+                            ? TransferState.Paused
+                            : TransferState.Queued;
+            TaskItem.UpdateManual(_totalBytes, _bytesTransferred, state, _firstError,
+                canRetry: _failedCount > 0);
+        }
+
+        public void SetExpectedChildCount(int count) => ExpectedChildCount = Math.Max(0, count);
+
+        private void Adjust(ResumableTransferSnapshot snapshot, int amount)
+        {
+            _totalBytes += amount * snapshot.TotalBytes;
+            _bytesTransferred += amount * snapshot.BytesTransferred;
+            switch (snapshot.Status)
+            {
+                case ResumableTransferStatus.Running: _runningCount += amount; break;
+                case ResumableTransferStatus.Paused: _pausedCount += amount; break;
+                case ResumableTransferStatus.Failed: _failedCount += amount; break;
+                case ResumableTransferStatus.Completed: _completedCount += amount; break;
+            }
         }
     }
 
-    private readonly List<FolderTransferGroup> _folderGroups = [];
+    private readonly Dictionary<string, FolderTransferGroup> _folderGroupsById = new(StringComparer.Ordinal);
     private readonly Dictionary<string, FolderTransferGroup> _taskIdToGroup = new(StringComparer.Ordinal);
 
-    public async Task AddFolderUploadAsync(string folderName, string destinationDirectory, IReadOnlyList<(string LocalPath, string DestinationPath)> files)
+    public async Task<(int QueuedCount, string? ErrorMessage)> AddFolderUploadAsync(
+        string folderName, string destinationDirectory, IReadOnlyList<(string LocalPath, string DestinationPath)> files)
     {
         await _lifecycleGate.WaitAsync();
         try
         {
             if (!_acceptTransferActions)
             {
-                OperationErrorMessage = "正在准备安全退出，暂时不能开始新的传输。";
-                return;
+                return (0, "正在准备安全退出，暂时不能开始新的传输。");
             }
 
-            long estimatedTotalBytes = 0;
-            foreach (var (localPath, _) in files)
+            var estimatedTotalBytes = await Task.Run(() => files.Sum(file =>
+            {
+                try { return File.Exists(file.LocalPath) ? new FileInfo(file.LocalPath).Length : 0L; }
+                catch { return 0L; }
+            }));
+
+            var groupId = Guid.NewGuid().ToString("D");
+            var context = new TransferFolderContext(groupId, folderName, destinationDirectory, files.Count);
+            var folderTask = new TransferTask(groupId, folderName, "上传", estimatedTotalBytes, 0,
+                TransferState.Queued, isFolderTransfer: true);
+            var group = new FolderTransferGroup(context, files.Count, folderTask);
+            _folderGroupsById[groupId] = group;
+            Tasks.Insert(0, folderTask);
+
+            Exception? enqueueFailure = null;
+            foreach (var (localPath, destPath) in files)
             {
                 try
                 {
-                    if (File.Exists(localPath))
-                        estimatedTotalBytes += new FileInfo(localPath).Length;
+                    var snapshot = await _engine.StartUploadAsync(localPath, destPath, folderContext: context);
+                    if (!group.Snapshots.ContainsKey(snapshot.Id))
+                        RegisterFolderSnapshot(group, snapshot);
                 }
-                catch { }
+                catch (Exception exception)
+                {
+                    enqueueFailure = exception;
+                    break;
+                }
             }
 
-            var groupId = Guid.NewGuid().ToString("D");
-            var folderTask = new TransferTask(groupId, folderName, "上传", estimatedTotalBytes, 0, TransferState.Queued);
-            var group = new FolderTransferGroup(groupId, folderName, destinationDirectory, folderTask);
-            _folderGroups.Add(group);
-            Tasks.Insert(0, folderTask);
-
-            foreach (var (localPath, destPath) in files)
+            var wasCompleted = folderTask.State == TransferState.Completed;
+            group.SetExpectedChildCount(group.ChildTaskIds.Count);
+            if (enqueueFailure is not null)
             {
-                var snapshot = await _engine.StartUploadAsync(localPath, destPath);
-                group.ChildTaskIds.Add(snapshot.Id);
-                group.Snapshots[snapshot.Id] = snapshot;
-                _taskIdToGroup[snapshot.Id] = group;
+                try
+                {
+                    await _engine.SetFolderExpectedChildCountAsync(groupId, group.ChildTaskIds.Count);
+                }
+                catch
+                {
+                    enqueueFailure = new IOException("Unable to save the final folder transfer membership.");
+                }
             }
-            group.UpdateGroupState();
+            group.SealEnqueue();
+            var queuedCount = group.ChildTaskIds.Count;
+            if (files.Count > 0 && queuedCount == 0)
+            {
+                _folderGroupsById.Remove(groupId);
+                Tasks.Remove(folderTask);
+            }
+            if (!wasCompleted && folderTask.State == TransferState.Completed)
+                UploadCompleted?.Invoke(destinationDirectory);
+
+            if (enqueueFailure is null)
+                return (queuedCount, null);
+
+            var message = enqueueFailure switch
+            {
+                UnauthorizedAccessException => "文件或目标目录没有访问权限。",
+                IOException => "文件暂时无法访问，或 NAS 目标位置不可用。",
+                _ => "启动文件夹传输时遇到问题。"
+            };
+            return (queuedCount, queuedCount > 0
+                ? $"{message} 已加入的 {queuedCount} 项会继续传输。"
+                : message);
         }
         finally
         {
@@ -280,11 +418,14 @@ public sealed class TransferViewModel : ObservableObject
     private async Task PauseAsync(TransferTask? task)
     {
         if (task is null) return;
-        var group = _folderGroups.FirstOrDefault(g => g.TaskItem == task || g.GroupId == task.Id);
+        var group = GetFolderGroup(task);
         if (group is not null)
         {
-            foreach (var id in group.ChildTaskIds)
-                await _engine.PauseAsync(id);
+            var ids = group.Snapshots.Values
+                .Where(snapshot => snapshot.Status is ResumableTransferStatus.Running or ResumableTransferStatus.Queued)
+                .Select(snapshot => snapshot.Id)
+                .ToArray();
+            await Task.WhenAll(ids.Select(id => _engine.PauseAsync(id)));
             return;
         }
         await _engine.PauseAsync(task.Id);
@@ -293,15 +434,18 @@ public sealed class TransferViewModel : ObservableObject
     private async Task ResumeAsync(TransferTask? task)
     {
         if (task is null) return;
-        var group = _folderGroups.FirstOrDefault(g => g.TaskItem == task || g.GroupId == task.Id);
+        var group = GetFolderGroup(task);
         if (group is not null)
         {
-            foreach (var id in group.ChildTaskIds)
+            var ids = group.Snapshots.Values
+                .Where(snapshot => snapshot.Status == ResumableTransferStatus.Paused)
+                .Select(snapshot => snapshot.Id)
+                .ToArray();
+            foreach (var id in ids)
             {
                 var updated = await _engine.ResumeAsync(id);
-                group.Snapshots[id] = updated;
+                group.ApplySnapshot(updated);
             }
-            group.UpdateGroupState();
             return;
         }
         Upsert(await _engine.ResumeAsync(task.Id));
@@ -310,15 +454,20 @@ public sealed class TransferViewModel : ObservableObject
     private async Task RetryAsync(TransferTask? task)
     {
         if (task is null) return;
-        var group = _folderGroups.FirstOrDefault(g => g.TaskItem == task || g.GroupId == task.Id);
+        var group = GetFolderGroup(task);
         if (group is not null)
         {
-            foreach (var id in group.ChildTaskIds)
+            var ids = group.Snapshots.Values
+                .Where(snapshot => snapshot.Status == ResumableTransferStatus.Failed)
+                .Select(snapshot => snapshot.Id)
+                .ToArray();
+            foreach (var id in ids)
             {
                 var updated = await _engine.RetryAsync(id);
-                group.Snapshots[id] = updated;
+                group.ApplySnapshot(updated);
             }
-            group.UpdateGroupState();
+            if (ids.Length == 0 && group.HasIncompleteMembership)
+                OperationErrorMessage = "部分文件没有进入传输队列；请重新选择该文件夹以补传遗漏内容。";
             return;
         }
         Upsert(await _engine.RetryAsync(task.Id));
@@ -327,7 +476,7 @@ public sealed class TransferViewModel : ObservableObject
     private async Task CancelAsync(TransferTask? task)
     {
         if (task is null) return;
-        var group = _folderGroups.FirstOrDefault(g => g.TaskItem == task || g.GroupId == task.Id);
+        var group = GetFolderGroup(task);
         if (group is not null)
         {
             foreach (var id in group.ChildTaskIds)
@@ -335,7 +484,7 @@ public sealed class TransferViewModel : ObservableObject
                 await _engine.CancelAsync(id);
                 _taskIdToGroup.Remove(id);
             }
-            _folderGroups.Remove(group);
+            _folderGroupsById.Remove(group.GroupId);
             Tasks.Remove(group.TaskItem);
             return;
         }
@@ -366,14 +515,23 @@ public sealed class TransferViewModel : ObservableObject
 
     private void ApplyTransferChanged(ResumableTransferSnapshot snapshot)
     {
-        if (_taskIdToGroup.TryGetValue(snapshot.Id, out var group))
+        FolderTransferGroup? group = null;
+        if (IsValidFolderContext(snapshot.FolderContext) &&
+            _folderGroupsById.TryGetValue(snapshot.FolderContext!.GroupId, out var groupByContext))
         {
-            group.Snapshots[snapshot.Id] = snapshot;
-            group.UpdateGroupState();
-            if (group.TaskItem.State == TransferState.Completed)
-            {
+            group = groupByContext;
+        }
+        else
+        {
+            _taskIdToGroup.TryGetValue(snapshot.Id, out group);
+        }
+
+        if (group is not null)
+        {
+            var wasCompleted = group.TaskItem.State == TransferState.Completed;
+            RegisterFolderSnapshot(group, snapshot);
+            if (!wasCompleted && group.TaskItem.State == TransferState.Completed)
                 UploadCompleted?.Invoke(group.DestinationDirectory);
-            }
             return;
         }
 
@@ -406,6 +564,20 @@ public sealed class TransferViewModel : ObservableObject
 
         task.Update(snapshot);
     }
+
+    private void RegisterFolderSnapshot(FolderTransferGroup group, ResumableTransferSnapshot snapshot)
+    {
+        _taskIdToGroup[snapshot.Id] = group;
+        group.ApplySnapshot(snapshot);
+    }
+
+    private FolderTransferGroup? GetFolderGroup(TransferTask task) =>
+        _folderGroupsById.TryGetValue(task.Id, out var group) ? group : null;
+
+    private static bool IsValidFolderContext(TransferFolderContext? context) =>
+        context is not null && Guid.TryParseExact(context.GroupId, "D", out _) &&
+        !string.IsNullOrWhiteSpace(context.FolderName) &&
+        !string.IsNullOrWhiteSpace(context.DestinationDirectory);
 
     private void HandleTasksChanged(object? sender, NotifyCollectionChangedEventArgs args)
     {

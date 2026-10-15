@@ -20,6 +20,7 @@ public sealed class ResumableTransferEngine : IAsyncDisposable
     private readonly int _chunkSize;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ConcurrentDictionary<string, RuntimeTask> _tasks = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ResumableTransferSnapshot> _pendingSnapshots = new(StringComparer.Ordinal);
     private readonly SynchronizationContext? _eventContext;
     /// <summary>
     /// Bounds how many transfers run at once, or null to leave it unbounded as it always
@@ -27,6 +28,7 @@ public sealed class ResumableTransferEngine : IAsyncDisposable
     /// </summary>
     private readonly SemaphoreSlim? _workerSlots;
     private readonly CancellationTokenSource _shutdown = new();
+    private int _snapshotDispatchScheduled;
     private bool _initialized;
     private bool _disposed;
 
@@ -77,31 +79,34 @@ public sealed class ResumableTransferEngine : IAsyncDisposable
     }
 
     public Task<ResumableTransferSnapshot> StartUploadAsync(
-        string localSourcePath, string destinationPath, CancellationToken cancellationToken = default) =>
-        StartAsync(ResumableTransferDirection.Upload, localSourcePath, destinationPath, cancellationToken);
+        string localSourcePath, string destinationPath, CancellationToken cancellationToken = default,
+        TransferFolderContext? folderContext = null) =>
+        StartAsync(ResumableTransferDirection.Upload, localSourcePath, destinationPath, cancellationToken, folderContext);
 
     public Task<ResumableTransferSnapshot> StartDownloadAsync(
         string sourcePath, string localDestinationPath, CancellationToken cancellationToken = default) =>
-        StartAsync(ResumableTransferDirection.Download, sourcePath, localDestinationPath, cancellationToken);
+        StartAsync(ResumableTransferDirection.Download, sourcePath, localDestinationPath, cancellationToken, folderContext: null);
 
     public async Task PauseAsync(string taskId, CancellationToken cancellationToken = default)
     {
         RuntimeTask task;
+        bool pausedWhileQueued = false;
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             task = GetTask(taskId);
             lock (task.Sync)
             {
-                if (task.Status != ResumableTransferStatus.Running) return;
+                if (task.Status is not (ResumableTransferStatus.Running or ResumableTransferStatus.Queued)) return;
                 task.PauseRequested = true;
-                if (task.Runner is null)
+                pausedWhileQueued = task.Status == ResumableTransferStatus.Queued;
+                if (task.Runner is null || pausedWhileQueued)
                 {
                     task.Status = ResumableTransferStatus.Paused;
                     task.LastActivityUtc = DateTimeOffset.UtcNow;
                 }
             }
-            if (task.Runner is null)
+            if (task.Runner is null || pausedWhileQueued)
             {
                 await SaveAsync(task, cancellationToken).ConfigureAwait(false);
                 Publish(task);
@@ -199,8 +204,46 @@ public sealed class ResumableTransferEngine : IAsyncDisposable
     public IReadOnlyList<ResumableTransferSnapshot> GetTasks() =>
         _tasks.Values.Select(x => x.ToSnapshot()).OrderByDescending(x => x.LastActivityUtc).ToArray();
 
-    private async Task<ResumableTransferSnapshot> StartAsync(
-        ResumableTransferDirection direction, string sourcePath, string destinationPath, CancellationToken cancellationToken)
+    public async Task SetFolderExpectedChildCountAsync(string groupId, int expectedChildCount,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(groupId);
+        if (expectedChildCount < 0) throw new ArgumentOutOfRangeException(nameof(expectedChildCount));
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfNotInitialized();
+            var checkpoint = _tasks.Values
+                .Where(task => string.Equals(task.FolderContext?.GroupId, groupId, StringComparison.Ordinal))
+                .OrderBy(task => task.Id, StringComparer.Ordinal)
+                .FirstOrDefault();
+            if (checkpoint is not null)
+            {
+                lock (checkpoint.Sync)
+                {
+                    if (checkpoint.FolderContext is { } context)
+                        checkpoint.FolderContext = context with { ExpectedChildCount = expectedChildCount };
+                }
+                await SaveAsync(checkpoint, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally { _gate.Release(); }
+    }
+
+    private Task<ResumableTransferSnapshot> StartAsync(
+        ResumableTransferDirection direction, string sourcePath, string destinationPath,
+        CancellationToken cancellationToken, TransferFolderContext? folderContext)
+    {
+        // StartCoreAsync performs a few synchronous filesystem calls against the SMB path
+        // before its first incomplete await. Keep those calls off the WPF dispatcher.
+        return Task.Run(() => StartCoreAsync(direction, sourcePath, destinationPath, cancellationToken, folderContext),
+            cancellationToken);
+    }
+
+    private async Task<ResumableTransferSnapshot> StartCoreAsync(
+        ResumableTransferDirection direction, string sourcePath, string destinationPath,
+        CancellationToken cancellationToken, TransferFolderContext? folderContext)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationPath);
@@ -226,6 +269,7 @@ public sealed class ResumableTransferEngine : IAsyncDisposable
             TotalBytes = info.Length,
             SourceLastWriteUtcTicks = info.LastWriteTimeUtc.Ticks,
             BytesTransferred = 0,
+            FolderContext = folderContext,
             Status = ResumableTransferStatus.Running,
             LastActivityUtc = now
         };
@@ -312,13 +356,27 @@ public sealed class ResumableTransferEngine : IAsyncDisposable
             return false;
         }
 
+        var releasePausedSlot = false;
         lock (task.Sync)
         {
-            if (task.Status == ResumableTransferStatus.Queued)
+            if (task.Status == ResumableTransferStatus.Queued && !task.PauseRequested)
             {
                 task.Status = ResumableTransferStatus.Running;
                 task.LastActivityUtc = DateTimeOffset.UtcNow;
             }
+            else if (task.Status == ResumableTransferStatus.Paused || task.PauseRequested)
+            {
+                task.Status = ResumableTransferStatus.Paused;
+                task.LastActivityUtc = DateTimeOffset.UtcNow;
+                releasePausedSlot = true;
+            }
+        }
+        if (releasePausedSlot)
+        {
+            _workerSlots.Release();
+            await SaveAsync(task, CancellationToken.None).ConfigureAwait(false);
+            Publish(task);
+            return false;
         }
         Publish(task);
         return true;
@@ -539,23 +597,28 @@ public sealed class ResumableTransferEngine : IAsyncDisposable
 
     private async Task SaveAsync(RuntimeTask task, CancellationToken cancellationToken)
     {
-        Directory.CreateDirectory(_accountDirectory);
-        var path = CheckpointPath(task.Id);
-        var temp = path + ".tmp-" + Guid.NewGuid().ToString("N");
+        await task.PersistenceGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096,
-                FileOptions.Asynchronous | FileOptions.WriteThrough))
+            Directory.CreateDirectory(_accountDirectory);
+            var path = CheckpointPath(task.Id);
+            var temp = path + ".tmp-" + Guid.NewGuid().ToString("N");
+            try
             {
-                RuntimeTask checkpoint;
-                lock (task.Sync) checkpoint = task.CloneForPersistence();
-                await JsonSerializer.SerializeAsync(stream, checkpoint, JsonOptions, cancellationToken).ConfigureAwait(false);
-                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-                stream.Flush(flushToDisk: true);
+                await using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096,
+                    FileOptions.Asynchronous | FileOptions.WriteThrough))
+                {
+                    RuntimeTask checkpoint;
+                    lock (task.Sync) checkpoint = task.CloneForPersistence();
+                    await JsonSerializer.SerializeAsync(stream, checkpoint, JsonOptions, cancellationToken).ConfigureAwait(false);
+                    await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                    stream.Flush(flushToDisk: true);
+                }
+                File.Move(temp, path, overwrite: true);
             }
-            File.Move(temp, path, overwrite: true);
+            finally { TryDeleteFile(temp); }
         }
-        finally { TryDeleteFile(temp); }
+        finally { task.PersistenceGate.Release(); }
     }
 
     private async Task CancelAndDeleteAsync(RuntimeTask task, CancellationToken cancellationToken)
@@ -650,17 +713,58 @@ public sealed class ResumableTransferEngine : IAsyncDisposable
     {
         try
         {
-            var args = new ResumableTransferChangedEventArgs(task.ToSnapshot());
+            lock (task.Sync) task.EventRevision++;
+            var snapshot = task.ToSnapshot();
             if (_eventContext is null || ReferenceEquals(SynchronizationContext.Current, _eventContext))
-                TransferChanged?.Invoke(this, args);
-            else
-                _eventContext.Post(_ =>
-                {
-                    try { TransferChanged?.Invoke(this, args); }
-                    catch { /* A UI subscriber must not crash the transfer worker or UI dispatcher. */ }
-                }, null);
+            {
+                NotifyTransferChanged(snapshot);
+                return;
+            }
+
+            // A busy folder can produce many progress snapshots before the UI dispatcher
+            // gets a turn. Keep only the newest snapshot per file and post one drain callback
+            // instead of queuing an unbounded number of dispatcher operations.
+            _pendingSnapshots[snapshot.Id] = snapshot;
+            ScheduleSnapshotDispatch();
         }
         catch { /* Subscriber errors must not break disk transfer. */ }
+    }
+
+    private void ScheduleSnapshotDispatch()
+    {
+        if (Interlocked.CompareExchange(ref _snapshotDispatchScheduled, 1, 0) != 0) return;
+        try
+        {
+            _eventContext!.Post(_ => DrainPendingSnapshots(), null);
+        }
+        catch
+        {
+            Interlocked.Exchange(ref _snapshotDispatchScheduled, 0);
+        }
+    }
+
+    private void DrainPendingSnapshots()
+    {
+        const int maxSnapshotsPerDispatch = 256;
+        var processed = 0;
+        foreach (var id in _pendingSnapshots.Keys)
+        {
+            if (processed >= maxSnapshotsPerDispatch) break;
+            if (_pendingSnapshots.TryRemove(id, out var snapshot))
+            {
+                NotifyTransferChanged(snapshot);
+                processed++;
+            }
+        }
+
+        Interlocked.Exchange(ref _snapshotDispatchScheduled, 0);
+        if (!_pendingSnapshots.IsEmpty) ScheduleSnapshotDispatch();
+    }
+
+    private void NotifyTransferChanged(ResumableTransferSnapshot snapshot)
+    {
+        try { TransferChanged?.Invoke(this, new ResumableTransferChangedEventArgs(snapshot)); }
+        catch { /* A UI subscriber must not crash the transfer worker or dispatcher. */ }
     }
 
     private void ThrowIfNotInitialized()
@@ -701,6 +805,7 @@ public sealed class ResumableTransferEngine : IAsyncDisposable
     private sealed class RuntimeTask
     {
         [System.Text.Json.Serialization.JsonIgnore] public object Sync { get; } = new();
+        [System.Text.Json.Serialization.JsonIgnore] public SemaphoreSlim PersistenceGate { get; } = new(1, 1);
         public string Id { get; set; } = "";
         public ResumableTransferDirection Direction { get; set; }
         public string SourcePath { get; set; } = "";
@@ -710,9 +815,11 @@ public sealed class ResumableTransferEngine : IAsyncDisposable
         public long TotalBytes { get; set; }
         public long SourceLastWriteUtcTicks { get; set; }
         public long BytesTransferred { get; set; }
+        public TransferFolderContext? FolderContext { get; set; }
         public ResumableTransferStatus Status { get; set; }
         public string? Error { get; set; }
         public DateTimeOffset LastActivityUtc { get; set; }
+        [System.Text.Json.Serialization.JsonIgnore] public long EventRevision { get; set; }
         [System.Text.Json.Serialization.JsonIgnore] public volatile bool PauseRequested;
         [System.Text.Json.Serialization.JsonIgnore] public volatile bool CancelRequested;
         [System.Text.Json.Serialization.JsonIgnore] public Task? Runner { get; set; }
@@ -722,6 +829,7 @@ public sealed class ResumableTransferEngine : IAsyncDisposable
             Id = Id, Direction = Direction, SourcePath = SourcePath, DestinationPath = DestinationPath,
             PartialPath = PartialPath, FileName = FileName, TotalBytes = TotalBytes,
             SourceLastWriteUtcTicks = SourceLastWriteUtcTicks, BytesTransferred = BytesTransferred,
+            FolderContext = FolderContext,
             Status = Status, Error = Error, LastActivityUtc = LastActivityUtc
         };
 
@@ -730,7 +838,8 @@ public sealed class ResumableTransferEngine : IAsyncDisposable
             lock (Sync)
                 return new(Id, FileName, Direction, Status, BytesTransferred, TotalBytes,
                     Path.GetDirectoryName(Direction == ResumableTransferDirection.Upload ? DestinationPath : SourcePath) ?? "",
-                    TotalBytes == 0 ? 100 : Math.Clamp(BytesTransferred * 100d / TotalBytes, 0, 100), Error, LastActivityUtc);
+                    TotalBytes == 0 ? 100 : Math.Clamp(BytesTransferred * 100d / TotalBytes, 0, 100),
+                    Error, LastActivityUtc, FolderContext, EventRevision);
         }
     }
 }

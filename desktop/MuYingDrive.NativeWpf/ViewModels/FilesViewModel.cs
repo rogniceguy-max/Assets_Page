@@ -14,6 +14,16 @@ namespace MuYingDrive.NativeWpf.ViewModels;
 
 public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
 {
+    private sealed record UploadCandidate(string LocalPath, string DestinationDirectory, string Name);
+
+    private sealed record UploadCandidateBatch(
+        UploadCandidate[] Candidates,
+        (string Directory, string DesiredName)[] NameRequests);
+
+    private sealed record ResolvedUploadBatch(
+        (string LocalPath, string DestinationPath)[] Files,
+        string[] Rejected);
+
     private readonly TransferViewModel _transfers;
     private readonly WindowsFilePickerService _filePicker = new();
     private readonly SmbSpaceResolver _spaces;
@@ -472,7 +482,7 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
     {
         var paths = _filePicker.PickFiles();
         if (paths.Count == 0) return;
-        _ = UploadAsync(paths.Select(path => (path, Path.GetFileName(path))).ToArray());
+        _ = UploadAsync(paths);
     }
 
     private async Task UploadFolderAsync()
@@ -480,10 +490,14 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
         var folder = _filePicker.PickFolder();
         if (string.IsNullOrWhiteSpace(folder)) return;
 
+        // Keep the destination stable while the local walk and SMB preflight run in the
+        // background; the user may navigate to another folder while either one is pending.
+        var uploadScope = _scope;
+        var destinationRoot = _currentDirectory;
         LocalUploadPlan plan;
         try
         {
-            plan = LocalUploadWalker.Enumerate(folder);
+            plan = await Task.Run(() => LocalUploadWalker.Enumerate(folder));
         }
         catch (Exception exception) when (IsMutationFailure(exception))
         {
@@ -502,8 +516,10 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
             // Created up front rather than left to each transfer's implicit parent creation:
             // that would never produce an empty subfolder, and a permission problem would
             // arrive as one failed transfer per file instead of one clear message.
-            await _mutations.EnsureDirectoriesAsync(
-                _scope, plan.Directories.Select(relative => Path.Combine(_currentDirectory, relative)).ToArray());
+            var destinationDirectories = await Task.Run(() => plan.Directories
+                .Select(relative => Path.Combine(destinationRoot, relative))
+                .ToArray());
+            await _mutations.EnsureDirectoriesAsync(uploadScope, destinationDirectories);
         }
         catch (Exception exception) when (IsMutationFailure(exception))
         {
@@ -514,33 +530,41 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
         var folderName = Path.GetFileName(folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
         if (string.IsNullOrWhiteSpace(folderName)) folderName = folder;
 
-        var resolvedFiles = new List<(string LocalPath, string DestinationPath)>();
-        var claimed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var entry in plan.Files)
+        var batch = await Task.Run(() => PrepareUploadCandidates(destinationRoot,
+            plan.Files.Select(entry => (entry.LocalPath, entry.RelativePath))));
+
+        IReadOnlyList<FreeNameResolution> nameResolutions;
+        try
         {
-            var destinationDirectory = Path.GetDirectoryName(Path.Combine(_currentDirectory, entry.RelativePath));
-            var name = Path.GetFileName(entry.RelativePath);
-            if (string.IsNullOrEmpty(destinationDirectory) || string.IsNullOrEmpty(name)) continue;
-
-            string freeName;
-            try
-            {
-                freeName = _mutations.ResolveFreeName(_scope, destinationDirectory, name, claimed);
-            }
-            catch (InvalidOperationException)
-            {
-                continue;
-            }
-
-            claimed.Add(freeName);
-            resolvedFiles.Add((entry.LocalPath, Path.Combine(destinationDirectory, freeName)));
+            nameResolutions = await _mutations.ResolveFreeNamesAsync(uploadScope, batch.NameRequests);
+        }
+        catch (Exception exception) when (IsMutationFailure(exception))
+        {
+            MessageBox.Show(exception.Message, "无法检查目标文件名", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
         }
 
-        if (resolvedFiles.Count > 0)
+        var resolved = await Task.Run(() => ResolveUploadCandidates(batch.Candidates, nameResolutions));
+
+        if (resolved.Files.Length > 0 || (plan.Files.Count == 0 && plan.Directories.Count > 1))
         {
-            await _transfers.AddFolderUploadAsync(folderName, _currentDirectory, resolvedFiles);
-            MessageBox.Show($"已将文件夹「{folderName}」（共 {resolvedFiles.Count} 项）加入传输列表。",
-                "开始上传", MessageBoxButton.OK, MessageBoxImage.Information);
+            var result = await _transfers.AddFolderUploadAsync(folderName, destinationRoot, resolved.Files);
+            if (result.QueuedCount > 0 || (resolved.Files.Length == 0 && result.ErrorMessage is null))
+            {
+                var summary = result.QueuedCount == resolved.Files.Length
+                    ? $"已将文件夹「{folderName}」（共 {result.QueuedCount} 项）加入传输列表。"
+                    : $"已将文件夹「{folderName}」中的 {result.QueuedCount}/{resolved.Files.Length} 项加入传输列表。";
+                MessageBox.Show(summary, "开始上传", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            if (result.ErrorMessage is not null)
+                MessageBox.Show(result.ErrorMessage, "部分文件未能加入上传", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        if (resolved.Rejected.Length > 0)
+        {
+            var shown = string.Join("\n", resolved.Rejected.Take(10));
+            var more = resolved.Rejected.Length > 10 ? $"\n…还有 {resolved.Rejected.Length - 10} 项" : string.Empty;
+            MessageBox.Show($"以下 {resolved.Rejected.Length} 项未能加入上传：\n\n{shown}{more}",
+                "部分文件未上传", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
         // So the new folders are visible while the transfers are still running.
@@ -548,53 +572,51 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
     }
 
     /// <summary>
-    /// Queues uploads, giving each one a free name at its destination.
+    /// Queues uploads after resolving their names in one background pass over each
+    /// destination directory.
     /// </summary>
     /// <remarks>
-    /// The free name is resolved here, before the transfer is queued, because the engine
-    /// refuses a destination that already exists. The names claimed by earlier entries in
-    /// this same batch are tracked: without that, two files called <c>report.pdf</c> in one
-    /// selection would both resolve against a directory where neither exists yet, both be
-    /// given the same name, and the second would fail instead of becoming
-    /// <c>report (2).pdf</c>. That is what lets a folder upload run to the end without
-    /// stopping to ask anything.
+    /// The engine refuses a destination that already exists, so names are resolved before
+    /// queuing. The batch resolver reads each destination directory once and reserves each
+    /// chosen name in a case-insensitive set, so duplicate names in one directory receive
+    /// suffixes without repeatedly probing the SMB share.
     /// </remarks>
-    private async Task UploadAsync(IReadOnlyList<(string LocalPath, string RelativePath)> entries)
+    private async Task UploadAsync(IReadOnlyList<string> localPaths)
     {
-        if (!CanUpload || entries.Count == 0) return;
+        if (!CanUpload || localPaths.Count == 0) return;
 
-        var claimed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var rejected = new List<string>();
-        var queued = 0;
+        var uploadScope = _scope;
+        var destinationRoot = _currentDirectory;
+        var batch = await Task.Run(() => PrepareUploadCandidates(destinationRoot,
+            localPaths.Select(path => (path, Path.GetFileName(path) ?? string.Empty))));
 
-        foreach (var (localPath, relativePath) in entries)
+        IReadOnlyList<FreeNameResolution> nameResolutions;
+        try
         {
-            var destinationDirectory = Path.GetDirectoryName(Path.Combine(_currentDirectory, relativePath));
-            var name = Path.GetFileName(relativePath);
-            if (string.IsNullOrEmpty(destinationDirectory) || string.IsNullOrEmpty(name)) continue;
-
-            string freeName;
-            try
-            {
-                freeName = _mutations.ResolveFreeName(_scope, destinationDirectory, name, claimed);
-            }
-            catch (InvalidOperationException exception)
-            {
-                // One unusable name must not abandon the other two hundred.
-                rejected.Add($"{name}：{exception.Message}");
-                continue;
-            }
-
-            claimed.Add(freeName);
-            await _transfers.AddUploadAsync(localPath, Path.Combine(destinationDirectory, freeName));
-            queued++;
+            nameResolutions = await _mutations.ResolveFreeNamesAsync(uploadScope, batch.NameRequests);
+        }
+        catch (Exception exception) when (IsMutationFailure(exception))
+        {
+            MessageBox.Show(exception.Message, "无法检查目标文件名", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
         }
 
-        if (rejected.Count > 0)
+        var resolved = await Task.Run(() => ResolveUploadCandidates(batch.Candidates, nameResolutions));
+        var queued = 0;
+        var failedStarts = 0;
+        foreach (var (localPath, destinationPath) in resolved.Files)
         {
-            var shown = string.Join("\n", rejected.Take(10));
-            var more = rejected.Count > 10 ? $"\n…还有 {rejected.Count - 10} 项" : string.Empty;
-            MessageBox.Show($"以下 {rejected.Count} 项未能加入上传：\n\n{shown}{more}",
+            if (await _transfers.AddUploadAsync(localPath, destinationPath))
+                queued++;
+            else
+                failedStarts++;
+        }
+
+        if (resolved.Rejected.Length > 0)
+        {
+            var shown = string.Join("\n", resolved.Rejected.Take(10));
+            var more = resolved.Rejected.Length > 10 ? $"\n…还有 {resolved.Rejected.Length - 10} 项" : string.Empty;
+            MessageBox.Show($"以下 {resolved.Rejected.Length} 项未能加入上传：\n\n{shown}{more}",
                 "部分文件未上传", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         else if (queued > 1)
@@ -602,6 +624,52 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
             MessageBox.Show($"已将 {queued} 项加入传输列表。文件名重复时会自动加序号，不会覆盖。",
                 "开始上传", MessageBoxButton.OK, MessageBoxImage.Information);
         }
+        if (failedStarts > 0)
+        {
+            MessageBox.Show($"有 {failedStarts} 项在启动传输时未能加入列表，请检查传输页面的错误提示后重试。",
+                "部分文件未上传", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+    }
+
+    private static UploadCandidateBatch PrepareUploadCandidates(
+        string destinationRoot, IEnumerable<(string LocalPath, string RelativePath)> entries)
+    {
+        var candidates = new List<UploadCandidate>();
+        var nameRequests = new List<(string Directory, string DesiredName)>();
+        foreach (var (localPath, relativePath) in entries)
+        {
+            var destinationDirectory = Path.GetDirectoryName(Path.Combine(destinationRoot, relativePath));
+            var name = Path.GetFileName(relativePath);
+            if (string.IsNullOrEmpty(destinationDirectory) || string.IsNullOrEmpty(name)) continue;
+
+            candidates.Add(new UploadCandidate(localPath, destinationDirectory, name));
+            nameRequests.Add((destinationDirectory, name));
+        }
+
+        return new UploadCandidateBatch(candidates.ToArray(), nameRequests.ToArray());
+    }
+
+    private static ResolvedUploadBatch ResolveUploadCandidates(
+        IReadOnlyList<UploadCandidate> candidates, IReadOnlyList<FreeNameResolution> nameResolutions)
+    {
+        var files = new List<(string LocalPath, string DestinationPath)>(candidates.Count);
+        var rejected = new List<string>();
+        for (var index = 0; index < candidates.Count; index++)
+        {
+            var candidate = candidates[index];
+            var resolution = nameResolutions[index];
+            if (resolution.Name is null)
+            {
+                // One unusable name must not abandon the other items in the batch.
+                if (resolution.Error is not null)
+                    rejected.Add($"{candidate.Name}：{resolution.Error.Message}");
+                continue;
+            }
+
+            files.Add((candidate.LocalPath, Path.Combine(candidate.DestinationDirectory, resolution.Name)));
+        }
+
+        return new ResolvedUploadBatch(files.ToArray(), rejected.ToArray());
     }
 
     private async Task RenameAsync(DriveFileItem? item)
