@@ -67,7 +67,7 @@ public sealed class ProjectWorkbookPage : IDisposable
     /// display name — which is the point, because a project can be renamed and this has to
     /// keep working when it is.
     /// </remarks>
-    public Task OpenWorkbookAsync(string projectId, string fileId, Func<Task>? onNotFound = null) =>
+    public Task OpenWorkbookAsync(string projectId, string fileId, string? fileName = null, Func<Task>? onNotFound = null) =>
         ViewModel.ExecuteAsync(async () =>
         {
             // The page loads its lists lazily, and opening a workbook from the sidebar is
@@ -89,6 +89,10 @@ public sealed class ProjectWorkbookPage : IDisposable
             {
                 await ViewModel.RefreshFilesAsync();
                 file = ViewModel.Files.FirstOrDefault(f => f.Id == fileId);
+            }
+            if (file == null && !string.IsNullOrWhiteSpace(fileName))
+            {
+                file = ViewModel.Files.FirstOrDefault(f => string.Equals(f.Name, fileName, StringComparison.OrdinalIgnoreCase));
             }
             if (file == null)
             {

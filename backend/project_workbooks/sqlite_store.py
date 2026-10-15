@@ -335,10 +335,17 @@ class SqliteProjectWorkbookStore:
                     continue
                 with self._reading() as conn:
                     imported = conn.execute(
-                        "SELECT fingerprint FROM legacy_imports WHERE project_id=? AND source_name=?",
+                        """SELECT l.fingerprint, l.workbook_id,
+                                  (SELECT COUNT(*) FROM workbook_rows r JOIN sheets s ON s.id=r.sheet_id WHERE s.workbook_id=l.workbook_id) AS row_count
+                           FROM legacy_imports l WHERE l.project_id=? AND l.source_name=?""",
                         (project_id, path.name)).fetchone()
-                if imported is not None:
+                if imported is not None and imported["row_count"] > 0:
                     continue
+                if imported is not None and imported["row_count"] == 0:
+                    with self._transaction() as conn:
+                        conn.execute("DELETE FROM legacy_imports WHERE project_id=? AND source_name=?", (project_id, path.name))
+                        conn.execute("DELETE FROM project_events WHERE workbook_id=?", (imported["workbook_id"],))
+                        conn.execute("DELETE FROM workbooks WHERE id=?", (imported["workbook_id"],))
                 if (directory / f"~${path.name}").exists():
                     raise ApiFault(409, "LEGACY_WORKBOOK_IN_USE",
                         f"旧工作簿「{path.name}」仍在 Excel 中打开；关闭后重新加载项目以完成迁移。")
@@ -352,7 +359,7 @@ class SqliteProjectWorkbookStore:
                 try:
                     legacy_file_id = _legacy_file_id(inode_id, path.name)
                     document = projector.project_document(temp_path, file_id=legacy_file_id,
-                        name=path.name, project_id=project_id)
+                        name=path.name, project_id=project_id, project_dir=directory)
                     imported = self._import_document(project_id, document, source_name=path.name,
                         source_fingerprint=fingerprint, legacy_file_id=legacy_file_id)
                     if self._provisioner is not None and hasattr(self._provisioner, "archive_legacy_workbook"):
@@ -1115,9 +1122,10 @@ class SqliteProjectWorkbookStore:
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as temp:
             temp.write(data)
             temp_path = Path(temp.name)
+        _, project_dir = self._project(project_id) if project_id else (None, None)
         try:
             projected = projector.project_document(temp_path, file_id="import", name=name,
-                project_id=project_id)
+                project_id=project_id, project_dir=project_dir)
         except Exception as error:
             raise ApiFault(422, "INVALID_WORKBOOK", "无法读取这个工作簿。") from error
         finally:

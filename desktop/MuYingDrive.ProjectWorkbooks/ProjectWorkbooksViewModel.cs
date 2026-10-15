@@ -259,7 +259,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         catch (WorkbookApiException ex) when (ex.StatusCode == 409)
         { Error = "内容已变更，本次未覆盖。请重新加载并核对后再操作。"; }
         catch (OperationCanceledException) { Error = "请求已取消或超时。请重新加载确认结果后再操作。"; }
-        catch (Exception ex) { Error = ex is WorkbookApiException or InvalidDataException ? ex.Message : "操作未完成，请检查连接后重新加载。"; }
+        catch (Exception ex) { Error = ex is WorkbookApiException or InvalidDataException or InvalidOperationException ? ex.Message : "操作未完成，请检查连接后重新加载。"; }
         finally { Busy = false; }
     }
     public async Task ExecuteInlineAsync(Func<Task> action)
@@ -269,7 +269,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         catch (WorkbookApiException ex) when (ex.StatusCode == 409)
         { Error = "内容已变更，本次未覆盖。请重新加载并核对后再操作。"; }
         catch (OperationCanceledException) { Error = "请求已取消或超时。请重新加载确认结果后再操作。"; }
-        catch (Exception ex) { Error = ex is WorkbookApiException or InvalidDataException ? ex.Message : "操作未完成，请检查连接后重新加载。"; }
+        catch (Exception ex) { Error = ex is WorkbookApiException or InvalidDataException or InvalidOperationException ? ex.Message : "操作未完成，请检查连接后重新加载。"; }
     }
     public async Task RefreshFilesAsync()
     {
@@ -311,6 +311,14 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         SelectedSheet = Sheets.FirstOrDefault(s => s.IsScene || s.IsAsset) ?? Sheets.FirstOrDefault();
         if (Document.File.ProjectId == file.ProjectId && _lastEventSequence != sequenceBeforeLoad)
             await RefreshCurrentDocumentAsync(CancellationToken.None);
+        if (SelectedSheet is { IsAsset: true } assetSheet)
+        {
+            foreach (var asset in assetSheet.Assets.Take(20))
+            {
+                if (asset.Selected != null) _ = EnsureThumbnailAsync(asset.Selected);
+                foreach (var candidate in asset.Candidates) _ = EnsureThumbnailAsync(candidate);
+            }
+        }
         if (file.TemplateKind == "scene_beats")
         {
             _ = LoadProjectAssetsAsync();
@@ -453,6 +461,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
                 ?? refreshedSheets.FirstOrDefault(sheet => sheet.IsScene || sheet.IsAsset)
                 ?? refreshedSheets.FirstOrDefault();
             SceneChanged();
+            AssetChanged();
         }
         finally { ApplyingRemoteUpdate = false; }
     }
@@ -532,6 +541,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         foreach (var scene in Sheets.SelectMany(candidate => candidate.Scenes))
             scene.ResolveLinkedAssets(ProjectAssets);
         SceneChanged();
+        AssetChanged();
     }
 
     public async Task DeleteSceneRowAsync(SceneRowItem item)
@@ -552,6 +562,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         foreach (var scene in Sheets.SelectMany(sheet => sheet.Scenes))
             scene.ResolveLinkedAssets(ProjectAssets);
         SceneChanged();
+        AssetChanged();
     }
 
     public void OpenAssetFolder(AssetRowItem item)
@@ -643,6 +654,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         finally { item.SummaryLoading = false; }
     }
     public void SceneChanged() => Changed(nameof(VisibleScenes));
+    public void AssetChanged() => Changed(nameof(VisibleAssets));
     public async Task UpdateImagesAsync(AssetRowItem item, string? selectedId, IEnumerable<string> candidateIds, string? reason = null)
     {
         if (Document == null || SelectedSheet == null) return;
@@ -655,6 +667,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         // Replace only after server success. A conflict never mutates local references and never retries.
         var index = sheet.Assets.IndexOf(item);
         if (index >= 0) sheet.Assets[index] = MakeRow(updated);
+        AssetChanged();
     }
     public async Task UpdateStoryContentAsync(SceneRowItem item)
     {
@@ -696,6 +709,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
             foreach (var scene in Sheets.SelectMany(candidate => candidate.Scenes))
                 scene.ResolveLinkedAssets(ProjectAssets);
             SceneChanged();
+            AssetChanged();
         }
         finally { item.IsSaving = false; }
     }

@@ -407,10 +407,14 @@ public partial class ProjectWorkbooksView : UserControl
             foreach (var element in Descendants(WorkbookScroll))
             {
                 if (!InViewport(element, WorkbookScroll)) continue;
-                if (element is Image && (element.DataContext is ImageItem || element.DataContext is AssetRowItem { Selected: not null }))
-                { var picture = element.DataContext as ImageItem ?? ((AssetRowItem)element.DataContext).Selected!; work.Add(Model.EnsureThumbnailAsync(picture)); }
-                if (element.DataContext is AssetRowItem asset && !asset.SummaryLoaded && assets.Add(asset)) work.Add(Model.RefreshReviewSummariesAsync(document.File.Id, asset));
-                if (element.DataContext is SceneRowItem scene && !scene.SummaryLoaded && scenes.Add(scene)) work.Add(Model.RefreshSceneSummaryAsync(document.File.Id, scene));
+                if (element.DataContext is AssetRowItem asset && assets.Add(asset))
+                {
+                    if (asset.Selected != null) work.Add(Model.EnsureThumbnailAsync(asset.Selected));
+                    foreach (var candidate in asset.Candidates) work.Add(Model.EnsureThumbnailAsync(candidate));
+                    if (!asset.SummaryLoaded) work.Add(Model.RefreshReviewSummariesAsync(document.File.Id, asset));
+                }
+                if (element.DataContext is SceneRowItem scene && !scene.SummaryLoaded && scenes.Add(scene))
+                    work.Add(Model.RefreshSceneSummaryAsync(document.File.Id, scene));
             }
             await Task.WhenAll(work);
         }));

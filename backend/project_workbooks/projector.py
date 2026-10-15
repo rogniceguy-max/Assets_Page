@@ -97,7 +97,8 @@ def classify(path: Path) -> str:
 
 
 def project_document(path: Path, *, file_id: str, name: str, project_id: str, version: int = 1,
-                     row_version_resolver: Callable[[Mapping[str, str]], Mapping[str, int]] | None = None) -> dict[str, Any]:
+                     row_version_resolver: Callable[[Mapping[str, str]], Mapping[str, int]] | None = None,
+                     project_dir: Path | None = None) -> dict[str, Any]:
     """Reads every sheet of ``path`` into a ``WorkbookDocument``."""
     workbook = _load(path)
     try:
@@ -118,8 +119,9 @@ def project_document(path: Path, *, file_id: str, name: str, project_id: str, ve
             if classification.kind == "scene_beats":
                 sheets.append(_scene_sheet(sheet_id, title, worksheet, classification, notices, row_fingerprints))
             else:
+                effective_dir = project_dir or (path.parent if path else None)
                 sheets.append(_asset_sheet(sheet_id, title, worksheet, classification,
-                                           project_dir=path.parent if path else None,
+                                           project_dir=effective_dir,
                                            project_id=project_id, row_fingerprints=row_fingerprints))
 
             # Any column the classifier did not claim is data the contract says must not vanish.

@@ -341,7 +341,7 @@ public sealed class WorkspaceViewModel : ObservableObject
             {
                 case ProjectNodeKind.Workbook when projectWorkbooks is not null:
                     workspace.ShowPage(WorkbookPageKey);
-                    _ = projectWorkbooks.OpenWorkbookAsync(node.ProjectId, node.Id, async () =>
+                    _ = projectWorkbooks.OpenWorkbookAsync(node.ProjectId, node.Id, node.Name, async () =>
                     {
                         await workspace.LoadProjectsAsync();
                     });
