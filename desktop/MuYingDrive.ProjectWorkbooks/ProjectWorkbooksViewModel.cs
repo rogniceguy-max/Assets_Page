@@ -378,6 +378,10 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         {
             if (ReferenceEquals(_selectedProject, value)) return;
             _selectedProject = value; Changed();
+            ProjectAssets.Clear();
+            Document = null;
+            SelectedSheet = null;
+            Sheets.Clear();
             if (value != null) _ = EnsureLiveUpdatesAsync(value.Id);
         }
     }
@@ -1017,12 +1021,21 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         {
             try
             {
-                var rawEpisode = Document.File.Name ?? "第1集";
-                var episode = rawEpisode.Replace("_节拍表", "", StringComparison.OrdinalIgnoreCase)
-                                        .Replace(".xlsx", "", StringComparison.OrdinalIgnoreCase)
-                                        .Trim();
-                if (string.IsNullOrEmpty(episode) || episode.Equals("节拍表", StringComparison.OrdinalIgnoreCase))
-                    episode = "第1集";
+                string episode;
+                if (!string.IsNullOrWhiteSpace(SelectedSheet?.Name))
+                {
+                    episode = SelectedSheet.Name.Trim();
+                }
+                else
+                {
+                    var rawEpisode = Document.File.Name ?? "第1集";
+                    var parsed = rawEpisode.Replace("_节拍表", "", StringComparison.OrdinalIgnoreCase)
+                                           .Replace(".xlsx", "", StringComparison.OrdinalIgnoreCase)
+                                           .Trim();
+                    episode = (string.IsNullOrEmpty(parsed) || parsed.Equals("节拍表", StringComparison.OrdinalIgnoreCase))
+                        ? "第1集"
+                        : parsed;
+                }
 
                 var beatNum = !string.IsNullOrWhiteSpace(item.BeatNumberDraft) ? item.BeatNumberDraft : item.SceneNumberDraft;
                 if (string.IsNullOrWhiteSpace(beatNum)) beatNum = "1";

@@ -35,9 +35,17 @@ public partial class MainWindow : Window
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        _healthWindowLoaded.TrySetResult();
-        if (App.IsUpdateHealthCheck) return;
-        await _viewModel.InitializeAsync();
+        try
+        {
+            _healthWindowLoaded.TrySetResult();
+            if (App.IsUpdateHealthCheck) return;
+            await _viewModel.InitializeAsync();
+        }
+        catch (Exception ex)
+        {
+            App.Record(ex, "MainWindow.OnLoaded");
+            MessageBox.Show($"初始化主窗口遇到问题：{ex.Message}", "初始化失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     private async void OnClosing(object? sender, CancelEventArgs e)

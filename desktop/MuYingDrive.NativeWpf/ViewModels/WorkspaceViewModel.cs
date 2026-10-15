@@ -78,12 +78,21 @@ public sealed class WorkspaceViewModel : ObservableObject
         NavigateCommand = new RelayCommand(parameter => Navigate(parameter as string ?? string.Empty));
         SelectSpaceCommand = new RelayCommand(parameter => _ = SelectSpaceAsync(parameter as string));
         ActivateProjectNodeCommand = new RelayCommand(
-            parameter => { if (parameter is ProjectNode node) ActivateProjectNode(node); });
+            parameter =>
+            {
+                var node = parameter as ProjectNode ?? _selectedProjectNode;
+                if (node is not null) ActivateProjectNode(node);
+            });
         OpenProjectNodeCommand = new RelayCommand(
-            parameter => { if (parameter is ProjectNode node) ActivateProjectNode(node); });
+            parameter =>
+            {
+                var node = parameter as ProjectNode ?? _selectedProjectNode;
+                if (node is not null) ActivateProjectNode(node);
+            });
         RenameProjectNodeCommand = new AsyncRelayCommand(async parameter =>
         {
-            if (parameter is not ProjectNode node || node.Kind != ProjectNodeKind.Workbook) return;
+            var node = parameter as ProjectNode ?? _selectedProjectNode;
+            if (node is null || node.Kind != ProjectNodeKind.Workbook) return;
             if (_projectWorkbooksPage is null) return;
 
             var stem = System.IO.Path.GetFileNameWithoutExtension(node.Name);
@@ -121,7 +130,8 @@ public sealed class WorkspaceViewModel : ObservableObject
         });
         DeleteWorkbookProjectNodeCommand = new AsyncRelayCommand(async parameter =>
         {
-            if (parameter is not ProjectNode node || node.Kind != ProjectNodeKind.Workbook) return;
+            var node = parameter as ProjectNode ?? _selectedProjectNode;
+            if (node is null || node.Kind != ProjectNodeKind.Workbook) return;
             if (_projectWorkbooksPage is null) return;
 
             var confirm = new ConfirmDialog(
@@ -152,7 +162,8 @@ public sealed class WorkspaceViewModel : ObservableObject
         });
         DeleteProjectNodeCommand = new AsyncRelayCommand(async parameter =>
         {
-            if (parameter is not ProjectNode node || node.Kind != ProjectNodeKind.Project) return;
+            var node = parameter as ProjectNode ?? _selectedProjectNode;
+            if (node is null || node.Kind != ProjectNodeKind.Project) return;
             if (Session is null || _main.ApiClient is null) return;
 
             var confirm = new ConfirmDialog(
@@ -168,9 +179,14 @@ public sealed class WorkspaceViewModel : ObservableObject
             try
             {
                 await _main.ApiClient.DeleteProjectSpaceAsync(Session.SessionToken, node.Id);
-                if (_projectWorkbooksPage?.ViewModel.Document?.File.ProjectId == node.Id)
+                if (_projectWorkbooksPage?.ViewModel.Document?.File.ProjectId == node.Id ||
+                    _projectWorkbooksPage?.ViewModel.SelectedProject?.Id == node.Id)
                 {
                     _projectWorkbooksPage.ViewModel.Back();
+                }
+                if (_selectedProjectNode?.ProjectId == node.Id || _selectedProjectNode?.Id == node.Id)
+                {
+                    SelectProjectNode(null);
                 }
                 await LoadProjectsAsync();
             }

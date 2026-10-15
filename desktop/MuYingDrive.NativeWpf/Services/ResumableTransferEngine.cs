@@ -385,6 +385,8 @@ public sealed class ResumableTransferEngine : IAsyncDisposable
     private async Task RunTransferAsync(RuntimeTask task)
     {
         if (!await AcquireWorkerSlotAsync(task).ConfigureAwait(false)) return;
+        FileStream? source = null;
+        FileStream? partial = null;
         try
         {
             ValidateSource(task);
@@ -429,9 +431,9 @@ public sealed class ResumableTransferEngine : IAsyncDisposable
             if (repairCheckpoint) await SaveAsync(task, CancellationToken.None).ConfigureAwait(false);
             Publish(task);
 
-            await using var source = new FileStream(task.SourcePath, FileMode.Open, FileAccess.Read, FileShare.Read, _chunkSize,
+            source = new FileStream(task.SourcePath, FileMode.Open, FileAccess.Read, FileShare.Read, _chunkSize,
                 FileOptions.Asynchronous | FileOptions.SequentialScan);
-            await using var partial = new FileStream(task.PartialPath, FileMode.Open, FileAccess.Write, FileShare.None, _chunkSize,
+            partial = new FileStream(task.PartialPath, FileMode.Open, FileAccess.Write, FileShare.None, _chunkSize,
                 FileOptions.Asynchronous | FileOptions.SequentialScan);
             source.Seek(task.BytesTransferred, SeekOrigin.Begin);
             partial.Seek(0, SeekOrigin.End);
@@ -461,7 +463,9 @@ public sealed class ResumableTransferEngine : IAsyncDisposable
             if (task.PauseRequested) { await MarkPausedAsync(task).ConfigureAwait(false); return; }
             ValidateSource(task);
             await partial.DisposeAsync().ConfigureAwait(false);
+            partial = null;
             await source.DisposeAsync().ConfigureAwait(false);
+            source = null;
 
             var partialHash = await HashFileAsync(task.PartialPath).ConfigureAwait(false);
             var sourceHash = await HashFileAsync(task.SourcePath).ConfigureAwait(false);
@@ -469,24 +473,55 @@ public sealed class ResumableTransferEngine : IAsyncDisposable
             if (!CryptographicOperations.FixedTimeEquals(partialHash, sourceHash))
                 throw new IOException("Integrity verification failed; the destination was not published.");
 
-            lock (task.Sync)
+            var published = false;
+            for (var attempt = 1; attempt <= 5; attempt++)
             {
-                // This lock is the cancellation/publication boundary. If cancellation wins,
-                // cleanup removes the partial; if publication wins, the final file is kept.
-                if (task.CancelRequested) throw new OperationCanceledException("Transfer canceled before publication.");
-                if (File.Exists(task.DestinationPath) || Directory.Exists(task.DestinationPath))
-                    throw new IOException("The destination already exists; overwriting is refused.");
-                File.Move(task.PartialPath, task.DestinationPath, overwrite: false);
-                task.Status = ResumableTransferStatus.Completed;
-                task.Error = null;
-                task.BytesTransferred = task.TotalBytes;
-                task.LastActivityUtc = DateTimeOffset.UtcNow;
+                lock (task.Sync)
+                {
+                    // This lock is the cancellation/publication boundary. If cancellation wins,
+                    // cleanup removes the partial; if publication wins, the final file is kept.
+                    if (task.CancelRequested) throw new OperationCanceledException("Transfer canceled before publication.");
+                    if (File.Exists(task.DestinationPath) || Directory.Exists(task.DestinationPath))
+                        throw new IOException("The destination already exists; overwriting is refused.");
+
+                    try
+                    {
+                        File.Move(task.PartialPath, task.DestinationPath, overwrite: false);
+                        task.Status = ResumableTransferStatus.Completed;
+                        task.Error = null;
+                        task.BytesTransferred = task.TotalBytes;
+                        task.LastActivityUtc = DateTimeOffset.UtcNow;
+                        published = true;
+                        break;
+                    }
+                    catch (Exception ex) when (attempt < 5 && (ex is IOException or UnauthorizedAccessException))
+                    {
+                        // Transient SMB oplock / Defender scanning locks
+                    }
+                }
+
+                if (!published)
+                {
+                    await Task.Delay(150).ConfigureAwait(false);
+                }
             }
+
             await SaveAsync(task, CancellationToken.None).ConfigureAwait(false);
             Publish(task);
         }
         catch (Exception ex)
         {
+            if (partial != null)
+            {
+                try { await partial.DisposeAsync().ConfigureAwait(false); } catch { }
+                partial = null;
+            }
+            if (source != null)
+            {
+                try { await source.DisposeAsync().ConfigureAwait(false); } catch { }
+                source = null;
+            }
+
             if (task.CancelRequested)
             {
                 await CancelAndDeleteAsync(task, CancellationToken.None).ConfigureAwait(false);
@@ -503,6 +538,14 @@ public sealed class ResumableTransferEngine : IAsyncDisposable
         }
         finally
         {
+            if (partial != null)
+            {
+                try { await partial.DisposeAsync().ConfigureAwait(false); } catch { }
+            }
+            if (source != null)
+            {
+                try { await source.DisposeAsync().ConfigureAwait(false); } catch { }
+            }
             // Released whatever happened — completed, failed, paused or cancelled. A slot
             // held past the worker's death would quietly shrink the queue's capacity for
             // the rest of the session.

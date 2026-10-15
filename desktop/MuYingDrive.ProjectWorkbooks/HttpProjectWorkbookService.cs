@@ -20,7 +20,7 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
     private readonly Func<string>? _getAccountId;
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
     private sealed record ApiError(string Code, string Message);
-    private sealed record ErrorBody(ApiError Error);
+    private sealed record ErrorBody(ApiError? Error = null, string? Message = null);
     private sealed record ItemsEnvelope<T>(List<T> Items);
     public long MaximumUploadBytes => _limits.MaxUploadBytes;
     public string OperationScope
@@ -143,11 +143,69 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
     private static async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken ct)
     {
         if (response.IsSuccessStatusCode) return;
-        ErrorBody? error = null;
-        try { error = JsonSerializer.Deserialize<ErrorBody>(await BytesAsync(response.Content, 64 * 1024, ct), Json); }
-        catch (JsonException) { }
+        var (code, message) = await ReadErrorDetailsAsync(response, ct);
         var status = (int)response.StatusCode;
-        throw new WorkbookApiException(status, error?.Error?.Code ?? "HTTP_ERROR", error?.Error?.Message ?? $"请求失败（{status}）。");
+        throw new WorkbookApiException(status, code ?? "HTTP_ERROR", message ?? $"请求失败（{status}）。");
+    }
+
+    private static async Task<(string? Code, string? Message)> ReadErrorDetailsAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        try
+        {
+            var bytes = await BytesAsync(response.Content, 64 * 1024, ct);
+            using var document = JsonDocument.Parse(bytes);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return (null, null);
+
+            string? code = null;
+            string? message = null;
+
+            if (root.TryGetProperty("code", out var codeElem) && codeElem.ValueKind == JsonValueKind.String)
+            {
+                code = codeElem.GetString();
+            }
+
+            if (root.TryGetProperty("error", out var errorElem))
+            {
+                if (errorElem.ValueKind == JsonValueKind.String)
+                {
+                    message = errorElem.GetString();
+                }
+                else if (errorElem.ValueKind == JsonValueKind.Object)
+                {
+                    if (errorElem.TryGetProperty("code", out var nestedCode) && nestedCode.ValueKind == JsonValueKind.String)
+                    {
+                        code ??= nestedCode.GetString();
+                    }
+                    if (errorElem.TryGetProperty("message", out var nestedMsg) && nestedMsg.ValueKind == JsonValueKind.String)
+                    {
+                        message = nestedMsg.GetString();
+                    }
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(message) && root.TryGetProperty("message", out var msgElem) && msgElem.ValueKind == JsonValueKind.String)
+            {
+                message = msgElem.GetString();
+            }
+
+            if (string.IsNullOrWhiteSpace(message) && root.TryGetProperty("detail", out var detailElem) && detailElem.ValueKind == JsonValueKind.String)
+            {
+                message = detailElem.GetString();
+            }
+
+            return (code, message);
+        }
+        catch (Exception)
+        {
+            return (null, null);
+        }
+    }
+
+    private static async Task<string?> ReadErrorMessageAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        var (_, message) = await ReadErrorDetailsAsync(response, ct);
+        return message;
     }
     private async Task<T> ReadAsync<T>(HttpMethod method, string route, HttpContent? body, CancellationToken ct)
     {
@@ -311,7 +369,7 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
         var headers = new Dictionary<string, string> { ["X-Project-Id"] = projectId };
         if (!string.IsNullOrEmpty(folderPath))
         {
-            headers["X-Folder-Path"] = Uri.EscapeDataString(folderPath);
+            headers["X-Folder-Path"] = folderPath;
         }
         return UploadAsync<ImageAsset>("image-assets", fileName, mediaType, source, headers, ct);
     }

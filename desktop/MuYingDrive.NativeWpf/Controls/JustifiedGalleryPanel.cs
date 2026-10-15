@@ -756,9 +756,19 @@ public sealed class JustifiedGalleryPanel : VirtualizingPanel, IScrollInfo
         return ActualHeight > 0d ? ActualHeight : 600d;
     }
 
-    private double ReadAspectRatio(object item)
+    private double ReadAspectRatio(object? item)
     {
+        if (item is null)
+        {
+            return 1d;
+        }
+
         var model = item is FrameworkElement element ? element.DataContext ?? item : item;
+        if (model is null)
+        {
+            return 1d;
+        }
+
         var accessor = RatioAccessors.GetOrAdd(model.GetType(), static type =>
         {
             const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public;

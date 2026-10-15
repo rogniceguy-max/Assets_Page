@@ -66,9 +66,14 @@
                         <TextBlock Text="选择项目" FontSize="{StaticResource Typography.FontSize.SmallTitle}" FontWeight="SemiBold"
                                    Foreground="{DynamicResource Brush.Text.Primary}" Margin="0,0,0,12" />
                         <ComboBox ItemsSource="{Binding Projects}" SelectedItem="{Binding SelectedProject}"
-                                  DisplayMemberPath="Name"
                                   MinWidth="280" MaxWidth="380" HorizontalAlignment="Left"
-                                  AutomationProperties.Name="选择项目" />
+                                  AutomationProperties.Name="选择项目">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Name}" />
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
                     </StackPanel>
                 </Border>
 
@@ -79,9 +84,14 @@
                         <TextBlock Text="选择节拍表" FontSize="{StaticResource Typography.FontSize.SmallTitle}" FontWeight="SemiBold"
                                    Foreground="{DynamicResource Brush.Text.Primary}" Margin="0,0,0,12" />
                         <ComboBox ItemsSource="{Binding Workbooks}" SelectedItem="{Binding SelectedWorkbook}"
-                                  DisplayMemberPath="Name"
                                   MinWidth="280" MaxWidth="380" HorizontalAlignment="Left"
-                                  AutomationProperties.Name="选择节拍表" />
+                                  AutomationProperties.Name="选择节拍表">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Name}" />
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
 
                         <TextBlock Text="正在加载项目节拍表..." Foreground="{DynamicResource Brush.Text.Secondary}"
                                    Margin="0,8" Visibility="{Binding IsLoadingWorkbooks, Converter={StaticResource BoolToVisibility}}" />

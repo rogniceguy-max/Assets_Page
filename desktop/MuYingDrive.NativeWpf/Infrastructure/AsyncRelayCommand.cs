@@ -32,6 +32,10 @@ public sealed class AsyncRelayCommand(Func<object?, Task> execute, Predicate<obj
         {
             await execute(parameter);
         }
+        catch (Exception ex)
+        {
+            App.Record(ex, "AsyncRelayCommand");
+        }
         finally
         {
             IsExecuting = false;

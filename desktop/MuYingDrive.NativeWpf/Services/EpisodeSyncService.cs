@@ -20,6 +20,7 @@ public sealed class EpisodeSyncService : ObservableObject, IDisposable
     private readonly IProjectWorkbookService _service;
     private readonly string _shareRoot;
     private readonly SemaphoreSlim _syncLock = new(1, 1);
+    private readonly SemaphoreSlim _localChangeGate = new(1, 1);
     private readonly HashSet<string> _suppressedDeletes = new(StringComparer.OrdinalIgnoreCase);
     private volatile bool _isInternalSyncing;
 
@@ -155,8 +156,15 @@ public sealed class EpisodeSyncService : ObservableObject, IDisposable
         if (string.IsNullOrWhiteSpace(_currentProjectName) || _currentEpisodes.Count == 0 || string.IsNullOrWhiteSpace(_currentLocalRoot))
             return;
 
-        if (!await _syncLock.WaitAsync(100))
+        try
+        {
+            if (!await _syncLock.WaitAsync(100))
+                return;
+        }
+        catch (ObjectDisposedException)
+        {
             return;
+        }
 
         try
         {
@@ -283,7 +291,13 @@ public sealed class EpisodeSyncService : ObservableObject, IDisposable
         {
             _isInternalSyncing = false;
             IsSyncing = false;
-            _syncLock.Release();
+            try
+            {
+                _syncLock.Release();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
         }
     }
 
@@ -340,33 +354,41 @@ public sealed class EpisodeSyncService : ObservableObject, IDisposable
 
                     try
                     {
-                        var doc = await _service.OpenAsync(episode.FileId);
-                        var sheet = (!string.IsNullOrWhiteSpace(episode.SheetId)
-                            ? doc.Sheets.FirstOrDefault(s => s.Id == episode.SheetId)
-                            : null)
-                            ?? doc.Sheets.FirstOrDefault(s => s.Name.Equals(episode.Name, StringComparison.OrdinalIgnoreCase))
-                            ?? doc.Sheets.FirstOrDefault(s => s.Kind is "scene_beats" or "scene_review" || s.SceneRows.Count > 0);
-                        if (sheet != null)
+                        await _localChangeGate.WaitAsync();
+                        try
                         {
-                            var row = sheet.SceneRows.FirstOrDefault(r =>
-                                NormalizeBeatNum(!string.IsNullOrWhiteSpace(r.BeatNumber) ? r.BeatNumber : r.SceneNumber) == beatNum);
-
-                            if (row == null)
+                            var doc = await _service.OpenAsync(episode.FileId);
+                            var sheet = (!string.IsNullOrWhiteSpace(episode.SheetId)
+                                ? doc.Sheets.FirstOrDefault(s => s.Id == episode.SheetId)
+                                : null)
+                                ?? doc.Sheets.FirstOrDefault(s => s.Name.Equals(episode.Name, StringComparison.OrdinalIgnoreCase))
+                                ?? doc.Sheets.FirstOrDefault(s => s.Kind is "scene_beats" or "scene_review" || s.SceneRows.Count > 0);
+                            if (sheet != null)
                             {
-                                row = await _service.CreateSceneRowAsync(doc.File.Id, sheet.Id);
+                                var row = sheet.SceneRows.FirstOrDefault(r =>
+                                    NormalizeBeatNum(!string.IsNullOrWhiteSpace(r.BeatNumber) ? r.BeatNumber : r.SceneNumber) == beatNum);
+
+                                if (row == null)
+                                {
+                                    row = await _service.CreateSceneRowAsync(doc.File.Id, sheet.Id);
+                                    await _service.UpdateSceneRowAsync(doc.File.Id, row.Id, new UpdateSceneRowRequest
+                                    {
+                                        BeatNumber = beatNum,
+                                        SceneNumber = beatNum
+                                    });
+                                }
+
+                                var videoItem = new VideoItem(Guid.NewGuid().ToString("D"), fileName, nasDest);
                                 await _service.UpdateSceneRowAsync(doc.File.Id, row.Id, new UpdateSceneRowRequest
                                 {
-                                    BeatNumber = beatNum,
-                                    SceneNumber = beatNum
+                                    VideoAction = "add",
+                                    Video = videoItem
                                 });
                             }
-
-                            var videoItem = new VideoItem(Guid.NewGuid().ToString("D"), fileName, nasDest);
-                            await _service.UpdateSceneRowAsync(doc.File.Id, row.Id, new UpdateSceneRowRequest
-                            {
-                                VideoAction = "add",
-                                Video = videoItem
-                            });
+                        }
+                        finally
+                        {
+                            try { _localChangeGate.Release(); } catch (ObjectDisposedException) { }
                         }
                     }
                     catch
@@ -540,6 +562,20 @@ public sealed class EpisodeSyncService : ObservableObject, IDisposable
     public void Dispose()
     {
         Stop();
-        _syncLock.Dispose();
+        try
+        {
+            _syncLock.Dispose();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
+        try
+        {
+            _localChangeGate.Dispose();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
     }
 }

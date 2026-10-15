@@ -9,6 +9,7 @@ public partial class App : Application
 {
     public static bool IsUpdateHealthCheck { get; private set; }
     private FileStream? _executionLock;
+    private static int _dialogActive;
 
     /// <summary>Where a crash is written, so there is somewhere to look afterwards.</summary>
     public static string CrashLogPath { get; } = System.IO.Path.Combine(
@@ -24,11 +25,25 @@ public partial class App : Application
         // "clicking a project closes the app" arrives with no output at all.
         DispatcherUnhandledException += (_, args) =>
         {
+            args.Handled = true;
             Record(args.Exception, "界面线程");
-            MessageBox.Show(
-                $"沐影盘遇到了一个未预期的问题，已记录到：\n{CrashLogPath}\n\n请把该文件发给管理员。",
-                "沐影盘遇到问题", MessageBoxButton.OK, MessageBoxImage.Error);
-            Shutdown(1);
+
+            if (Interlocked.CompareExchange(ref _dialogActive, 1, 0) == 0)
+            {
+                try
+                {
+                    MessageBox.Show(
+                        $"沐影盘遇到了一个未预期的问题，已记录到：\n{CrashLogPath}\n\n若应用出现异常，可尝试重启软件。",
+                        "沐影盘遇到问题", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+                catch
+                {
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _dialogActive, 0);
+                }
+            }
         };
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>
             Record(args.ExceptionObject as Exception, "后台线程");
@@ -88,7 +103,7 @@ public partial class App : Application
     /// including the write itself — a crash handler that throws is a crash handler that
     /// loses the crash it was reporting.
     /// </remarks>
-    private static void Record(Exception? exception, string origin)
+    public static void Record(Exception? exception, string origin)
     {
         try
         {

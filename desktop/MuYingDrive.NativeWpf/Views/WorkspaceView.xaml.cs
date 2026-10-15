@@ -19,9 +19,24 @@ public partial class WorkspaceView : UserControl
 
     private void OnProjectNodeContextMenuOpening(object sender, ContextMenuEventArgs e)
     {
-        if (sender is System.Windows.FrameworkElement { DataContext: ViewModels.ProjectNode node })
+        ProjectTree_ContextMenuOpening(sender, e);
+    }
+
+    private void ProjectTree_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        if (sender is System.Windows.FrameworkElement fe)
         {
-            if (!node.IsOpenable && !node.IsProject)
+            if (fe.ContextMenu != null)
+            {
+                fe.ContextMenu.PlacementTarget = fe;
+                fe.ContextMenu.DataContext = fe.DataContext;
+            }
+
+            if (fe.DataContext is ViewModels.ProjectNode node)
+            {
+                (DataContext as ViewModels.WorkspaceViewModel)?.SelectProjectNode(node);
+            }
+            else
             {
                 e.Handled = true;
             }

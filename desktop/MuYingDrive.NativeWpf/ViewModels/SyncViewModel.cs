@@ -40,7 +40,10 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
                     if (e.PropertyName == nameof(EpisodeSyncService.StatusText))
                         OnPropertyChanged(nameof(StatusText));
                     else if (e.PropertyName == nameof(EpisodeSyncService.IsSyncing))
+                    {
                         OnPropertyChanged(nameof(IsSyncing));
+                        SyncNowCommand?.RaiseCanExecuteChanged();
+                    }
                     else if (e.PropertyName == nameof(EpisodeSyncService.IsWatching))
                     {
                         OnPropertyChanged(nameof(IsWatching));
@@ -67,7 +70,7 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
         SelectAllEpisodesCommand = new RelayCommand(_ => SelectAllEpisodes());
         DeselectAllEpisodesCommand = new RelayCommand(_ => DeselectAllEpisodes());
         ToggleSyncCommand = new RelayCommand(_ => ToggleSync());
-        SyncNowCommand = new RelayCommand(async _ => await SyncNowAsync(), _ => CanSyncNow);
+        SyncNowCommand = new AsyncRelayCommand(_ => SyncNowAsync(), _ => CanSyncNow);
 
         LoadSavedConfig();
         _ = InitializeAsync();
@@ -154,7 +157,7 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
     public ICommand SelectAllEpisodesCommand { get; }
     public ICommand DeselectAllEpisodesCommand { get; }
     public ICommand ToggleSyncCommand { get; }
-    public RelayCommand SyncNowCommand { get; }
+    public AsyncRelayCommand SyncNowCommand { get; }
 
     public async Task InitializeAsync()
     {
@@ -373,6 +376,10 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
         catch (Exception ex)
         {
             ValidationMessage = $"同步出错: {ex.Message}";
+        }
+        finally
+        {
+            SyncNowCommand.RaiseCanExecuteChanged();
         }
     }
 

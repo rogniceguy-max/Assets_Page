@@ -479,7 +479,7 @@ public sealed class TransferViewModel : ObservableObject
         var group = GetFolderGroup(task);
         if (group is not null)
         {
-            foreach (var id in group.ChildTaskIds)
+            foreach (var id in group.ChildTaskIds.ToArray())
             {
                 await _engine.CancelAsync(id);
                 _taskIdToGroup.Remove(id);

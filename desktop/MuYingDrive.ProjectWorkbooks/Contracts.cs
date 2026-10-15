@@ -12,6 +12,7 @@ public sealed record ProjectFile(string Id, string Name, string TemplateKind, lo
     public string? ProjectId { get; init; }
     public string? RevisionOf { get; init; }
     public string? RevisionLabel { get; init; }
+    public override string ToString() => Name;
 }
 public sealed record ImageAsset(string Id, string Name, string MediaType, int Width, int Height)
 {

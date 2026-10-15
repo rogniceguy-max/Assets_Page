@@ -266,10 +266,17 @@ public partial class ProjectWorkbooksView : UserControl
 
     private async void OnCardRenameLostFocus(object sender, RoutedEventArgs e)
     {
-        if (FileItem(sender) is not { } item) return;
-        if (!item.IsEditingName) return;
-        item.IsEditingName = false;
-        await Model.RenameWorkbookAsync(item, item.NameDraft);
+        try
+        {
+            if (FileItem(sender) is not { } item) return;
+            if (!item.IsEditingName) return;
+            item.IsEditingName = false;
+            await Model.RenameWorkbookAsync(item, item.NameDraft);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(Window.GetWindow(this), $"重命名失败：{ex.Message}", "重命名错误", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     private async void OnCardRenameKeyDown(object sender, KeyEventArgs e)
@@ -290,12 +297,19 @@ public partial class ProjectWorkbooksView : UserControl
 
     private async void OnDeleteWorkbookFromMenu(object sender, RoutedEventArgs e)
     {
-        if (FileItem(sender) is not { } item) return;
-        if (MessageBox.Show(Window.GetWindow(this), $"确定要删除工作簿「{item.Name}」吗？\n删除后不可恢复。", "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        try
         {
-            return;
+            if (FileItem(sender) is not { } item) return;
+            if (MessageBox.Show(Window.GetWindow(this), $"确定要删除工作簿「{item.Name}」吗？\n删除后不可恢复。", "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+            {
+                return;
+            }
+            await Model.DeleteWorkbookAsync(item);
         }
-        await Model.DeleteWorkbookAsync(item);
+        catch (Exception ex)
+        {
+            MessageBox.Show(Window.GetWindow(this), $"删除失败：{ex.Message}", "删除错误", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
     private async void OnRefresh(object sender, RoutedEventArgs e) => await Model.ExecuteAsync(async () =>
     {
@@ -925,19 +939,26 @@ public partial class ProjectWorkbooksView : UserControl
 
     private async void OnVideoDrop(object sender, DragEventArgs e)
     {
-        e.Handled = true;
-        if (Scene(sender) is not { } row || !row.Row.CanEdit) return;
-        var paths = Paths(e);
-        if (paths.Length == 0 || paths.Any(p => !IsVideo(p)))
+        try
         {
-            MessageBox.Show(Window.GetWindow(this), "请拖入视频文件（如 .mp4, .mov, .mkv 等）。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
+            e.Handled = true;
+            if (Scene(sender) is not { } row || !row.Row.CanEdit) return;
+            var paths = Paths(e);
+            if (paths.Length == 0 || paths.Any(p => !IsVideo(p)))
+            {
+                MessageBox.Show(Window.GetWindow(this), "请拖入视频文件（如 .mp4, .mov, .mkv 等）。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
 
-        var model = TryResolveModel(sender) ?? Model;
-        foreach (var path in paths)
+            var model = TryResolveModel(sender) ?? Model;
+            foreach (var path in paths)
+            {
+                await model.AttachVideoFileAsync(row, path);
+            }
+        }
+        catch (Exception ex)
         {
-            await model.AttachVideoFileAsync(row, path);
+            MessageBox.Show(Window.GetWindow(this), $"关联视频失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
@@ -995,22 +1016,32 @@ public partial class ProjectWorkbooksView : UserControl
         if (_viewportScheduled) return; _viewportScheduled = true;
         Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(async () =>
         {
-            _viewportScheduled = false;
-            if (Model.Document is not { } document) return;
-            var work = new List<Task>(); var assets = new HashSet<AssetRowItem>(); var scenes = new HashSet<SceneRowItem>();
-            foreach (var element in Descendants(WorkbookScroll))
+            try
             {
-                if (!InViewport(element, WorkbookScroll)) continue;
-                if (element.DataContext is AssetRowItem asset && assets.Add(asset))
+                if (Model.Document is not { } document) return;
+                var work = new List<Task>(); var assets = new HashSet<AssetRowItem>(); var scenes = new HashSet<SceneRowItem>();
+                foreach (var element in Descendants(WorkbookScroll))
                 {
-                    if (asset.Selected != null) work.Add(Model.EnsureThumbnailAsync(asset.Selected));
-                    foreach (var candidate in asset.Candidates) work.Add(Model.EnsureThumbnailAsync(candidate));
-                    if (!asset.SummaryLoaded) work.Add(Model.RefreshReviewSummariesAsync(document.File.Id, asset));
+                    if (!InViewport(element, WorkbookScroll)) continue;
+                    if (element.DataContext is AssetRowItem asset && assets.Add(asset))
+                    {
+                        if (asset.Selected != null) work.Add(Model.EnsureThumbnailAsync(asset.Selected));
+                        foreach (var candidate in asset.Candidates) work.Add(Model.EnsureThumbnailAsync(candidate));
+                        if (!asset.SummaryLoaded) work.Add(Model.RefreshReviewSummariesAsync(document.File.Id, asset));
+                    }
+                    if (element.DataContext is SceneRowItem scene && !scene.SummaryLoaded && scenes.Add(scene))
+                        work.Add(Model.RefreshSceneSummaryAsync(document.File.Id, scene));
                 }
-                if (element.DataContext is SceneRowItem scene && !scene.SummaryLoaded && scenes.Add(scene))
-                    work.Add(Model.RefreshSceneSummaryAsync(document.File.Id, scene));
+                await Task.WhenAll(work);
             }
-            await Task.WhenAll(work);
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ScheduleViewport] Error: {ex.Message}");
+            }
+            finally
+            {
+                _viewportScheduled = false;
+            }
         }));
     }
     private static IEnumerable<FrameworkElement> Descendants(DependencyObject parent)
