@@ -176,28 +176,170 @@ public sealed class TransferViewModel : ObservableObject
         }
     }
 
+    private sealed class FolderTransferGroup
+    {
+        public string GroupId { get; }
+        public string FolderName { get; }
+        public string DestinationDirectory { get; }
+        public TransferTask TaskItem { get; }
+        public HashSet<string> ChildTaskIds { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, ResumableTransferSnapshot> Snapshots { get; } = new(StringComparer.Ordinal);
+
+        public FolderTransferGroup(string groupId, string folderName, string destinationDirectory, TransferTask taskItem)
+        {
+            GroupId = groupId;
+            FolderName = folderName;
+            DestinationDirectory = destinationDirectory;
+            TaskItem = taskItem;
+        }
+
+        public void UpdateGroupState()
+        {
+            long totalBytes = 0;
+            long transferred = 0;
+            var anyRunning = false;
+            var anyPaused = false;
+            var anyFailed = false;
+            var allCompleted = Snapshots.Count > 0;
+            string? firstError = null;
+
+            foreach (var s in Snapshots.Values)
+            {
+                totalBytes += s.TotalBytes;
+                transferred += s.BytesTransferred;
+                if (s.Status == ResumableTransferStatus.Running) anyRunning = true;
+                if (s.Status == ResumableTransferStatus.Paused) anyPaused = true;
+                if (s.Status == ResumableTransferStatus.Failed)
+                {
+                    anyFailed = true;
+                    firstError ??= s.Error;
+                }
+                if (s.Status != ResumableTransferStatus.Completed) allCompleted = false;
+            }
+
+            TransferState state = allCompleted
+                ? TransferState.Completed
+                : anyFailed
+                    ? TransferState.Failed
+                    : anyRunning
+                        ? TransferState.Running
+                        : anyPaused
+                            ? TransferState.Paused
+                            : TransferState.Queued;
+
+            TaskItem.UpdateManual(totalBytes, transferred, state, firstError);
+        }
+    }
+
+    private readonly List<FolderTransferGroup> _folderGroups = [];
+    private readonly Dictionary<string, FolderTransferGroup> _taskIdToGroup = new(StringComparer.Ordinal);
+
+    public async Task AddFolderUploadAsync(string folderName, string destinationDirectory, IReadOnlyList<(string LocalPath, string DestinationPath)> files)
+    {
+        await _lifecycleGate.WaitAsync();
+        try
+        {
+            if (!_acceptTransferActions)
+            {
+                OperationErrorMessage = "正在准备安全退出，暂时不能开始新的传输。";
+                return;
+            }
+
+            long estimatedTotalBytes = 0;
+            foreach (var (localPath, _) in files)
+            {
+                try
+                {
+                    if (File.Exists(localPath))
+                        estimatedTotalBytes += new FileInfo(localPath).Length;
+                }
+                catch { }
+            }
+
+            var groupId = Guid.NewGuid().ToString("D");
+            var folderTask = new TransferTask(groupId, folderName, "上传", estimatedTotalBytes, 0, TransferState.Queued);
+            var group = new FolderTransferGroup(groupId, folderName, destinationDirectory, folderTask);
+            _folderGroups.Add(group);
+            Tasks.Insert(0, folderTask);
+
+            foreach (var (localPath, destPath) in files)
+            {
+                var snapshot = await _engine.StartUploadAsync(localPath, destPath);
+                group.ChildTaskIds.Add(snapshot.Id);
+                group.Snapshots[snapshot.Id] = snapshot;
+                _taskIdToGroup[snapshot.Id] = group;
+            }
+            group.UpdateGroupState();
+        }
+        finally
+        {
+            _lifecycleGate.Release();
+        }
+    }
+
     private async Task PauseAsync(TransferTask? task)
     {
-        if (task is not null)
-            await _engine.PauseAsync(task.Id);
+        if (task is null) return;
+        var group = _folderGroups.FirstOrDefault(g => g.TaskItem == task || g.GroupId == task.Id);
+        if (group is not null)
+        {
+            foreach (var id in group.ChildTaskIds)
+                await _engine.PauseAsync(id);
+            return;
+        }
+        await _engine.PauseAsync(task.Id);
     }
 
     private async Task ResumeAsync(TransferTask? task)
     {
-        if (task is not null)
-            Upsert(await _engine.ResumeAsync(task.Id));
+        if (task is null) return;
+        var group = _folderGroups.FirstOrDefault(g => g.TaskItem == task || g.GroupId == task.Id);
+        if (group is not null)
+        {
+            foreach (var id in group.ChildTaskIds)
+            {
+                var updated = await _engine.ResumeAsync(id);
+                group.Snapshots[id] = updated;
+            }
+            group.UpdateGroupState();
+            return;
+        }
+        Upsert(await _engine.ResumeAsync(task.Id));
     }
 
     private async Task RetryAsync(TransferTask? task)
     {
-        if (task is not null)
-            Upsert(await _engine.RetryAsync(task.Id));
+        if (task is null) return;
+        var group = _folderGroups.FirstOrDefault(g => g.TaskItem == task || g.GroupId == task.Id);
+        if (group is not null)
+        {
+            foreach (var id in group.ChildTaskIds)
+            {
+                var updated = await _engine.RetryAsync(id);
+                group.Snapshots[id] = updated;
+            }
+            group.UpdateGroupState();
+            return;
+        }
+        Upsert(await _engine.RetryAsync(task.Id));
     }
 
     private async Task CancelAsync(TransferTask? task)
     {
-        if (task is not null)
-            await _engine.CancelAsync(task.Id);
+        if (task is null) return;
+        var group = _folderGroups.FirstOrDefault(g => g.TaskItem == task || g.GroupId == task.Id);
+        if (group is not null)
+        {
+            foreach (var id in group.ChildTaskIds)
+            {
+                await _engine.CancelAsync(id);
+                _taskIdToGroup.Remove(id);
+            }
+            _folderGroups.Remove(group);
+            Tasks.Remove(group.TaskItem);
+            return;
+        }
+        await _engine.CancelAsync(task.Id);
     }
 
     /// <summary>
@@ -224,6 +366,17 @@ public sealed class TransferViewModel : ObservableObject
 
     private void ApplyTransferChanged(ResumableTransferSnapshot snapshot)
     {
+        if (_taskIdToGroup.TryGetValue(snapshot.Id, out var group))
+        {
+            group.Snapshots[snapshot.Id] = snapshot;
+            group.UpdateGroupState();
+            if (group.TaskItem.State == TransferState.Completed)
+            {
+                UploadCompleted?.Invoke(group.DestinationDirectory);
+            }
+            return;
+        }
+
         Upsert(snapshot);
         if (snapshot.Direction == ResumableTransferDirection.Upload &&
             snapshot.Status == ResumableTransferStatus.Completed)
@@ -234,6 +387,9 @@ public sealed class TransferViewModel : ObservableObject
 
     private void Upsert(ResumableTransferSnapshot snapshot)
     {
+        if (_taskIdToGroup.ContainsKey(snapshot.Id))
+            return;
+
         var task = Tasks.FirstOrDefault(item => item.Id == snapshot.Id);
         if (snapshot.Status == ResumableTransferStatus.Canceled)
         {

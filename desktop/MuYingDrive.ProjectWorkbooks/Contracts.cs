@@ -41,6 +41,7 @@ public sealed record SceneRow(string Id, long Version, string? SceneNumber, stri
     public bool CanEdit { get; init; }
     public string? Note { get; init; }
     public VideoItem? Video { get; init; }
+    public List<VideoItem> Videos { get; init; } = [];
     public VideoItem? FinalVideo { get; init; }
     public List<VideoItem> DiscardedVideos { get; init; } = [];
 }

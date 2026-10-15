@@ -274,6 +274,10 @@ public sealed class WorkspaceViewModel : ObservableObject
         var projectWorkbooks = main.ApiClient is { } api
             ? new ProjectWorkbookPage(api, session.SessionToken, session.User.Id)
             : null;
+        if (projectWorkbooks is not null)
+        {
+            projectWorkbooks.ViewModel.ShareRoot = settings.ShareRoot;
+        }
         var files = new FilesViewModel(session, settings, transfers);
 
         var chrome = new WorkspaceChrome(

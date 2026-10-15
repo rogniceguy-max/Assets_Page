@@ -782,8 +782,13 @@ class SqliteProjectWorkbookStore:
                 elif stored["kind"] == "scene_beats":
                     item.setdefault("note", None)
                     item.setdefault("video", None)
+                    item.setdefault("videos", [])
                     item.setdefault("final_video", None)
                     item.setdefault("discarded_videos", [])
+                    if not item["videos"] and item["video"]:
+                        item["videos"] = [item["video"]]
+                    if item["videos"] and not item["video"]:
+                        item["video"] = item["videos"][0]
                     item["can_edit"] = True
                     projected["scene_rows"].append(item)
                 else:
@@ -1062,22 +1067,51 @@ class SqliteProjectWorkbookStore:
                         changed_keys.append(field)
 
             video_action = changes.get("video_action")
-            if video_action == "attach":
+            if video_action in ("attach", "add"):
                 new_video = changes.get("video")
-                old_video = data.get("video")
-                if old_video:
-                    discarded = list(data.get("discarded_videos") or [])
-                    old_copy = dict(old_video)
-                    old_copy["discarded_at"] = _now()
-                    discarded.append(old_copy)
-                    data["discarded_videos"] = discarded
-                    versions["discarded_videos"] = int(versions.get("discarded_videos", 1)) + 1
-                    changed_keys.append("discarded_videos")
-                data["video"] = new_video
-                versions["video"] = int(versions.get("video", 1)) + 1
-                changed_keys.append("video")
+                if new_video:
+                    allow_multiple = changes.get("allow_multiple", video_action == "add")
+                    videos = list(data.get("videos") or [])
+                    if allow_multiple:
+                        if data.get("video") and not any(v.get("id") == data["video"].get("id") or v.get("name") == data["video"].get("name") for v in videos):
+                            videos.insert(0, data["video"])
+                        idx = next((i for i, v in enumerate(videos) if (new_video.get("id") and v.get("id") == new_video.get("id")) or v.get("name") == new_video.get("name")), -1)
+                        if idx >= 0:
+                            videos[idx] = new_video
+                        else:
+                            videos.append(new_video)
+                        data["videos"] = videos
+                        data["video"] = videos[0]
+                        versions["videos"] = int(versions.get("videos", 1)) + 1
+                        versions["video"] = int(versions.get("video", 1)) + 1
+                        changed_keys.extend(["videos", "video"])
+                    else:
+                        old_video = data.get("video")
+                        if old_video:
+                            discarded = list(data.get("discarded_videos") or [])
+                            old_copy = dict(old_video)
+                            old_copy["discarded_at"] = _now()
+                            discarded.append(old_copy)
+                            data["discarded_videos"] = discarded
+                            versions["discarded_videos"] = int(versions.get("discarded_videos", 1)) + 1
+                            changed_keys.append("discarded_videos")
+                        data["video"] = new_video
+                        data["videos"] = [new_video]
+                        versions["video"] = int(versions.get("video", 1)) + 1
+                        versions["videos"] = int(versions.get("videos", 1)) + 1
+                        changed_keys.extend(["video", "videos"])
             elif video_action == "set_final":
-                data["final_video"] = data.get("video")
+                video_id = changes.get("video_id")
+                video_name = changes.get("video_name")
+                videos = list(data.get("videos") or [])
+                target = None
+                if video_id or video_name:
+                    target = next((v for v in videos if (video_id and v.get("id") == video_id) or (video_name and v.get("name") == video_name)), None)
+                if not target and changes.get("video"):
+                    target = changes.get("video")
+                if not target:
+                    target = data.get("video")
+                data["final_video"] = target
                 versions["final_video"] = int(versions.get("final_video", 1)) + 1
                 changed_keys.append("final_video")
             elif video_action == "unset_final":
@@ -1085,25 +1119,36 @@ class SqliteProjectWorkbookStore:
                 versions["final_video"] = int(versions.get("final_video", 1)) + 1
                 changed_keys.append("final_video")
             elif video_action == "discard":
-                old_video = data.get("video")
-                if old_video:
+                video_id = changes.get("video_id")
+                video_name = changes.get("video_name")
+                videos = list(data.get("videos") or [])
+                target_video = None
+                if video_id or video_name:
+                    target_video = next((v for v in videos if (video_id and v.get("id") == video_id) or (video_name and v.get("name") == video_name)), None)
+                if not target_video and data.get("video"):
+                    target_video = data.get("video")
+                if not target_video and videos:
+                    target_video = videos[0]
+                if target_video:
+                    videos = [v for v in videos if not ((target_video.get("id") and v.get("id") == target_video.get("id")) or v.get("name") == target_video.get("name"))]
                     discarded = list(data.get("discarded_videos") or [])
-                    old_copy = dict(old_video)
-                    old_copy["discarded_at"] = _now()
-                    discarded.append(old_copy)
+                    target_copy = dict(target_video)
+                    target_copy["discarded_at"] = _now()
+                    discarded.append(target_copy)
                     data["discarded_videos"] = discarded
+                    data["videos"] = videos
+                    data["video"] = videos[0] if videos else None
                     versions["discarded_videos"] = int(versions.get("discarded_videos", 1)) + 1
-                    changed_keys.append("discarded_videos")
-                data["video"] = None
-                versions["video"] = int(versions.get("video", 1)) + 1
-                changed_keys.append("video")
-                if data.get("final_video") and old_video and (
-                    data["final_video"].get("id") == old_video.get("id") or
-                    data["final_video"].get("name") == old_video.get("name")
-                ):
-                    data["final_video"] = None
-                    versions["final_video"] = int(versions.get("final_video", 1)) + 1
-                    changed_keys.append("final_video")
+                    versions["videos"] = int(versions.get("videos", 1)) + 1
+                    versions["video"] = int(versions.get("video", 1)) + 1
+                    changed_keys.extend(["discarded_videos", "videos", "video"])
+                    if data.get("final_video") and (
+                        (target_video.get("id") and data["final_video"].get("id") == target_video.get("id")) or
+                        data["final_video"].get("name") == target_video.get("name")
+                    ):
+                        data["final_video"] = None
+                        versions["final_video"] = int(versions.get("final_video", 1)) + 1
+                        changed_keys.append("final_video")
             elif video_action == "restore":
                 video_id = changes.get("video_id")
                 video_name = changes.get("video_name")
@@ -1111,22 +1156,26 @@ class SqliteProjectWorkbookStore:
                 target_video = next((v for v in discarded if (video_id and v.get("id") == video_id) or (video_name and v.get("name") == video_name)), None)
                 if target_video:
                     discarded = [v for v in discarded if v != target_video]
-                    cur_video = data.get("video")
-                    if cur_video:
-                        cur_copy = dict(cur_video)
-                        cur_copy["discarded_at"] = _now()
-                        discarded.append(cur_copy)
                     data["discarded_videos"] = discarded
                     restored_video = dict(target_video)
                     restored_video.pop("discarded_at", None)
-                    data["video"] = restored_video
+                    videos = list(data.get("videos") or [])
+                    videos.append(restored_video)
+                    data["videos"] = videos
+                    data["video"] = videos[0]
                     versions["video"] = int(versions.get("video", 1)) + 1
+                    versions["videos"] = int(versions.get("videos", 1)) + 1
                     versions["discarded_videos"] = int(versions.get("discarded_videos", 1)) + 1
-                    changed_keys.extend(["video", "discarded_videos"])
+                    changed_keys.extend(["video", "videos", "discarded_videos"])
             elif "video" in changes:
                 data["video"] = changes["video"]
+                if changes["video"]:
+                    data["videos"] = [changes["video"]]
+                else:
+                    data["videos"] = []
                 versions["video"] = int(versions.get("video", 1)) + 1
-                changed_keys.append("video")
+                versions["videos"] = int(versions.get("videos", 1)) + 1
+                changed_keys.extend(["video", "videos"])
 
             if not changed_keys:
                 return self._scene_row_payload(file_id, row_id)

@@ -15,6 +15,7 @@ public sealed class SceneDetailsPanel : UserControl
 
     public event EventHandler? CloseRequested { add { } remove { } }
     public string Heading { get; }
+    public bool HasDraft => !string.Equals(_plan?.Text?.Trim() ?? string.Empty, (_item?.BreakdownPlanDraft ?? string.Empty).Trim(), StringComparison.Ordinal);
 
     public SceneDetailsPanel(ProjectWorkbooksViewModel model, string fileId, SceneRowItem item, ResourceDictionary resources)
     {

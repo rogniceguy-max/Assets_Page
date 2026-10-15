@@ -12,20 +12,65 @@ namespace MuYingDrive.ProjectWorkbooks;
 public partial class ProjectWorkbooksView : UserControl
 {
     private bool _loaded;
-    private ProjectWorkbooksViewModel Model => DataContext as ProjectWorkbooksViewModel
+    private ProjectWorkbooksViewModel? _lastKnownModel;
+
+    public ProjectWorkbooksView()
+    {
+        InitializeComponent();
+        DataContextChanged += (_, e) =>
+        {
+            if (e.NewValue is ProjectWorkbooksViewModel direct)
+                _lastKnownModel = direct;
+            else if (e.NewValue != null)
+            {
+                var vm = (e.NewValue as dynamic)?.ViewModel as ProjectWorkbooksViewModel;
+                if (vm != null) _lastKnownModel = vm;
+            }
+        };
+    }
+
+    private ProjectWorkbooksViewModel? TryResolveModel(object? sender = null)
+    {
+        if (DataContext is ProjectWorkbooksViewModel direct) return direct;
+        if (DataContext != null)
+        {
+            var prop = DataContext.GetType().GetProperty("ViewModel");
+            if (prop?.GetValue(DataContext) is ProjectWorkbooksViewModel vm) return vm;
+        }
+
+        DependencyObject? cur = sender as DependencyObject ?? this;
+        while (cur != null)
+        {
+            if (cur is FrameworkElement fe)
+            {
+                if (fe.DataContext is ProjectWorkbooksViewModel vm) return vm;
+                if (fe.DataContext != null)
+                {
+                    var prop = fe.DataContext.GetType().GetProperty("ViewModel");
+                    if (prop?.GetValue(fe.DataContext) is ProjectWorkbooksViewModel pvm) return pvm;
+                }
+            }
+            cur = VisualTreeHelper.GetParent(cur);
+        }
+
+        return _lastKnownModel;
+    }
+
+    private ProjectWorkbooksViewModel Model =>
+        TryResolveModel()
         ?? throw new InvalidOperationException("宿主必须提供 ProjectWorkbooksViewModel。");
-    public ProjectWorkbooksView() => InitializeComponent();
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         AdoptHostTheme();
-        if (_loaded || DataContext is not ProjectWorkbooksViewModel) return;
+        var model = TryResolveModel();
+        if (_loaded || model == null) return;
         _loaded = true;
-        Model.PropertyChanged += OnModelPropertyChanged;
+        model.PropertyChanged += OnModelPropertyChanged;
         // One guard for every way out: closing the workbook from the page, refreshing it,
         // and the host's project tree opening a different one, which never asks this view.
-        Model.ConfirmLeaving = TryLeaveDetailsPanel;
-        await Model.ExecuteAsync(Model.InitializeAsync);
+        model.ConfirmLeaving = TryLeaveDetailsPanel;
+        await model.ExecuteAsync(model.InitializeAsync);
     }
 
     // The panel holds a row that belongs to the workbook that is open, and opening another
@@ -455,6 +500,26 @@ public partial class ProjectWorkbooksView : UserControl
         else if (row.Row.CanEdit) await PickSelectedCandidateAsync(row);
     }
     private async void OnPreviewCandidate(object sender, RoutedEventArgs e)
+    {
+        if (Row(sender) is not { } row || ((FrameworkElement)sender).DataContext is not ImageItem image) return;
+        try
+        {
+            var bytes = await Model.Service.GetImageContentAsync(image.Asset.Id, false);
+            var ext = Path.GetExtension(image.Name);
+            if (string.IsNullOrWhiteSpace(ext)) ext = ".png";
+            var tempPath = Path.Combine(Path.GetTempPath(), $"muying_{image.Asset.Id}_{image.Name}");
+            if (!File.Exists(tempPath) || new FileInfo(tempPath).Length != bytes.Length)
+            {
+                await File.WriteAllBytesAsync(tempPath, bytes);
+            }
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(tempPath) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(Window.GetWindow(this), $"无法打开图片：{ex.Message}", "打开失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+    private async void OnOpenCandidateReview(object sender, RoutedEventArgs e)
     { if (Row(sender) is { } row && ((FrameworkElement)sender).DataContext is ImageItem image) await ReviewAsync(row, image); }
     private async void OnGeneralReview(object sender, RoutedEventArgs e)
     { if (Row(sender) is { } row) await ReviewAsync(row, null); }
@@ -803,6 +868,87 @@ public partial class ProjectWorkbooksView : UserControl
         else { e.Effects = DragDropEffects.None; e.Handled = true; }
     }
 
+    private static VideoItem? GetVideoItem(object sender)
+    {
+        if (sender is FrameworkElement { DataContext: SceneVideoItem svi }) return svi.Video;
+        if (sender is FrameworkElement { DataContext: VideoItem directVi }) return directVi;
+        if (sender is MenuItem menuItem)
+        {
+            if (menuItem.DataContext is SceneVideoItem itemM) return itemM.Video;
+            if (menuItem.DataContext is VideoItem directM) return directM;
+            if (menuItem.Parent is ContextMenu { PlacementTarget: FrameworkElement target })
+            {
+                if (target.DataContext is SceneVideoItem targetItem) return targetItem.Video;
+                if (target.DataContext is VideoItem targetDirect) return targetDirect;
+            }
+        }
+        return null;
+    }
+
+    private void OnPlayVideoDirectly(object sender, RoutedEventArgs e)
+    {
+        var video = GetVideoItem(sender) ?? Scene(sender)?.Video;
+        if (video == null || string.IsNullOrWhiteSpace(video.Path)) return;
+        try
+        {
+            if (File.Exists(video.Path))
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(video.Path) { UseShellExecute = true });
+            }
+            else
+            {
+                MessageBox.Show(Window.GetWindow(this), $"视频文件未在指定路径找到：\n{video.Path}", "无法播放", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(Window.GetWindow(this), $"播放失败：{ex.Message}", "无法播放", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private async void OnSetFinalVideoItem(object sender, RoutedEventArgs e)
+    {
+        if (Scene(sender) is not { } row || !row.Row.CanEdit) return;
+        var video = GetVideoItem(sender);
+        await Model.UpdateSceneVideoAsync(row, "set_final", videoId: video?.Id, videoName: video?.Name);
+    }
+
+    private async void OnUnsetFinalVideoItem(object sender, RoutedEventArgs e)
+    {
+        if (Scene(sender) is not { } row || !row.Row.CanEdit) return;
+        await Model.UpdateSceneVideoAsync(row, "unset_final");
+    }
+
+    private async void OnDiscardVideoItem(object sender, RoutedEventArgs e)
+    {
+        if (Scene(sender) is not { } row || !row.Row.CanEdit) return;
+        var video = GetVideoItem(sender) ?? row.Video;
+        if (video == null) return;
+        if (MessageBox.Show(Window.GetWindow(this), $"确定将视频「{video.Name}」移入废片库吗？", "移入废片", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
+        await Model.UpdateSceneVideoAsync(row, "discard", videoId: video.Id, videoName: video.Name);
+    }
+
+    private void OnRevealVideoInExplorer(object sender, RoutedEventArgs e)
+    {
+        var video = GetVideoItem(sender) ?? Scene(sender)?.Video;
+        if (video == null || string.IsNullOrWhiteSpace(video.Path)) return;
+        try
+        {
+            if (File.Exists(video.Path))
+            {
+                System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{video.Path}\"");
+            }
+            else
+            {
+                var dir = Path.GetDirectoryName(video.Path);
+                if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                    System.Diagnostics.Process.Start("explorer.exe", $"\"{dir}\"");
+            }
+        }
+        catch { }
+    }
+
     private async void OnVideoDrop(object sender, DragEventArgs e)
     {
         e.Handled = true;
@@ -813,13 +959,12 @@ public partial class ProjectWorkbooksView : UserControl
             MessageBox.Show(Window.GetWindow(this), "请拖入视频文件（如 .mp4, .mov, .mkv 等）。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
-        var path = paths[0];
-        var videoItem = new VideoItem(
-            Id: Guid.NewGuid().ToString("D"),
-            Name: Path.GetFileName(path),
-            Path: path
-        );
-        await Model.UpdateSceneVideoAsync(row, "attach", videoItem);
+
+        var model = TryResolveModel(sender) ?? Model;
+        foreach (var path in paths)
+        {
+            await model.AttachVideoFileAsync(row, path);
+        }
     }
 
     private async void OnPickVideo(object sender, RoutedEventArgs e)
@@ -829,38 +974,19 @@ public partial class ProjectWorkbooksView : UserControl
         {
             Title = "选择关联视频",
             Filter = "视频文件 (*.mp4;*.mov;*.mkv;*.avi;*.webm)|*.mp4;*.mov;*.mkv;*.avi;*.webm|所有文件 (*.*)|*.*",
-            Multiselect = false
+            Multiselect = true
         };
         if (picker.ShowDialog(Window.GetWindow(this)) != true) return;
-        var path = picker.FileName;
-        var videoItem = new VideoItem(
-            Id: Guid.NewGuid().ToString("D"),
-            Name: Path.GetFileName(path),
-            Path: path
-        );
-        await Model.UpdateSceneVideoAsync(row, "attach", videoItem);
+        var model = TryResolveModel(sender) ?? Model;
+        foreach (var path in picker.FileNames)
+        {
+            await model.AttachVideoFileAsync(row, path);
+        }
     }
 
-    private async void OnSetFinalVideo(object sender, RoutedEventArgs e)
-    {
-        if (Scene(sender) is not { } row || !row.Row.CanEdit) return;
-        await Model.UpdateSceneVideoAsync(row, "set_final");
-    }
-
-    private async void OnUnsetFinalVideo(object sender, RoutedEventArgs e)
-    {
-        if (Scene(sender) is not { } row || !row.Row.CanEdit) return;
-        await Model.UpdateSceneVideoAsync(row, "unset_final");
-    }
-
-    private async void OnDiscardVideo(object sender, RoutedEventArgs e)
-    {
-        if (Scene(sender) is not { } row || !row.Row.CanEdit) return;
-        if (row.Video == null) return;
-        if (MessageBox.Show(Window.GetWindow(this), $"确定将视频「{row.Video.Name}」移入废片库吗？", "移入废片", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
-            return;
-        await Model.UpdateSceneVideoAsync(row, "discard");
-    }
+    private void OnSetFinalVideo(object sender, RoutedEventArgs e) => OnSetFinalVideoItem(sender, e);
+    private void OnUnsetFinalVideo(object sender, RoutedEventArgs e) => OnUnsetFinalVideoItem(sender, e);
+    private void OnDiscardVideo(object sender, RoutedEventArgs e) => OnDiscardVideoItem(sender, e);
 
     private async void OnOpenDiscardedVideos(object sender, RoutedEventArgs e)
     {

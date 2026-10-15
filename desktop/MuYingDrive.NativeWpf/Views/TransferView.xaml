@@ -5,6 +5,7 @@
              Background="{DynamicResource Brush.Surface.Canvas}">
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        <Style TargetType="ScrollBar" BasedOn="{StaticResource ScrollBar.FileArea}" />
         <DataTemplate x:Key="TransferTaskTemplate">
             <Border Padding="16" Margin="0,0,0,10" CornerRadius="{StaticResource CornerRadius.Card}"
                     Background="{DynamicResource Brush.Surface.Panel}" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1">
@@ -18,14 +19,8 @@
                         </Border>
                         <StackPanel VerticalAlignment="Center">
                             <TextBlock Text="{Binding FileName}" FontWeight="Medium" TextTrimming="CharacterEllipsis" />
-                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                <TextBlock Text="{Binding Direction}" Foreground="{DynamicResource Brush.Text.Secondary}" FontSize="{StaticResource Typography.FontSize.Caption}" />
-                                <TextBlock Text=" · " Foreground="{DynamicResource Brush.Text.Secondary}" FontSize="{StaticResource Typography.FontSize.Caption}" />
-                                <TextBlock Text="{Binding Size}" Foreground="{DynamicResource Brush.Text.Secondary}" FontSize="{StaticResource Typography.FontSize.Caption}" />
-                            </StackPanel>
-                            <TextBlock Text="{Binding Location}" Foreground="{DynamicResource Brush.Text.Secondary}"
-                                       FontSize="{StaticResource Typography.FontSize.Caption}" Margin="0,3,0,0"
-                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding Location}" />
+                            <TextBlock Text="{Binding TransferSummary}" Foreground="{DynamicResource Brush.Text.Secondary}"
+                                       FontSize="{StaticResource Typography.FontSize.Caption}" Margin="0,4,0,0" />
                         </StackPanel>
                     </StackPanel>
 
@@ -83,8 +78,7 @@
                         </Button>
                     </StackPanel>
 
-                    <ProgressBar Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Minimum="0" Maximum="100" Value="{Binding Progress, Mode=OneWay}" Margin="42,14,0,0" VerticalAlignment="Center" />
-                    <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ProgressLabel}" Foreground="{DynamicResource Brush.Text.Secondary}" FontSize="{StaticResource Typography.FontSize.Caption}" Margin="12,10,0,0" HorizontalAlignment="Right" />
+                    <ProgressBar Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Minimum="0" Maximum="100" Value="{Binding Progress, Mode=OneWay}" Margin="42,14,0,0" VerticalAlignment="Center" Height="4" />
                     <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Text="{Binding ErrorMessage}" Foreground="{DynamicResource Brush.Status.Danger}"
                                FontSize="{StaticResource Typography.FontSize.Caption}" Margin="42,8,0,0" TextWrapping="Wrap" />
                 </Grid>

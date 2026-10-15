@@ -113,8 +113,8 @@
      </Grid>
      <Rectangle Height="1" Fill="{DynamicResource Brush.Border.Subtle}"/>
 
-     <!-- Main Columns: 故事内容 | 拆分规划 | 批注 | 关联视频 (同一行不同列) -->
-     <local:ResponsiveColumnsPanel Weights="4,1.4,1.6,160px" Breakpoint="760">
+     <!-- Main Columns: 故事内容 | 拆分规划 | 批注 | 关联视频 (同一行不同列，拆分规划与批注自适应宽度，超宽截断) -->
+     <local:ResponsiveColumnsPanel Weights="3.2,1.8,1.8,180px" Breakpoint="760">
       <!-- 1. 故事内容 (主导行高) -->
       <Border Style="{StaticResource Cell}">
        <StackPanel>
@@ -128,13 +128,13 @@
                  ToolTip="故事内容（回车换行，失焦自动保存）" IsEnabled="{Binding Row.CanEdit}"/>
        </StackPanel>
       </Border>
-      <!-- 2. 拆分规划 (截断展示，点击弹侧栏) -->
+      <!-- 2. 拆分规划 (自适应高度截断展示，点击弹侧栏) -->
       <Border Style="{StaticResource Cell}" Background="Transparent" Cursor="Hand"
               PreviewMouseLeftButtonUp="OnOpenSceneSidebar" ToolTip="点击打开侧边栏查看/编辑完整拆分规划">
-       <StackPanel VerticalAlignment="Top">
+       <StackPanel VerticalAlignment="Stretch">
         <TextBlock Text="拆分规划" Style="{DynamicResource Typography.Caption}"/>
         <TextBlock Text="{Binding BreakdownPlanDraft}"
-                   TextTrimming="CharacterEllipsis" TextWrapping="Wrap" MaxHeight="46" Margin="0,5,0,0">
+                   TextTrimming="CharacterEllipsis" TextWrapping="Wrap" Margin="0,5,0,0">
          <TextBlock.Style>
           <Style TargetType="TextBlock">
            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
@@ -150,18 +150,18 @@
         </TextBlock>
        </StackPanel>
       </Border>
-      <!-- 3. 批注 (显示最新批注，点击弹侧栏) -->
+      <!-- 3. 批注 (自适应高度展示最新批注，点击弹侧栏) -->
       <Border Style="{StaticResource Cell}" Background="Transparent" Cursor="Hand"
               PreviewMouseLeftButtonUp="OnOpenSceneSidebar" ToolTip="点击打开侧边栏查看/添加批注">
-       <StackPanel VerticalAlignment="Top">
+       <StackPanel VerticalAlignment="Stretch">
         <TextBlock Text="批注" Style="{DynamicResource Typography.Caption}"/>
         <StackPanel Visibility="{Binding HasReviews, Converter={StaticResource BoolVisibility}}" Margin="0,4,0,0">
          <TextBlock Text="{Binding ReviewCountText}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}"/>
          <TextBlock Text="{Binding ReviewSnippetText}" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}"
-                    Margin="0,2,0,0" TextTrimming="CharacterEllipsis" TextWrapping="Wrap" MaxHeight="36"/>
+                    Margin="0,2,0,0" TextTrimming="CharacterEllipsis" TextWrapping="Wrap"/>
         </StackPanel>
         <StackPanel Visibility="{Binding HasReviews, Converter={StaticResource InverseBoolVisibility}}" Margin="0,4,0,0">
-         <TextBlock Text="{Binding NoteDraft}" TextTrimming="CharacterEllipsis" TextWrapping="Wrap" MaxHeight="36">
+         <TextBlock Text="{Binding NoteDraft}" TextTrimming="CharacterEllipsis" TextWrapping="Wrap">
           <TextBlock.Style>
            <Style TargetType="TextBlock">
             <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
@@ -178,67 +178,68 @@
         </StackPanel>
        </StackPanel>
       </Border>
-      <!-- 4. 关联视频 (固定 160px，支持拖入与右键菜单) -->
-      <Border Style="{StaticResource Cell}" AllowDrop="True" DragOver="OnVideoDragOver" Drop="OnVideoDrop">
+      <!-- 4. 关联视频 (同一行不同列，支持单beat多视频，支持拖入，点击系统默认程序播放，无笨重选择框) -->
+      <Border Style="{StaticResource Cell}" AllowDrop="True" DragOver="OnVideoDragOver" Drop="OnVideoDrop" Background="Transparent">
+       <Border.ContextMenu>
+        <ContextMenu>
+         <MenuItem Header="选择关联视频文件..." Click="OnPickVideo" IsEnabled="{Binding Row.CanEdit}"/>
+         <MenuItem Header="{Binding DiscardedCount, StringFormat=查看废片库 ({0})}" Click="OnOpenDiscardedVideos"/>
+         <Separator/>
+         <MenuItem Header="删除此节拍行" Click="OnDeleteSceneRow" Foreground="{DynamicResource Brush.Status.Danger}" IsEnabled="{Binding Row.CanEdit}"/>
+        </ContextMenu>
+       </Border.ContextMenu>
        <StackPanel VerticalAlignment="Top">
-        <TextBlock Text="关联视频" Style="{DynamicResource Typography.Caption}"/>
-        <Grid Height="75" Margin="0,4,0,0" Background="{DynamicResource Brush.Surface.Canvas}">
-         <!-- 空状态 -->
-         <Border Visibility="{Binding HasVideo, Converter={StaticResource InverseBoolVisibility}}"
-                 BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
-                 Cursor="Hand" MouseLeftButtonUp="OnPickVideo" ToolTip="点击选择或拖入视频文件 (.mp4, .mov, .mkv)">
-          <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-           <Path Data="M5 12h14 M12 5v14" Width="13" Height="13" Stretch="Uniform"
-                 Stroke="{DynamicResource Brush.Text.Secondary}" StrokeThickness="2"
-                 StrokeStartLineCap="Round" StrokeEndLineCap="Round" HorizontalAlignment="Center" Margin="0,0,0,3"/>
-           <TextBlock Text="拖入/选择视频" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}"/>
-          </StackPanel>
-         </Border>
-         <!-- 已关联视频 -->
-         <Grid Visibility="{Binding HasVideo, Converter={StaticResource BoolVisibility}}" ToolTip="{Binding Video.Name}">
-          <Grid.ContextMenu>
-           <ContextMenu>
-            <MenuItem Header="更换视频" Click="OnPickVideo" IsEnabled="{Binding Row.CanEdit}"/>
-            <MenuItem Header="设为成片" Click="OnSetFinalVideo" IsEnabled="{Binding Row.CanEdit}"/>
-            <MenuItem Header="取消成片" Click="OnUnsetFinalVideo" IsEnabled="{Binding Row.CanEdit}"/>
-            <Separator/>
-            <MenuItem Header="移入废片" Click="OnDiscardVideo" IsEnabled="{Binding Row.CanEdit}"/>
-            <MenuItem Header="{Binding DiscardedCount, StringFormat=查看废片库 ({0})}" Click="OnOpenDiscardedVideos"/>
-            <Separator/>
-            <MenuItem Header="删除此节拍行" Click="OnDeleteSceneRow" Foreground="{DynamicResource Brush.Status.Danger}" IsEnabled="{Binding Row.CanEdit}"/>
-           </ContextMenu>
-          </Grid.ContextMenu>
-          <Border BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" Padding="4">
-           <StackPanel VerticalAlignment="Center">
-            <WrapPanel HorizontalAlignment="Center" Margin="0,0,0,2">
-             <Border Background="{DynamicResource Brush.Accent.Primary}" CornerRadius="3" Padding="3,1" Margin="0,0,3,0">
-              <TextBlock Text="{Binding FinalBadgeText}" FontSize="10" Foreground="White" FontWeight="Bold"/>
+        <TextBlock Text="关联视频" Style="{DynamicResource Typography.Caption}" Margin="0,0,0,4"/>
+        <!-- 空状态：极简轻量，支持拖入 -->
+        <Border Visibility="{Binding HasVideos, Converter={StaticResource InverseBoolVisibility}}"
+                Background="Transparent" Padding="4,8" Cursor="Hand" MouseLeftButtonUp="OnPickVideo"
+                ToolTip="点击选择或拖入视频文件 (.mp4, .mov, .mkv 等)">
+         <TextBlock Text="可拖入或点击关联视频..." FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}" Opacity="0.5"/>
+        </Border>
+        <!-- 已关联视频列表 (支持单beat多视频，点击默认程序播放，右键上下文操作) -->
+        <ItemsControl ItemsSource="{Binding VideoItems}" Visibility="{Binding HasVideos, Converter={StaticResource BoolVisibility}}">
+         <ItemsControl.ItemTemplate>
+          <DataTemplate>
+           <Border Margin="0,0,0,4" Background="{DynamicResource Brush.Surface.Panel}"
+                   BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
+                   CornerRadius="4" Padding="6,4" ToolTip="{Binding Name}">
+            <Border.ContextMenu>
+             <ContextMenu>
+              <MenuItem Header="播放 (系统默认程序)" Click="OnPlayVideoDirectly"/>
+              <MenuItem Header="设为成片" Click="OnSetFinalVideoItem" IsEnabled="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}}"/>
+              <MenuItem Header="取消成片" Click="OnUnsetFinalVideoItem" IsEnabled="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}}"/>
+              <Separator/>
+              <MenuItem Header="移入废片" Click="OnDiscardVideoItem" IsEnabled="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}}"/>
+              <MenuItem Header="在文件夹中显示" Click="OnRevealVideoInExplorer"/>
+              <Separator/>
+              <MenuItem Header="{Binding DataContext.DiscardedCount, RelativeSource={RelativeSource AncestorType=ItemsControl}, StringFormat=查看废片库 ({0})}" Click="OnOpenDiscardedVideos"/>
+              <MenuItem Header="删除此节拍行" Click="OnDeleteSceneRow" Foreground="{DynamicResource Brush.Status.Danger}" IsEnabled="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}}"/>
+             </ContextMenu>
+            </Border.ContextMenu>
+            <Grid Cursor="Hand" MouseLeftButtonUp="OnPlayVideoDirectly">
+             <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+             </Grid.ColumnDefinitions>
+             <!-- 成片标记 -->
+             <Border Grid.Column="0" Background="{DynamicResource Brush.Accent.Primary}" CornerRadius="3"
+                     Padding="3,1" Margin="0,0,4,0"
+                     Visibility="{Binding IsFinal, Converter={StaticResource BoolVisibility}}">
+              <TextBlock Text="成片" FontSize="9" Foreground="White" FontWeight="Bold"/>
              </Border>
-             <TextBlock Text="🎬" FontSize="11" VerticalAlignment="Center"/>
-            </WrapPanel>
-            <TextBlock Text="{Binding VideoDisplayName}" FontSize="11" TextAlignment="Center"
-                       TextTrimming="CharacterEllipsis" MaxHeight="30" Foreground="{DynamicResource Brush.Text.Primary}"/>
-           </StackPanel>
-          </Border>
-          <!-- 悬浮显示 更换 -->
-          <Border Background="#88000000" Cursor="Hand" MouseLeftButtonUp="OnPickVideo" ToolTip="点击更换视频">
-           <Border.Style>
-            <Style TargetType="Border">
-             <Setter Property="Opacity" Value="0"/>
-             <Style.Triggers>
-              <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Grid}}" Value="True">
-               <Setter Property="Opacity" Value="1"/>
-              </DataTrigger>
-             </Style.Triggers>
-            </Style>
-           </Border.Style>
-           <Border Background="{DynamicResource Brush.Surface.Panel}" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
-                   CornerRadius="4" Padding="8,3" HorizontalAlignment="Center" VerticalAlignment="Center">
-            <TextBlock Text="更换视频" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource Brush.Text.Primary}"/>
+             <!-- 视频名 -->
+             <TextBlock Grid.Column="1" Text="{Binding Name}" FontSize="11"
+                        Foreground="{DynamicResource Brush.Text.Primary}"
+                        TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+             <!-- 播放提示 -->
+             <TextBlock Grid.Column="2" Text="▶" FontSize="9" Margin="4,0,0,0"
+                        Foreground="{DynamicResource Brush.Text.Secondary}" VerticalAlignment="Center"/>
+            </Grid>
            </Border>
-          </Border>
-         </Grid>
-        </Grid>
+          </DataTemplate>
+         </ItemsControl.ItemTemplate>
+        </ItemsControl>
        </StackPanel>
       </Border>
      </local:ResponsiveColumnsPanel>
@@ -354,7 +355,8 @@
            <Border.ContextMenu>
             <ContextMenu>
              <MenuItem Header="设为选定图片" Click="OnUseCandidate"/>
-             <MenuItem Header="查看大图与评价" Click="OnPreviewCandidate"/>
+             <MenuItem Header="使用系统默认程序打开" Click="OnPreviewCandidate"/>
+             <MenuItem Header="查看大图与评价" Click="OnOpenCandidateReview"/>
              <Separator/>
              <MenuItem Header="从备选移除" Click="OnRemoveCandidate"/>
              <Separator/>
@@ -362,7 +364,7 @@
             </ContextMenu>
            </Border.ContextMenu>
            <Grid Width="64" Height="64">
-            <Button Click="OnPreviewCandidate" Padding="0" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" ToolTip="点击查看大图或设为选定（右键菜单更多操作）">
+            <Button Click="OnPreviewCandidate" Padding="0" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" ToolTip="点击使用系统默认程序打开（右键菜单更多操作）">
              <Image Source="{Binding Preview}" Stretch="Uniform"/>
             </Button>
             <Button Content="✕" Click="OnRemoveCandidate" HorizontalAlignment="Right" VerticalAlignment="Top" Width="16" Height="16" Padding="0" FontSize="9"

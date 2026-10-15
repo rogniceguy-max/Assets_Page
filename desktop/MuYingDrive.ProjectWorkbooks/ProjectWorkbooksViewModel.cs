@@ -195,6 +195,9 @@ public sealed class SceneRowItem(SceneRow row) : ObservableModel
             Changed(nameof(HasBreakdownPlan));
             Changed(nameof(HasNote));
             Changed(nameof(Video));
+            Changed(nameof(Videos));
+            Changed(nameof(VideoItems));
+            Changed(nameof(HasVideos));
             Changed(nameof(FinalVideo));
             Changed(nameof(DiscardedVideos));
             Changed(nameof(HasVideo));
@@ -237,6 +240,28 @@ public sealed class SceneRowItem(SceneRow row) : ObservableModel
     public string LabelLevelDraft { get => _labelLevelDraft; set { _labelLevelDraft = value; Changed(); } }
 
     public VideoItem? Video => Row.Video;
+    public IReadOnlyList<VideoItem> Videos =>
+        Row.Videos.Count > 0 ? Row.Videos : (Row.Video != null ? [Row.Video] : []);
+
+    public IReadOnlyList<SceneVideoItem> VideoItems
+    {
+        get
+        {
+            var list = new List<SceneVideoItem>();
+            var rawList = Row.Videos.Count > 0 ? Row.Videos : (Row.Video != null ? [Row.Video] : []);
+            foreach (var v in rawList)
+            {
+                var isFinal = Row.FinalVideo != null && (
+                    (!string.IsNullOrEmpty(Row.FinalVideo.Id) && Row.FinalVideo.Id == v.Id) ||
+                    string.Equals(Row.FinalVideo.Name, v.Name, StringComparison.OrdinalIgnoreCase)
+                );
+                list.Add(new SceneVideoItem(v, isFinal));
+            }
+            return list;
+        }
+    }
+
+    public bool HasVideos => VideoItems.Count > 0;
     public VideoItem? FinalVideo => Row.FinalVideo;
     public IReadOnlyList<VideoItem> DiscardedVideos => Row.DiscardedVideos;
 
@@ -276,6 +301,9 @@ public sealed class SceneRowItem(SceneRow row) : ObservableModel
         Changed(nameof(PlanPreview));
         Changed(nameof(NotePreview));
         Changed(nameof(Video));
+        Changed(nameof(Videos));
+        Changed(nameof(VideoItems));
+        Changed(nameof(HasVideos));
         Changed(nameof(FinalVideo));
         Changed(nameof(DiscardedVideos));
         Changed(nameof(HasVideo));
@@ -985,4 +1013,60 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
             SceneChanged();
         });
     }
+
+    public async Task AttachVideoFileAsync(SceneRowItem item, string sourceLocalPath)
+    {
+        if (Document == null) return;
+        if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行的权限。");
+
+        var fileName = Path.GetFileName(sourceLocalPath);
+        var targetPath = sourceLocalPath;
+
+        if (!string.IsNullOrWhiteSpace(ShareRoot) && SelectedProject is { } project)
+        {
+            try
+            {
+                var rawEpisode = Document.File.Name ?? "第1集";
+                var episode = rawEpisode.Replace("_节拍表", "", StringComparison.OrdinalIgnoreCase)
+                                        .Replace(".xlsx", "", StringComparison.OrdinalIgnoreCase)
+                                        .Trim();
+                if (string.IsNullOrEmpty(episode) || episode.Equals("节拍表", StringComparison.OrdinalIgnoreCase))
+                    episode = "第1集";
+
+                var beatNum = !string.IsNullOrWhiteSpace(item.BeatNumberDraft) ? item.BeatNumberDraft : item.SceneNumberDraft;
+                if (string.IsNullOrWhiteSpace(beatNum)) beatNum = "1";
+                var beatFolder = $"第{beatNum}beat";
+
+                var targetDir = Path.Combine(ShareRoot, "项目", project.Name, episode, beatFolder);
+                Directory.CreateDirectory(targetDir);
+                var destPath = Path.Combine(targetDir, fileName);
+                if (!string.Equals(Path.GetFullPath(sourceLocalPath), Path.GetFullPath(destPath), StringComparison.OrdinalIgnoreCase))
+                {
+                    File.Copy(sourceLocalPath, destPath, overwrite: true);
+                }
+                targetPath = destPath;
+            }
+            catch (Exception)
+            {
+                targetPath = sourceLocalPath;
+            }
+        }
+
+        var videoItem = new VideoItem(
+            Id: Guid.NewGuid().ToString("D"),
+            Name: fileName,
+            Path: targetPath
+        );
+
+        await UpdateSceneVideoAsync(item, "add", videoItem);
+    }
+}
+
+public sealed class SceneVideoItem(VideoItem video, bool isFinal) : ObservableModel
+{
+    public VideoItem Video { get; } = video;
+    public string Id => Video.Id ?? string.Empty;
+    public string Name => Video.Name;
+    public string? Path => Video.Path;
+    public bool IsFinal { get; } = isFinal;
 }

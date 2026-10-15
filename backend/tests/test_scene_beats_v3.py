@@ -115,6 +115,47 @@ class SceneBeatsV3Tests(unittest.TestCase):
         self.assertEqual(1, len(up6["discarded_videos"]))
         self.assertEqual("take2.mp4", up6["discarded_videos"][0]["name"])
 
+    def test_multi_video_in_single_beat(self):
+        wb = self.store.create(None, "scene_beats", self.project_id, "op-multi", "BeatMultiVideo")
+        doc = self.store.document(None, wb["id"])
+        row_id = doc["sheets"][0]["scene_rows"][0]["id"]
+        v1 = {"id": "v-1", "name": "clip1.mp4", "path": "/media/clip1.mp4"}
+        v2 = {"id": "v-2", "name": "clip2.mp4", "path": "/media/clip2.mp4"}
+
+        # 1. Add first video with action "add"
+        up1 = self.store.update_scene_row(None, wb["id"], row_id, 1, {
+            "video_action": "add",
+            "video": v1
+        })
+        self.assertEqual(1, len(up1["videos"]))
+        self.assertEqual("clip1.mp4", up1["videos"][0]["name"])
+
+        # 2. Add second video with action "add" -> both must be retained!
+        up2 = self.store.update_scene_row(None, wb["id"], row_id, up1["version"], {
+            "video_action": "add",
+            "video": v2
+        })
+        self.assertEqual(2, len(up2["videos"]))
+        self.assertEqual(["clip1.mp4", "clip2.mp4"], [v["name"] for v in up2["videos"]])
+        self.assertEqual([], up2["discarded_videos"])
+
+        # 3. Set clip2 as final video
+        up3 = self.store.update_scene_row(None, wb["id"], row_id, up2["version"], {
+            "video_action": "set_final",
+            "video_id": "v-2"
+        })
+        self.assertEqual("clip2.mp4", up3["final_video"]["name"])
+
+        # 4. Discard clip1
+        up4 = self.store.update_scene_row(None, wb["id"], row_id, up3["version"], {
+            "video_action": "discard",
+            "video_id": "v-1"
+        })
+        self.assertEqual(1, len(up4["videos"]))
+        self.assertEqual("clip2.mp4", up4["videos"][0]["name"])
+        self.assertEqual(1, len(up4["discarded_videos"]))
+        self.assertEqual("clip1.mp4", up4["discarded_videos"][0]["name"])
+
 
 if __name__ == "__main__":
     unittest.main()

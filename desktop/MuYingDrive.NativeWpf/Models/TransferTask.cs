@@ -33,7 +33,10 @@ public sealed class TransferTask : ObservableObject
         private set
         {
             if (SetProperty(ref _bytesTransferred, value))
+            {
                 OnPropertyChanged(nameof(ProgressLabel));
+                OnPropertyChanged(nameof(TransferSummary));
+            }
         }
     }
 
@@ -46,6 +49,7 @@ public sealed class TransferTask : ObservableObject
             {
                 OnPropertyChanged(nameof(StateLabel));
                 OnPropertyChanged(nameof(StateBrushKey));
+                OnPropertyChanged(nameof(TransferSummary));
                 OnPropertyChanged(nameof(CanPause));
                 OnPropertyChanged(nameof(CanResume));
                 OnPropertyChanged(nameof(CanRetry));
@@ -85,7 +89,39 @@ public sealed class TransferTask : ObservableObject
     };
 
     public string ProgressLabel => $"{FormatSize(BytesTransferred)} / {Size} · {Progress:0}%";
+    public string TransferSummary => State == TransferState.Completed
+        ? $"{Direction} · {Size}"
+        : $"{Direction} · {FormatSize(BytesTransferred)} / {Size}";
     public string StateBrushKey => State == TransferState.Failed ? "Brush.Status.Danger" : "Brush.Text.Secondary";
+
+    public TransferTask(string id, string name, string direction, long totalBytes, long bytesTransferred, TransferState state, string? error = null)
+    {
+        Id = id;
+        FileName = name;
+        Direction = direction;
+        TotalBytes = totalBytes;
+        Size = FormatSize(totalBytes);
+        BytesTransferred = bytesTransferred;
+        Progress = totalBytes > 0 ? (double)bytesTransferred / totalBytes * 100 : 0;
+        State = state;
+        ErrorMessage = error;
+    }
+
+    public void UpdateManual(long totalBytes, long bytesTransferred, TransferState state, string? error = null)
+    {
+        TotalBytes = totalBytes;
+        Size = FormatSize(totalBytes);
+        BytesTransferred = bytesTransferred;
+        Progress = totalBytes > 0 ? (double)bytesTransferred / totalBytes * 100 : 0;
+        State = state;
+        ErrorMessage = error;
+        OnPropertyChanged(nameof(TotalBytes));
+        OnPropertyChanged(nameof(Size));
+        OnPropertyChanged(nameof(BytesTransferred));
+        OnPropertyChanged(nameof(Progress));
+        OnPropertyChanged(nameof(TransferSummary));
+        OnPropertyChanged(nameof(ProgressLabel));
+    }
 
     public void Update(ResumableTransferSnapshot snapshot)
     {
@@ -112,6 +148,7 @@ public sealed class TransferTask : ObservableObject
         OnPropertyChanged(nameof(Location));
         OnPropertyChanged(nameof(TotalBytes));
         OnPropertyChanged(nameof(Size));
+        OnPropertyChanged(nameof(TransferSummary));
         OnPropertyChanged(nameof(ProgressLabel));
     }
 

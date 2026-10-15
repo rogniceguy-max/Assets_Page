@@ -42,12 +42,9 @@
        <StackPanel>
         <WrapPanel><TextBlock Text="{Binding UserName}" FontWeight="SemiBold" Margin="0,0,12,4"/><TextBlock Text="{Binding CreatedAtText}" Foreground="{DynamicResource Brush.Text.Secondary}" Margin="0,0,0,4"/></WrapPanel>
         <TextBlock Text="{Binding Text}" Margin="0,4,0,8"/>
-        <TextBlock><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Text" Value="待处理"/><Style.Triggers><DataTrigger Binding="{Binding Resolved}" Value="True"><Setter Property="Text" Value="已解决"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
-        <TextBlock Text="{Binding ResolutionNote}" Margin="0,4,0,8" Foreground="{DynamicResource Brush.Text.Secondary}"/>
         <WrapPanel>
          <Button Content="编辑" Click="OnEdit" Visibility="{Binding CanEdit, Converter={StaticResource ReviewBoolVisibility}}" Style="{DynamicResource Button.Secondary}"/>
          <Button Content="删除" Click="OnDelete" Visibility="{Binding CanDelete, Converter={StaticResource ReviewBoolVisibility}}" Style="{DynamicResource Button.Secondary}"/>
-         <Button Click="OnResolve" Style="{DynamicResource Button.Secondary}" Visibility="{Binding CanResolve, Converter={StaticResource ReviewBoolVisibility}}"><TextBlock><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Text" Value="标记已解决"/><Style.Triggers><DataTrigger Binding="{Binding Resolved}" Value="True"><Setter Property="Text" Value="重新待处理"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock></Button>
         </WrapPanel>
        </StackPanel>
       </Border>

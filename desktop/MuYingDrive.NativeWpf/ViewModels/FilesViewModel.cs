@@ -509,7 +509,38 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
             return;
         }
 
-        await UploadAsync(plan.Files.Select(entry => (entry.LocalPath, entry.RelativePath)).ToArray());
+        var folderName = Path.GetFileName(folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        if (string.IsNullOrWhiteSpace(folderName)) folderName = folder;
+
+        var resolvedFiles = new List<(string LocalPath, string DestinationPath)>();
+        var claimed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in plan.Files)
+        {
+            var destinationDirectory = Path.GetDirectoryName(Path.Combine(_currentDirectory, entry.RelativePath));
+            var name = Path.GetFileName(entry.RelativePath);
+            if (string.IsNullOrEmpty(destinationDirectory) || string.IsNullOrEmpty(name)) continue;
+
+            string freeName;
+            try
+            {
+                freeName = _mutations.ResolveFreeName(_scope, destinationDirectory, name, claimed);
+            }
+            catch (InvalidOperationException)
+            {
+                continue;
+            }
+
+            claimed.Add(freeName);
+            resolvedFiles.Add((entry.LocalPath, Path.Combine(destinationDirectory, freeName)));
+        }
+
+        if (resolvedFiles.Count > 0)
+        {
+            await _transfers.AddFolderUploadAsync(folderName, _currentDirectory, resolvedFiles);
+            MessageBox.Show($"已将文件夹「{folderName}」（共 {resolvedFiles.Count} 项）加入传输列表。",
+                "开始上传", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
         // So the new folders are visible while the transfers are still running.
         await LoadCurrentDirectoryAsync();
     }

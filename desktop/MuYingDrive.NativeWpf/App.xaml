@@ -21,6 +21,7 @@
             <!-- The workbook page is a separate library with its own namespace, so it is
                  templated here rather than inside a dictionary that only knows this one. -->
             <DataTemplate DataType="{x:Type pw:ProjectWorkbooksViewModel}"><pw:ProjectWorkbooksView /></DataTemplate>
+            <DataTemplate DataType="{x:Type vm:ProjectWorkbookPage}"><pw:ProjectWorkbooksView DataContext="{Binding ViewModel}" /></DataTemplate>
         </ResourceDictionary>
     </Application.Resources>
 </Application>
