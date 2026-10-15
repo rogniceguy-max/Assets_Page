@@ -187,6 +187,8 @@ public sealed class SceneRowItem(SceneRow row) : ObservableModel
             Changed(nameof(StoryPreview));
             Changed(nameof(PlanPreview));
             Changed(nameof(NotePreview));
+            Changed(nameof(HasBreakdownPlan));
+            Changed(nameof(HasNote));
             Changed(nameof(Video));
             Changed(nameof(FinalVideo));
             Changed(nameof(DiscardedVideos));
@@ -211,10 +213,20 @@ public sealed class SceneRowItem(SceneRow row) : ObservableModel
     public string? StoryContentDraft { get => _storyContentDraft; set { _storyContentDraft = value; Changed(); } }
 
     private string? _breakdownPlanDraft = row.BreakdownPlan;
-    public string? BreakdownPlanDraft { get => _breakdownPlanDraft; set { _breakdownPlanDraft = value; Changed(); } }
+    public string? BreakdownPlanDraft
+    {
+        get => _breakdownPlanDraft;
+        set { _breakdownPlanDraft = value; Changed(); Changed(nameof(HasBreakdownPlan)); }
+    }
+    public bool HasBreakdownPlan => !string.IsNullOrWhiteSpace(BreakdownPlanDraft);
 
     private string? _noteDraft = row.Note;
-    public string? NoteDraft { get => _noteDraft; set { _noteDraft = value; Changed(); } }
+    public string? NoteDraft
+    {
+        get => _noteDraft;
+        set { _noteDraft = value; Changed(); Changed(nameof(HasNote)); }
+    }
+    public bool HasNote => !string.IsNullOrWhiteSpace(NoteDraft);
 
     private string _labelLevelDraft = row.LabelLevel ?? "未标注";
     public string LabelLevelDraft { get => _labelLevelDraft; set { _labelLevelDraft = value; Changed(); } }

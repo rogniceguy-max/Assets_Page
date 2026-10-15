@@ -622,9 +622,17 @@ public partial class ProjectWorkbooksView : UserControl
         await Model.ExecuteAsync(() => { new SceneOriginsWindow(Model, document.File.Id, row, Resources) { Owner = Window.GetWindow(this) }.ShowDialog(); Model.SceneChanged(); return Task.CompletedTask; });
     }
 
-    private void OnOverlayBackdropClick(object sender, MouseButtonEventArgs e)
+    private long _sidebarClosedTick;
+
+    private void OnOverlayBackdropMouseDown(object sender, MouseButtonEventArgs e)
     {
         e.Handled = true;
+    }
+
+    private void OnOverlayBackdropMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        _sidebarClosedTick = Environment.TickCount64;
         TryLeaveDetailsPanel();
     }
 
@@ -676,6 +684,7 @@ public partial class ProjectWorkbooksView : UserControl
 
     private void OnOpenSceneSidebar(object sender, RoutedEventArgs e)
     {
+        if (Environment.TickCount64 - _sidebarClosedTick < 300) return;
         OnSceneDetails(sender, e);
     }
 
@@ -764,7 +773,7 @@ public partial class ProjectWorkbooksView : UserControl
             Resources,
             $"场景 {row.SceneNumberDraft} · 节拍 {row.BeatNumberDraft} 废片库",
             row.DiscardedVideos.ToList(),
-            v => $"{v.Name}\n废弃时间：{v.DiscardedAt ?? "未知"}\n路径：{v.Path ?? "未记录"}",
+            v => $"{v.Name}\n废弃时间：{v.DiscardedAt ?? "未知"}",
             false
         );
 

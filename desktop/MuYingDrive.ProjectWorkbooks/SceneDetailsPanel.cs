@@ -3,48 +3,16 @@ using System.Windows.Controls;
 
 namespace MuYingDrive.ProjectWorkbooks;
 
-// HOST ADJUSTMENT. This was SceneDetailsWindow: a modal dialog opened per beat. The
-// walk-through asked for it to become a panel that stays beside the list instead, for two
-// reasons. Reading one beat's notes in a separate window hides the list you were reading it
-// against, so checking three beats in a row is open-read-close three times. And the window's
-// own chrome — the title bar, the unstyled default buttons — was the one piece of this app
-// that did not look like this app.
-//
-// The state machine is carried over unchanged, deliberately, because it is the part that was
-// hard to get right and the part a rewrite would silently lose:
-//   * only a successful save advances the baseline the draft is measured against; a version
-//     refresh never does, so input typed while a request was pending stays "unsaved";
-//   * a 409 keeps the draft, says so, and reveals a reload rather than retrying or
-//     overwriting;
-//   * leaving with unsaved input has to be confirmed.
-// What changed is only how it is hosted. TryLeave() replaces the Closing handler, and
-// Window.GetWindow(this) replaces the owner captured by the constructor — the panel's owner
-// is whichever window the page happens to be in, and that is not known when it is built.
 public sealed class SceneDetailsPanel : UserControl
 {
     private readonly ProjectWorkbooksViewModel _model;
     private readonly string _fileId;
+    private readonly SceneRowItem _item;
     private readonly ResourceDictionary _resources;
-    private readonly Button _saveButton;
-    private readonly TextBlock _status;
-    private readonly TextBlock _serverPlan;
     private readonly TextBox _plan;
-    private readonly ComboBox _level;
-    private readonly StackPanel _body;
-    private readonly Button _reload;
-    private readonly ReviewPanel _review;
-    private SceneRowItem _item;
-    private string _savedPlan;
-    private string _savedLevel;
-    private long _expectedPlanVersion;
-    private long _expectedLevelVersion;
-    private bool _busy;
-    private bool _needsReload;
+    private readonly TextBox _note;
 
-    /// <summary>Raised by the panel's own 关闭 button. The host decides whether to act on it.</summary>
     public event EventHandler? CloseRequested { add { } remove { } }
-
-    /// <summary>The beat being shown, as the panel labels it.</summary>
     public string Heading { get; }
 
     public SceneDetailsPanel(ProjectWorkbooksViewModel model, string fileId, SceneRowItem item, ResourceDictionary resources)
@@ -53,41 +21,35 @@ public sealed class SceneDetailsPanel : UserControl
         _fileId = fileId;
         _item = item;
         _resources = resources;
-        _savedPlan = item.Row.BreakdownPlan ?? "";
-        _savedLevel = item.Row.LabelLevel ?? "未标注";
-        _expectedPlanVersion = item.Row.FieldVersions.GetValueOrDefault("breakdown_plan", item.Row.Version);
-        _expectedLevelVersion = item.Row.FieldVersions.GetValueOrDefault("label_level", item.Row.Version);
         Heading = $"场景 {item.Row.SceneNumber} · 节拍 {item.Row.BeatNumber}";
 
         var root = new Grid { Margin = new Thickness(14) };
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                          // header
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                          // status
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });     // 本拍内容
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                          // 批注
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Header
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // Scrollable body
         Content = root;
 
+        // Header: Clean border + title
         var header = new Border
         {
-            Margin = new Thickness(0, 0, 0, 10),
-            Padding = new Thickness(0, 0, 0, 8),
+            Margin = new Thickness(0, 0, 0, 14),
+            Padding = new Thickness(0, 0, 0, 10),
         };
         header.SetResourceReference(Border.BorderBrushProperty, "Brush.Border.Subtle");
         header.BorderThickness = new Thickness(0, 0, 0, 1);
 
         var title = new TextBlock
         {
-            Text = Heading, FontSize = 16, FontWeight = FontWeights.SemiBold,
-            TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center,
+            Text = Heading,
+            FontSize = 16,
+            FontWeight = FontWeights.SemiBold,
+            TextWrapping = TextWrapping.Wrap,
+            VerticalAlignment = VerticalAlignment.Center,
         };
         header.Child = title;
-
         Grid.SetRow(header, 0);
         root.Children.Add(header);
 
-        _status = WorkflowDialogs.Text("", 12);
-        Grid.SetRow(_status, 1);
-        root.Children.Add(_status);
-
+        // Content
         var content = new StackPanel();
         var scroll = new ScrollViewer
         {
@@ -95,56 +57,73 @@ public sealed class SceneDetailsPanel : UserControl
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
         };
-        Grid.SetRow(scroll, 2);
+        Grid.SetRow(scroll, 1);
         root.Children.Add(scroll);
 
-        // The six imported 成员批注 columns are gone from here. They name members this app has
-        // no way to identify, and picking one for whoever is signed in would be a guess shown
-        // as a fact. What replaces them is what the walk-through asked for: you write a note,
-        // it is signed with the account that wrote it, and nobody's column is assumed.
-        _review = new ReviewPanel
+        // 1. 拆分规划
+        var planHeader = new TextBlock
         {
-            Height = 300,
-            DataContext = new ReviewViewModel(_model.Service, _fileId, _item.Row.Id, null, "scene-rows"),
+            Text = "拆分规划",
+            FontSize = 13,
+            FontWeight = FontWeights.Medium,
+            Margin = new Thickness(0, 0, 0, 6),
         };
-        Grid.SetRow(_review, 3);
-        root.Children.Add(_review);
+        planHeader.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Secondary");
+        content.Children.Add(planHeader);
 
-        _body = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
-
-        var diffRow = new StackPanel
+        _plan = new TextBox
         {
-            Orientation = Orientation.Horizontal,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 12),
+            Text = item.BreakdownPlanDraft ?? "",
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            MinHeight = 110,
+            MaxHeight = 220,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Padding = new Thickness(10, 8, 10, 8),
+            Margin = new Thickness(0, 0, 0, 18),
+            ToolTip = "拆分规划（支持多行输入，失焦自动保存）",
+            IsEnabled = item.Row.CanEdit,
         };
-        var diffLabel = WorkflowDialogs.Text("制作难度", 14);
-        diffLabel.VerticalAlignment = VerticalAlignment.Center;
-        diffLabel.Margin = new Thickness(0, 0, 12, 0);
-        diffRow.Children.Add(diffLabel);
+        _plan.SetResourceReference(TextBox.BackgroundProperty, "Brush.Surface.Canvas");
+        _plan.SetResourceReference(TextBox.BorderBrushProperty, "Brush.Border.Subtle");
+        _plan.SetResourceReference(TextBox.ForegroundProperty, "Brush.Text.Primary");
+        _plan.LostFocus += (_, _) => CommitChanges();
+        content.Children.Add(_plan);
 
-        _level = new ComboBox
+        // 2. 批注
+        var noteHeader = new TextBlock
         {
-            ItemsSource = new[] { "未标注", "红", "黄", "绿" },
-            SelectedItem = item.Row.LabelLevel ?? "未标注",
-            Width = 130,
-            VerticalAlignment = VerticalAlignment.Center,
-            IsEnabled = true,
+            Text = "批注",
+            FontSize = 13,
+            FontWeight = FontWeights.Medium,
+            Margin = new Thickness(0, 0, 0, 6),
         };
-        diffRow.Children.Add(_level);
-        _body.Children.Add(diffRow);
+        noteHeader.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Secondary");
+        content.Children.Add(noteHeader);
 
-        _body.Children.Add(WorkflowDialogs.Text("拆分规划", 14));
-        _plan = WorkflowDialogs.Input(item.Row.BreakdownPlan);
-        _plan.IsReadOnly = false;
-        _body.Children.Add(_plan);
-        _serverPlan = WorkflowDialogs.Text("", 12);
-        _body.Children.Add(_serverPlan);
-        content.Children.Add(_body);
+        _note = new TextBox
+        {
+            Text = item.NoteDraft ?? "",
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            MinHeight = 110,
+            MaxHeight = 220,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Padding = new Thickness(10, 8, 10, 8),
+            Margin = new Thickness(0, 0, 0, 18),
+            ToolTip = "批注内容（支持多行输入，失焦自动保存）",
+            IsEnabled = item.Row.CanEdit,
+        };
+        _note.SetResourceReference(TextBox.BackgroundProperty, "Brush.Surface.Canvas");
+        _note.SetResourceReference(TextBox.BorderBrushProperty, "Brush.Border.Subtle");
+        _note.SetResourceReference(TextBox.ForegroundProperty, "Brush.Text.Primary");
+        _note.LostFocus += (_, _) => CommitChanges();
+        content.Children.Add(_note);
 
+        // 3. 本拍关联资产
         if (item.HasLinkedAssets)
         {
-            var assetsPanel = new StackPanel { Margin = new Thickness(12) };
+            var assetsPanel = new StackPanel { Margin = new Thickness(8) };
             var wrap = new WrapPanel();
             foreach (var asset in item.LinkedAssets)
             {
@@ -189,126 +168,41 @@ public sealed class SceneDetailsPanel : UserControl
                 Header = $"本拍关联资产 ({item.LinkedAssets.Count})",
                 Content = assetsPanel,
                 IsExpanded = true,
-                Margin = new Thickness(0, 0, 0, 12)
+                Margin = new Thickness(0, 0, 0, 12),
             });
         }
-
-        _saveButton = WorkflowDialogs.Button("保存", async (_, _) => await Execute(async () =>
-        {
-            if (_needsReload) { _status.Text = "请先重新加载并核对，草稿仍保留。"; return; }
-            var label = _level.SelectedItem as string;
-            _item.Row = await _model.Service.UpdateSceneAsync(_fileId, _item.Row.Id,
-                new UpdateSceneRequest(_item.Row.Version, label == "未标注" ? null : label, _plan.Text)
-                {
-                    ExpectedVersions = new Dictionary<string, long>
-                    {
-                        ["label_level"] = _expectedLevelVersion,
-                        ["breakdown_plan"] = _expectedPlanVersion,
-                    }
-                });
-            // Only a successful save advances the local baseline. A version refresh never does.
-            // Input typed while this request was pending remains unsaved and will trigger close protection.
-            _savedPlan = _item.Row.BreakdownPlan ?? "";
-            _savedLevel = _item.Row.LabelLevel ?? "未标注";
-            _expectedPlanVersion = _item.Row.FieldVersions.GetValueOrDefault("breakdown_plan", _item.Row.Version);
-            _expectedLevelVersion = _item.Row.FieldVersions.GetValueOrDefault("label_level", _item.Row.Version);
-            _model.SceneChanged(); _status.Text = "已保存。";
-        }));
-        _saveButton.Margin = new Thickness(0, 0, 8, 0);
-
-        Button reload = null!;
-        reload = WorkflowDialogs.Button("重新加载", async (_, _) => await Execute(async () =>
-        {
-            var document = await _model.Service.OpenAsync(_fileId);
-            var latest = document.Sheets.SelectMany(sheet => sheet.SceneRows).SingleOrDefault(row => row.Id == _item.Row.Id)
-                ?? throw new System.IO.InvalidDataException("原节拍已不存在，请关闭后重新打开工作簿。");
-            _item.Row = latest; _plan.IsReadOnly = false; _level.IsEnabled = true; _model.SceneChanged();
-            _expectedPlanVersion = latest.FieldVersions.GetValueOrDefault("breakdown_plan", latest.Version);
-            _expectedLevelVersion = latest.FieldVersions.GetValueOrDefault("label_level", latest.Version);
-            _serverPlan.Text = $"服务器当前等级：{latest.LabelLevel ?? "未标注"}\n服务器当前规划：{latest.BreakdownPlan}";
-            _needsReload = false; reload.Visibility = Visibility.Collapsed;
-            _body.BringIntoView();
-            _status.Text = "草稿已保留，请核对服务器当前内容后再保存。";
-        }));
-        reload.Visibility = Visibility.Collapsed;
-        reload.Margin = new Thickness(0, 0, 8, 0);
-        _reload = reload;
-
-        _review.AddAction(_saveButton);
-        _review.AddAction(_reload);
     }
 
-    /// <summary>True when the panel holds input the server has not accepted.</summary>
-    public bool HasDraft => !string.Equals(_plan.Text, _savedPlan, StringComparison.Ordinal)
-        || !string.Equals(_level.SelectedItem as string ?? "未标注", _savedLevel, StringComparison.Ordinal);
+    private void CommitChanges()
+    {
+        var planText = _plan.Text;
+        var noteText = _note.Text;
+        var dirty = !string.Equals(planText, _item.BreakdownPlanDraft, StringComparison.Ordinal)
+            || !string.Equals(noteText, _item.NoteDraft, StringComparison.Ordinal);
+        if (!dirty) return;
+        _item.BreakdownPlanDraft = planText;
+        _item.NoteDraft = noteText;
+        _ = _model.ExecuteInlineAsync(() => _model.UpdateSceneFieldsAsync(_item));
+    }
 
     public void ApplyRemote(SceneRow previous, SceneRow row)
     {
-        if (_busy || row.Id != _item.Row.Id) return;
-        var old = previous;
-        var planDraft = _plan.Text;
-        var levelDraft = _level.SelectedItem as string ?? "未标注";
-        var planDirty = !string.Equals(planDraft, _savedPlan, StringComparison.Ordinal);
-        var levelDirty = !string.Equals(levelDraft, _savedLevel, StringComparison.Ordinal);
-        var planChanged = !string.Equals(row.BreakdownPlan, old.BreakdownPlan, StringComparison.Ordinal);
-        var levelChanged = !string.Equals(row.LabelLevel, old.LabelLevel, StringComparison.Ordinal);
-        if (!planDirty)
+        if (row.Id != _item.Row.Id) return;
+        if (!_plan.IsKeyboardFocused && !string.Equals(_plan.Text, row.BreakdownPlan ?? "", StringComparison.Ordinal))
         {
-            _savedPlan = row.BreakdownPlan ?? "";
-            _expectedPlanVersion = row.FieldVersions.GetValueOrDefault("breakdown_plan", row.Version);
-            _plan.Text = _savedPlan;
+            _plan.Text = row.BreakdownPlan ?? "";
+            _item.BreakdownPlanDraft = row.BreakdownPlan;
         }
-        else if (!planChanged)
-            _expectedPlanVersion = row.FieldVersions.GetValueOrDefault("breakdown_plan", row.Version);
-        if (!levelDirty)
+        if (!_note.IsKeyboardFocused && !string.Equals(_note.Text, row.Note ?? "", StringComparison.Ordinal))
         {
-            _savedLevel = row.LabelLevel ?? "未标注";
-            _expectedLevelVersion = row.FieldVersions.GetValueOrDefault("label_level", row.Version);
-            _level.SelectedItem = _savedLevel;
-        }
-        else if (!levelChanged)
-            _expectedLevelVersion = row.FieldVersions.GetValueOrDefault("label_level", row.Version);
-        if ((planDirty && planChanged) || (levelDirty && levelChanged))
-        {
-            _needsReload = true;
-            _reload.Visibility = Visibility.Visible;
-            _serverPlan.Text = $"服务器当前等级：{row.LabelLevel ?? "未标注"}\n服务器当前规划：{row.BreakdownPlan}";
-            _status.Text = "其他人修改了当前字段；你的草稿已保留，请重新加载并核对。";
+            _note.Text = row.Note ?? "";
+            _item.NoteDraft = row.Note;
         }
     }
 
-    /// <summary>
-    /// The successor to the window's Closing handler: true when it is safe to take the panel
-    /// away. False while a request is in flight — the same refusal the window made, because
-    /// replacing a panel mid-save would drop the reply that is still coming — or when the
-    /// user asked to keep an unsaved draft.
-    /// </summary>
     public bool TryLeave()
     {
-        if (_busy) return false;
-        // The comment composer holds a draft of its own, and it is a separate refusal: a
-        // half-written note is as easy to lose as a half-written plan.
-        if (!_review.TryLeave()) return false;
-        if (!HasDraft) return true;
-        var owner = Window.GetWindow(this);
-        return MessageBox.Show(owner, "规划或等级尚未保存，是否放弃当前修改？", "保留草稿", MessageBoxButton.YesNo) == MessageBoxResult.Yes;
-    }
-
-    private async Task Execute(Func<Task> action)
-    {
-        if (_busy) return; _busy = true; _saveButton.IsEnabled = false;
-        try { await action(); }
-        catch (WorkbookApiException ex) when (ex.StatusCode == 409)
-        {
-            _needsReload = true; _reload.Visibility = Visibility.Visible;
-            _status.Text = "内容已变更，草稿已保留。请重新加载后核对，再保存。";
-        }
-        catch (System.IO.InvalidDataException ex) { _status.Text = ex.Message; }
-        catch (Exception ex)
-        {
-            _needsReload = true; _reload.Visibility = Visibility.Visible;
-            _status.Text = ex is WorkbookApiException ? ex.Message : "操作未完成，草稿已保留，请重新加载确认结果。";
-        }
-        finally { _saveButton.IsEnabled = true; _busy = false; }
+        CommitChanges();
+        return true;
     }
 }

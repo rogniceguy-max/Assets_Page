@@ -56,153 +56,171 @@
                 IsEnabled="{Binding Row.CanEdit}"/>
      </ContextMenu>
     </Border.ContextMenu>
-    <local:ResponsiveColumnsPanel Weights="85px,3.5,1.2,1.5,85px,160px" Breakpoint="760">
-     <!-- 1. 场景/节拍 -->
-     <Border Style="{StaticResource Cell}">
-      <StackPanel>
-       <TextBlock Text="场景 / 节拍" Style="{DynamicResource Typography.Caption}"/>
-       <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-        <TextBox Text="{Binding SceneNumberDraft, UpdateSourceTrigger=PropertyChanged}"
-                 LostFocus="OnSceneFieldLostFocus" KeyDown="OnSceneFieldKeyDown"
-                 Width="32" HorizontalContentAlignment="Center"
-                 Background="Transparent" BorderBrush="{DynamicResource Brush.Border.Subtle}"
-                 BorderThickness="0,0,0,1" Padding="2,3"
-                 Foreground="{DynamicResource Brush.Text.Primary}"
-                 ToolTip="场景号（失焦或回车保存）" IsEnabled="{Binding Row.CanEdit}"/>
-        <TextBlock Text="-" VerticalAlignment="Center" Margin="3,0" Foreground="{DynamicResource Brush.Text.Secondary}"/>
-        <TextBox Text="{Binding BeatNumberDraft, UpdateSourceTrigger=PropertyChanged}"
-                 LostFocus="OnSceneFieldLostFocus" KeyDown="OnSceneFieldKeyDown"
-                 Width="32" HorizontalContentAlignment="Center"
-                 Background="Transparent" BorderBrush="{DynamicResource Brush.Border.Subtle}"
-                 BorderThickness="0,0,0,1" Padding="2,3"
-                 Foreground="{DynamicResource Brush.Text.Primary}"
-                 ToolTip="节拍号（失焦或回车保存）" IsEnabled="{Binding Row.CanEdit}"/>
-       </StackPanel>
-      </StackPanel>
-     </Border>
-     <!-- 2. 故事内容 (主导行高) -->
-     <Border Style="{StaticResource Cell}">
-      <StackPanel>
-       <TextBlock Text="故事内容" Style="{DynamicResource Typography.Caption}"/>
-       <TextBox Text="{Binding StoryContentDraft, UpdateSourceTrigger=PropertyChanged}"
-                TextWrapping="Wrap" AcceptsReturn="True" MinHeight="36"
+    <StackPanel>
+     <!-- Top Bar: 一行三列 (场景号 | 节拍号 | 制作难度)，完全不抢占下方面积 -->
+     <Grid Margin="12,8,12,8">
+      <Grid.ColumnDefinitions>
+       <ColumnDefinition Width="Auto"/>
+       <ColumnDefinition Width="*"/>
+       <ColumnDefinition Width="Auto"/>
+      </Grid.ColumnDefinitions>
+      <!-- 场景号 & 节拍号 -->
+      <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+       <TextBlock Text="场景" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}" FontSize="12" Margin="0,0,5,0"/>
+       <TextBox Text="{Binding SceneNumberDraft, UpdateSourceTrigger=PropertyChanged}"
                 LostFocus="OnSceneFieldLostFocus" KeyDown="OnSceneFieldKeyDown"
-                Background="Transparent" BorderBrush="{DynamicResource Brush.Border.Subtle}"
-                BorderThickness="0,0,0,1" Padding="2,4"
-                Foreground="{DynamicResource Brush.Text.Primary}"
-                ToolTip="故事内容（回车或Shift+Enter换行，失焦保存）" IsEnabled="{Binding Row.CanEdit}"/>
-      </StackPanel>
-     </Border>
-     <!-- 3. 拆分规划 (截断，点击弹侧栏) -->
-     <Border Style="{StaticResource Cell}" Background="Transparent" Cursor="Hand"
-             MouseLeftButtonUp="OnOpenSceneSidebar" ToolTip="点击打开侧边栏查看/编辑完整拆分规划">
-      <StackPanel VerticalAlignment="Top">
-       <DockPanel>
-        <TextBlock Text="侧栏 ↗" DockPanel.Dock="Right" FontSize="10" Foreground="{DynamicResource Brush.Text.Secondary}"/>
-        <TextBlock Text="拆分规划" Style="{DynamicResource Typography.Caption}"/>
-       </DockPanel>
-       <TextBox Text="{Binding BreakdownPlanDraft, UpdateSourceTrigger=PropertyChanged}"
-                TextWrapping="NoWrap" MaxLines="1"
+                Width="36" HorizontalContentAlignment="Center"
+                Background="{DynamicResource Brush.Surface.Canvas}"
+                BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
+                Padding="2,2" Foreground="{DynamicResource Brush.Text.Primary}"
+                ToolTip="场景号（失焦或回车保存）" IsEnabled="{Binding Row.CanEdit}"/>
+       <TextBlock Text="-" VerticalAlignment="Center" Margin="6,0" Foreground="{DynamicResource Brush.Text.Secondary}"/>
+       <TextBlock Text="节拍" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}" FontSize="12" Margin="0,0,5,0"/>
+       <TextBox Text="{Binding BeatNumberDraft, UpdateSourceTrigger=PropertyChanged}"
                 LostFocus="OnSceneFieldLostFocus" KeyDown="OnSceneFieldKeyDown"
-                Background="Transparent" BorderBrush="{DynamicResource Brush.Border.Subtle}"
-                BorderThickness="0,0,0,1" Padding="2,4"
-                Foreground="{DynamicResource Brush.Text.Primary}"
-                IsEnabled="{Binding Row.CanEdit}"/>
+                Width="36" HorizontalContentAlignment="Center"
+                Background="{DynamicResource Brush.Surface.Canvas}"
+                BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
+                Padding="2,2" Foreground="{DynamicResource Brush.Text.Primary}"
+                ToolTip="节拍号（失焦或回车保存）" IsEnabled="{Binding Row.CanEdit}"/>
       </StackPanel>
-     </Border>
-     <!-- 4. 批注 (截断，点击弹侧栏) -->
-     <Border Style="{StaticResource Cell}" Background="Transparent" Cursor="Hand"
-             MouseLeftButtonUp="OnOpenSceneSidebar" ToolTip="点击打开侧边栏查看/编辑批注与讨论">
-      <StackPanel VerticalAlignment="Top">
-       <DockPanel>
-        <TextBlock Text="侧栏 ↗" DockPanel.Dock="Right" FontSize="10" Foreground="{DynamicResource Brush.Text.Secondary}"/>
-        <TextBlock Text="批注" Style="{DynamicResource Typography.Caption}"/>
-       </DockPanel>
-       <TextBox Text="{Binding NoteDraft, UpdateSourceTrigger=PropertyChanged}"
-                TextWrapping="NoWrap" MaxLines="1"
-                LostFocus="OnSceneFieldLostFocus" KeyDown="OnSceneFieldKeyDown"
-                Background="Transparent" BorderBrush="{DynamicResource Brush.Border.Subtle}"
-                BorderThickness="0,0,0,1" Padding="2,4"
-                Foreground="{DynamicResource Brush.Text.Primary}"
-                IsEnabled="{Binding Row.CanEdit}"/>
-       <TextBlock Text="{Binding DiscussionText}" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}" Margin="0,2,0,0"/>
-      </StackPanel>
-     </Border>
-     <!-- 5. 制作难度 -->
-     <Border Style="{StaticResource Cell}">
-      <StackPanel VerticalAlignment="Top">
-       <TextBlock Text="制作难度" Style="{DynamicResource Typography.Caption}"/>
+
+      <!-- 制作难度 (右侧) -->
+      <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+       <TextBlock Text="制作难度" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}" FontSize="12" Margin="0,0,6,0"/>
        <ComboBox ItemsSource="{Binding DataContext.LevelFilters, RelativeSource={RelativeSource AncestorType=UserControl}}"
                  SelectedItem="{Binding LabelLevelDraft}"
                  SelectionChanged="OnSceneLevelSelectionChanged"
-                 Margin="0,4,0,0" Padding="4,2"
+                 Width="95" Padding="4,2"
                  IsEnabled="{Binding Row.CanEdit}"/>
       </StackPanel>
-     </Border>
-     <!-- 6. 关联视频 (固定 160px，支持拖入与右键菜单) -->
-     <Border Style="{StaticResource Cell}" AllowDrop="True" DragOver="OnVideoDragOver" Drop="OnVideoDrop">
-      <StackPanel VerticalAlignment="Top">
-       <TextBlock Text="关联视频" Style="{DynamicResource Typography.Caption}"/>
-       <Grid Height="75" Margin="0,4,0,0" Background="{DynamicResource Brush.Surface.Canvas}">
-        <!-- 空状态 -->
-        <Border Visibility="{Binding HasVideo, Converter={StaticResource InverseBoolVisibility}}"
-                BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
-                Cursor="Hand" MouseLeftButtonUp="OnPickVideo" ToolTip="点击选择或拖入视频文件 (.mp4, .mov, .mkv)">
-         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-          <Path Data="M5 12h14 M12 5v14" Width="13" Height="13" Stretch="Uniform"
-                Stroke="{DynamicResource Brush.Text.Secondary}" StrokeThickness="2"
-                StrokeStartLineCap="Round" StrokeEndLineCap="Round" HorizontalAlignment="Center" Margin="0,0,0,3"/>
-          <TextBlock Text="拖入/选择视频" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}"/>
-         </StackPanel>
-        </Border>
-        <!-- 已关联视频 -->
-        <Grid Visibility="{Binding HasVideo, Converter={StaticResource BoolVisibility}}" ToolTip="{Binding Video.Path}">
-         <Grid.ContextMenu>
-          <ContextMenu>
-           <MenuItem Header="更换视频" Click="OnPickVideo" IsEnabled="{Binding Row.CanEdit}"/>
-           <MenuItem Header="设为成片" Click="OnSetFinalVideo" IsEnabled="{Binding Row.CanEdit}"/>
-           <MenuItem Header="取消成片" Click="OnUnsetFinalVideo" IsEnabled="{Binding Row.CanEdit}"/>
-           <Separator/>
-           <MenuItem Header="移入废片" Click="OnDiscardVideo" IsEnabled="{Binding Row.CanEdit}"/>
-           <MenuItem Header="{Binding DiscardedCount, StringFormat=查看废片库 ({0})}" Click="OnOpenDiscardedVideos"/>
-           <Separator/>
-           <MenuItem Header="删除此节拍行" Click="OnDeleteSceneRow" Foreground="{DynamicResource Brush.Status.Danger}" IsEnabled="{Binding Row.CanEdit}"/>
-          </ContextMenu>
-         </Grid.ContextMenu>
-         <Border BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" Padding="4">
-          <StackPanel VerticalAlignment="Center">
-           <WrapPanel HorizontalAlignment="Center" Margin="0,0,0,2">
-            <Border Background="{DynamicResource Brush.Accent.Primary}" CornerRadius="3" Padding="3,1" Margin="0,0,3,0">
-             <TextBlock Text="{Binding FinalBadgeText}" FontSize="10" Foreground="White" FontWeight="Bold"/>
-            </Border>
-            <TextBlock Text="🎬" FontSize="11" VerticalAlignment="Center"/>
-           </WrapPanel>
-           <TextBlock Text="{Binding VideoDisplayName}" FontSize="11" TextAlignment="Center"
-                      TextTrimming="CharacterEllipsis" MaxHeight="30" Foreground="{DynamicResource Brush.Text.Primary}"/>
+     </Grid>
+     <Rectangle Height="1" Fill="{DynamicResource Brush.Border.Subtle}"/>
+
+     <!-- Main Columns: 故事内容 | 拆分规划 | 批注 | 关联视频 (同一行不同列) -->
+     <local:ResponsiveColumnsPanel Weights="4,1.4,1.6,160px" Breakpoint="760">
+      <!-- 1. 故事内容 (主导行高) -->
+      <Border Style="{StaticResource Cell}">
+       <StackPanel>
+        <TextBlock Text="故事内容" Style="{DynamicResource Typography.Caption}"/>
+        <TextBox Text="{Binding StoryContentDraft, UpdateSourceTrigger=PropertyChanged}"
+                 TextWrapping="Wrap" AcceptsReturn="True" MinHeight="36"
+                 LostFocus="OnSceneFieldLostFocus" KeyDown="OnSceneFieldKeyDown"
+                 Background="Transparent" BorderBrush="{DynamicResource Brush.Border.Subtle}"
+                 BorderThickness="0,0,0,1" Padding="2,4"
+                 Foreground="{DynamicResource Brush.Text.Primary}"
+                 ToolTip="故事内容（回车换行，失焦自动保存）" IsEnabled="{Binding Row.CanEdit}"/>
+       </StackPanel>
+      </Border>
+      <!-- 2. 拆分规划 (截断展示，点击弹侧栏) -->
+      <Border Style="{StaticResource Cell}" Background="Transparent" Cursor="Hand"
+              PreviewMouseLeftButtonUp="OnOpenSceneSidebar" ToolTip="点击打开侧边栏查看/编辑完整拆分规划">
+       <StackPanel VerticalAlignment="Top">
+        <TextBlock Text="拆分规划" Style="{DynamicResource Typography.Caption}"/>
+        <TextBlock Text="{Binding BreakdownPlanDraft}"
+                   TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" Margin="0,5,0,0">
+         <TextBlock.Style>
+          <Style TargetType="TextBlock">
+           <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
+           <Style.Triggers>
+            <DataTrigger Binding="{Binding HasBreakdownPlan}" Value="False">
+             <Setter Property="Text" Value="点击添加规划..."/>
+             <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}"/>
+             <Setter Property="Opacity" Value="0.6"/>
+            </DataTrigger>
+           </Style.Triggers>
+          </Style>
+         </TextBlock.Style>
+        </TextBlock>
+       </StackPanel>
+      </Border>
+      <!-- 3. 批注 (截断展示，点击弹侧栏) -->
+      <Border Style="{StaticResource Cell}" Background="Transparent" Cursor="Hand"
+              PreviewMouseLeftButtonUp="OnOpenSceneSidebar" ToolTip="点击打开侧边栏查看/编辑完整批注">
+       <StackPanel VerticalAlignment="Top">
+        <TextBlock Text="批注" Style="{DynamicResource Typography.Caption}"/>
+        <TextBlock Text="{Binding NoteDraft}"
+                   TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" Margin="0,5,0,0">
+         <TextBlock.Style>
+          <Style TargetType="TextBlock">
+           <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
+           <Style.Triggers>
+            <DataTrigger Binding="{Binding HasNote}" Value="False">
+             <Setter Property="Text" Value="点击添加批注..."/>
+             <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}"/>
+             <Setter Property="Opacity" Value="0.6"/>
+            </DataTrigger>
+           </Style.Triggers>
+          </Style>
+         </TextBlock.Style>
+        </TextBlock>
+       </StackPanel>
+      </Border>
+      <!-- 4. 关联视频 (固定 160px，支持拖入与右键菜单) -->
+      <Border Style="{StaticResource Cell}" AllowDrop="True" DragOver="OnVideoDragOver" Drop="OnVideoDrop">
+       <StackPanel VerticalAlignment="Top">
+        <TextBlock Text="关联视频" Style="{DynamicResource Typography.Caption}"/>
+        <Grid Height="75" Margin="0,4,0,0" Background="{DynamicResource Brush.Surface.Canvas}">
+         <!-- 空状态 -->
+         <Border Visibility="{Binding HasVideo, Converter={StaticResource InverseBoolVisibility}}"
+                 BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
+                 Cursor="Hand" MouseLeftButtonUp="OnPickVideo" ToolTip="点击选择或拖入视频文件 (.mp4, .mov, .mkv)">
+          <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+           <Path Data="M5 12h14 M12 5v14" Width="13" Height="13" Stretch="Uniform"
+                 Stroke="{DynamicResource Brush.Text.Secondary}" StrokeThickness="2"
+                 StrokeStartLineCap="Round" StrokeEndLineCap="Round" HorizontalAlignment="Center" Margin="0,0,0,3"/>
+           <TextBlock Text="拖入/选择视频" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}"/>
           </StackPanel>
          </Border>
-         <!-- 悬浮显示 更换 -->
-         <Border Background="#88000000" Cursor="Hand" MouseLeftButtonUp="OnPickVideo" ToolTip="点击更换视频">
-          <Border.Style>
-           <Style TargetType="Border">
-            <Setter Property="Opacity" Value="0"/>
-            <Style.Triggers>
-             <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Grid}}" Value="True">
-              <Setter Property="Opacity" Value="1"/>
-             </DataTrigger>
-            </Style.Triggers>
-           </Style>
-          </Border.Style>
-          <Border Background="{DynamicResource Brush.Surface.Panel}" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
-                  CornerRadius="4" Padding="8,3" HorizontalAlignment="Center" VerticalAlignment="Center">
-           <TextBlock Text="更换视频" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource Brush.Text.Primary}"/>
+         <!-- 已关联视频 -->
+         <Grid Visibility="{Binding HasVideo, Converter={StaticResource BoolVisibility}}" ToolTip="{Binding Video.Name}">
+          <Grid.ContextMenu>
+           <ContextMenu>
+            <MenuItem Header="更换视频" Click="OnPickVideo" IsEnabled="{Binding Row.CanEdit}"/>
+            <MenuItem Header="设为成片" Click="OnSetFinalVideo" IsEnabled="{Binding Row.CanEdit}"/>
+            <MenuItem Header="取消成片" Click="OnUnsetFinalVideo" IsEnabled="{Binding Row.CanEdit}"/>
+            <Separator/>
+            <MenuItem Header="移入废片" Click="OnDiscardVideo" IsEnabled="{Binding Row.CanEdit}"/>
+            <MenuItem Header="{Binding DiscardedCount, StringFormat=查看废片库 ({0})}" Click="OnOpenDiscardedVideos"/>
+            <Separator/>
+            <MenuItem Header="删除此节拍行" Click="OnDeleteSceneRow" Foreground="{DynamicResource Brush.Status.Danger}" IsEnabled="{Binding Row.CanEdit}"/>
+           </ContextMenu>
+          </Grid.ContextMenu>
+          <Border BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" Padding="4">
+           <StackPanel VerticalAlignment="Center">
+            <WrapPanel HorizontalAlignment="Center" Margin="0,0,0,2">
+             <Border Background="{DynamicResource Brush.Accent.Primary}" CornerRadius="3" Padding="3,1" Margin="0,0,3,0">
+              <TextBlock Text="{Binding FinalBadgeText}" FontSize="10" Foreground="White" FontWeight="Bold"/>
+             </Border>
+             <TextBlock Text="🎬" FontSize="11" VerticalAlignment="Center"/>
+            </WrapPanel>
+            <TextBlock Text="{Binding VideoDisplayName}" FontSize="11" TextAlignment="Center"
+                       TextTrimming="CharacterEllipsis" MaxHeight="30" Foreground="{DynamicResource Brush.Text.Primary}"/>
+           </StackPanel>
           </Border>
-         </Border>
+          <!-- 悬浮显示 更换 -->
+          <Border Background="#88000000" Cursor="Hand" MouseLeftButtonUp="OnPickVideo" ToolTip="点击更换视频">
+           <Border.Style>
+            <Style TargetType="Border">
+             <Setter Property="Opacity" Value="0"/>
+             <Style.Triggers>
+              <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Grid}}" Value="True">
+               <Setter Property="Opacity" Value="1"/>
+              </DataTrigger>
+             </Style.Triggers>
+            </Style>
+           </Border.Style>
+           <Border Background="{DynamicResource Brush.Surface.Panel}" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
+                   CornerRadius="4" Padding="8,3" HorizontalAlignment="Center" VerticalAlignment="Center">
+            <TextBlock Text="更换视频" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource Brush.Text.Primary}"/>
+           </Border>
+          </Border>
+         </Grid>
         </Grid>
-       </Grid>
-      </StackPanel>
-     </Border>
-    </local:ResponsiveColumnsPanel>
+       </StackPanel>
+      </Border>
+     </local:ResponsiveColumnsPanel>
+    </StackPanel>
    </Border>
   </DataTemplate>
   <DataTemplate x:Key="AssetRowTemplate">
@@ -474,7 +492,7 @@
     <!-- Full Overlay Drawer for Scene and Asset details (does NOT squeeze or move the table) -->
     <Grid x:Name="ScenePanelHost" Grid.RowSpan="3" Visibility="Collapsed" Panel.ZIndex="100">
      <!-- Click outside backdrop to dismiss drawer -->
-     <Border Background="#25000000" MouseLeftButtonDown="OnOverlayBackdropClick"/>
+     <Border Background="#25000000" PreviewMouseLeftButtonDown="OnOverlayBackdropMouseDown" PreviewMouseLeftButtonUp="OnOverlayBackdropMouseUp"/>
      <!-- Floating Drawer Panel on the right -->
      <Border HorizontalAlignment="Right" Width="400"
              Background="{DynamicResource Brush.Surface.Panel}"
