@@ -58,7 +58,7 @@ public sealed record UpdateAssetRowRequest(long ExpectedVersion, string? Categor
 public sealed record UpdateSceneOriginsRequest(long ExpectedVersion, List<SceneOrigin> Origins);
 public sealed record SelectionHistoryEntry(string Id, string? PreviousImageId, string? ImageId,
     string UserName, DateTimeOffset CreatedAt, string? Reason);
-public sealed record ReviewSummary(string? ImageId, int Good, int Bad, int CommentCount, string? MyVerdict);
+public sealed record ReviewSummary(string? ImageId, int Good, int Bad, int CommentCount, string? MyVerdict, string? LatestComment = null, string? LatestUser = null);
 public sealed record ReviewComment(string Id, string UserId, string UserName, string Text, long Version,
     DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, bool CanEdit, bool CanDelete)
 {

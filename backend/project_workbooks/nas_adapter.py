@@ -789,10 +789,18 @@ class NasReviewServices:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute("""
-                SELECT image_id, COUNT(*) as comment_count
-                FROM project_reviews
-                WHERE file_id = ? AND row_kind = ? AND row_id = ?
-                GROUP BY image_id
+                SELECT pr.image_id, COUNT(*) as comment_count,
+                       (SELECT text FROM project_reviews pr2
+                        WHERE pr2.file_id = pr.file_id AND pr2.row_kind = pr.row_kind AND pr2.row_id = pr.row_id
+                          AND ((pr2.image_id IS NULL AND pr.image_id IS NULL) OR pr2.image_id = pr.image_id)
+                        ORDER BY pr2.created_at DESC, pr2.rowid DESC LIMIT 1) as latest_comment,
+                       (SELECT user_name FROM project_reviews pr3
+                        WHERE pr3.file_id = pr.file_id AND pr3.row_kind = pr.row_kind AND pr3.row_id = pr.row_id
+                          AND ((pr3.image_id IS NULL AND pr.image_id IS NULL) OR pr3.image_id = pr.image_id)
+                        ORDER BY pr3.created_at DESC, pr3.rowid DESC LIMIT 1) as latest_user
+                FROM project_reviews pr
+                WHERE pr.file_id = ? AND pr.row_kind = ? AND pr.row_id = ?
+                GROUP BY pr.image_id
             """, (file_id, self.row_kind, row_id)).fetchall()
 
             vote_rows = conn.execute("""
@@ -818,6 +826,8 @@ class NasReviewServices:
                     "bad": v["bad"] if v else 0,
                     "comment_count": r["comment_count"],
                     "my_verdict": v["my_verdict"] if v else None,
+                    "latest_comment": r["latest_comment"],
+                    "latest_user": r["latest_user"],
                 })
             for img_id, v in votes_by_img.items():
                 if img_id not in seen_images:
@@ -827,6 +837,8 @@ class NasReviewServices:
                         "bad": v["bad"],
                         "comment_count": 0,
                         "my_verdict": v["my_verdict"],
+                        "latest_comment": None,
+                        "latest_user": None,
                     })
             if not result:
                 result.append({
@@ -835,6 +847,8 @@ class NasReviewServices:
                     "bad": 0,
                     "comment_count": 0,
                     "my_verdict": None,
+                    "latest_comment": None,
+                    "latest_user": None,
                 })
             return result
 

@@ -67,73 +67,18 @@ public sealed class AssetDetailsPanel : UserControl
         Grid.SetRow(header, 0);
         root.Children.Add(header);
 
-        // Asset metadata & actions
+        // Asset metadata
         var infoPanel = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
 
         var metaText = new TextBlock
         {
             Text = $"类别：{item.Row.Category ?? "角色"}    出场：{item.Row.Appearance ?? "未设置"}",
             FontSize = 12,
-            Margin = new Thickness(0, 0, 0, 8),
+            Margin = new Thickness(0, 0, 0, 4),
         };
         metaText.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Secondary");
         infoPanel.Children.Add(metaText);
 
-        var actionsWrap = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
-
-        var openFolderBtn = new Button { Content = "打开文件夹", Margin = new Thickness(0, 0, 6, 6) };
-        openFolderBtn.SetResourceReference(FrameworkElement.StyleProperty, "Button.Secondary");
-        openFolderBtn.Click += (_, _) => _model.OpenAssetFolder(_item);
-        actionsWrap.Children.Add(openFolderBtn);
-
-        var historyBtn = new Button { Content = "选定历史", Margin = new Thickness(0, 0, 6, 6) };
-        historyBtn.SetResourceReference(FrameworkElement.StyleProperty, "Button.Secondary");
-        historyBtn.Click += async (_, _) =>
-        {
-            await _model.ExecuteAsync(async () =>
-            {
-                var history = await _model.Service.GetSelectionHistoryAsync(_fileId, _item.Row.Id);
-                WorkflowDialogs.ShowText(Window.GetWindow(this), _resources, "选定历史",
-                    history.Count == 0 ? "暂无选定变更记录。" : string.Join("\n\n", history.Select(entry =>
-                        $"{entry.CreatedAt.ToLocalTime():yyyy-MM-dd HH:mm} · {entry.UserName}\n{entry.PreviousImageId ?? "未选定"} → {entry.ImageId ?? "已清空"}\n原因：{entry.Reason ?? "未填写"}")));
-            });
-        };
-        actionsWrap.Children.Add(historyBtn);
-
-        var compareBtn = new Button { Content = "比较图片", Margin = new Thickness(0, 0, 6, 6) };
-        compareBtn.SetResourceReference(FrameworkElement.StyleProperty, "Button.Secondary");
-        compareBtn.Click += async (_, _) =>
-        {
-            await _model.ExecuteAsync(async () =>
-            {
-                var images = _item.Candidates.Concat(_item.Selected == null ? [] : new[] { _item.Selected }).DistinctBy(img => img.Asset.Id).ToList();
-                var chosen = WorkflowDialogs.Choose(Window.GetWindow(this), _resources, "选择 2–4 张图片比较", images, img => img.Name + "\n" + img.Details, true);
-                if (chosen == null) return;
-                if (chosen.Count is < 2 or > 4) throw new InvalidDataException("请选择 2–4 张图片。");
-                await _model.RefreshReviewSummariesAsync(_fileId, _item);
-                var window = new CompareImagesWindow(_model.Service, chosen) { Owner = Window.GetWindow(this) };
-                WorkflowDialogs.Theme(window, _resources);
-                window.ShowDialog();
-            });
-        };
-        actionsWrap.Children.Add(compareBtn);
-
-        if (_item.Row.CanEdit)
-        {
-            var deleteBtn = new Button { Content = "删除行", Margin = new Thickness(0, 0, 6, 6) };
-            deleteBtn.SetResourceReference(FrameworkElement.StyleProperty, "Button.Secondary");
-            deleteBtn.Click += async (_, _) =>
-            {
-                if (MessageBox.Show(Window.GetWindow(this), $"确定要删除资产「{_item.Row.Name}」这一行吗？", "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
-                {
-                    CloseRequested?.Invoke(this, EventArgs.Empty);
-                    await _model.ExecuteAsync(() => _model.DeleteAssetRowAsync(_item));
-                }
-            };
-            actionsWrap.Children.Add(deleteBtn);
-        }
-
-        infoPanel.Children.Add(actionsWrap);
         Grid.SetRow(infoPanel, 1);
         root.Children.Add(infoPanel);
 

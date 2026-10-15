@@ -67,6 +67,12 @@
   </DataTemplate>
   <DataTemplate x:Key="AssetRowTemplate">
    <Border Loaded="OnRowLoaded" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" Margin="0,0,0,8" Background="{DynamicResource Brush.Surface.Panel}">
+    <Border.ContextMenu>
+     <ContextMenu>
+      <MenuItem Header="删除此资产行" Click="OnDeleteAssetRow" Foreground="{DynamicResource Brush.Status.Danger}"
+                IsEnabled="{Binding Row.CanEdit}"/>
+     </ContextMenu>
+    </Border.ContextMenu>
     <local:ResponsiveColumnsPanel Weights="0.8,1.2,0.8,2.6,2.2,2.4" Breakpoint="760">
      <Border Style="{StaticResource Cell}">
       <StackPanel>
@@ -100,27 +106,48 @@
      <Border Style="{StaticResource Cell}" AllowDrop="True" Tag="selected" DragOver="OnImageDragOver" Drop="OnImageDrop">
       <StackPanel>
        <TextBlock Text="选定" Style="{DynamicResource Typography.Caption}"/>
-       <Button Click="OnPreviewSelected" Padding="0" HorizontalAlignment="Stretch" ToolTip="查看大图或点击选择">
-        <Grid Height="110" Background="{DynamicResource Brush.Surface.Canvas}">
-         <TextBlock Text="点击选择或拖入图片" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}">
-          <TextBlock.Style>
-           <Style TargetType="TextBlock">
-            <Setter Property="Visibility" Value="Collapsed"/>
+       <Grid Height="120" Background="{DynamicResource Brush.Surface.Canvas}">
+        <Border Visibility="{Binding HasNoSelected, Converter={StaticResource BoolVisibility}}"
+                BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
+                Cursor="Hand" Tag="selected" MouseLeftButtonUp="OnPickImages" ToolTip="点击选择或拖入图片">
+         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+          <Path Data="M5 12h14 M12 5v14" Width="14" Height="14" Stretch="Uniform"
+                Stroke="{DynamicResource Brush.Text.Secondary}" StrokeThickness="2"
+                StrokeStartLineCap="Round" StrokeEndLineCap="Round" HorizontalAlignment="Center" Margin="0,0,0,6"/>
+          <TextBlock Text="点击选择图片" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}"/>
+         </StackPanel>
+        </Border>
+        <Grid Visibility="{Binding HasSelected, Converter={StaticResource BoolVisibility}}"
+              ToolTip="{Binding Selected.Name}">
+         <Grid.ContextMenu>
+          <ContextMenu>
+           <MenuItem Header="更换图片" Tag="selected" Click="OnPickImages" IsEnabled="{Binding Row.CanEdit}"/>
+           <MenuItem Header="查看大图与评价" Click="OnPreviewSelected"/>
+           <Separator/>
+           <MenuItem Header="从选定清空" Click="OnClearSelected" IsEnabled="{Binding Row.CanEdit}"/>
+           <Separator/>
+           <MenuItem Header="删除此资产行" Click="OnDeleteAssetRow" Foreground="{DynamicResource Brush.Status.Danger}" IsEnabled="{Binding Row.CanEdit}"/>
+          </ContextMenu>
+         </Grid.ContextMenu>
+         <Image Source="{Binding Selected.Preview}" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+         <Border Background="#88000000" Cursor="Hand" Tag="selected" MouseLeftButtonUp="OnPickImages" ToolTip="点击更换图片">
+          <Border.Style>
+           <Style TargetType="Border">
+            <Setter Property="Opacity" Value="0"/>
             <Style.Triggers>
-             <DataTrigger Binding="{Binding Selected}" Value="{x:Null}">
-              <Setter Property="Visibility" Value="Visible"/>
+             <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Grid}}" Value="True">
+              <Setter Property="Opacity" Value="1"/>
              </DataTrigger>
             </Style.Triggers>
            </Style>
-          </TextBlock.Style>
-         </TextBlock>
-         <Image Source="{Binding Selected.Preview}" Stretch="Uniform"/>
+          </Border.Style>
+          <Border Background="{DynamicResource Brush.Surface.Panel}" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
+                  CornerRadius="4" Padding="12,5" HorizontalAlignment="Center" VerticalAlignment="Center">
+           <TextBlock Text="更换" FontSize="12" FontWeight="Medium" Foreground="{DynamicResource Brush.Text.Primary}"/>
+          </Border>
+         </Border>
         </Grid>
-       </Button>
-       <DockPanel Margin="0,4,0,0">
-        <Button DockPanel.Dock="Right" Content="更换" Tag="selected" Click="OnPickImages" FontSize="11" Padding="6,2" Margin="4,0,0,0" IsEnabled="{Binding Row.CanEdit}"/>
-        <TextBlock Text="{Binding Selected.Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-       </DockPanel>
+       </Grid>
       </StackPanel>
      </Border>
      <Border Style="{StaticResource Cell}" AllowDrop="True" Tag="candidates" DragOver="OnImageDragOver" Drop="OnImageDrop">
@@ -144,6 +171,8 @@
              <MenuItem Header="查看大图与评价" Click="OnPreviewCandidate"/>
              <Separator/>
              <MenuItem Header="从备选移除" Click="OnRemoveCandidate"/>
+             <Separator/>
+             <MenuItem Header="删除此资产行" Click="OnDeleteAssetRow" Foreground="{DynamicResource Brush.Status.Danger}" IsEnabled="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}}"/>
             </ContextMenu>
            </Border.ContextMenu>
            <Grid Width="64" Height="64">
@@ -159,22 +188,15 @@
        </ItemsControl>
       </StackPanel>
      </Border>
-     <Border Style="{StaticResource Cell}">
+     <Border Style="{StaticResource Cell}" Background="Transparent" Cursor="Hand"
+             MouseLeftButtonUp="OnAssetReviewClick" ToolTip="点击打开资产评审侧栏">
       <StackPanel>
        <TextBlock Text="评审" Style="{DynamicResource Typography.Caption}"/>
-       <Button Click="OnAssetReviewClick" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="10,8" Margin="0,0,0,4"
-               Background="{DynamicResource Brush.Surface.Canvas}" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
-               ToolTip="点击打开评审侧栏，查看所有讨论与用户批注">
-        <StackPanel>
-         <DockPanel Margin="0,0,0,6">
-          <TextBlock Text="💬 评审讨论" FontWeight="SemiBold" FontSize="13" Foreground="{DynamicResource Brush.Text.Primary}"/>
-          <Border HorizontalAlignment="Right" Background="{DynamicResource Brush.Surface.Panel}" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" CornerRadius="10" Padding="6,1">
-           <TextBlock Text="{Binding ReviewCountText}" FontSize="11" Foreground="{DynamicResource Brush.Accent.Primary}"/>
-          </Border>
-         </DockPanel>
-         <TextBlock Text="{Binding ReviewSnippetText}" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}" TextTrimming="CharacterEllipsis"/>
-        </StackPanel>
-       </Button>
+       <StackPanel Visibility="{Binding HasReviews, Converter={StaticResource BoolVisibility}}" Margin="0,6,0,0">
+        <TextBlock Text="{Binding ReviewCountText}" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}"/>
+        <TextBlock Text="{Binding ReviewSnippetText}" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}"
+                   Margin="0,4,0,0" TextTrimming="CharacterEllipsis" TextWrapping="Wrap" MaxHeight="36"/>
+       </StackPanel>
       </StackPanel>
      </Border>
     </local:ResponsiveColumnsPanel>
@@ -229,9 +251,18 @@
       <Button Content="+ 新增集数" Click="OnAddEpisode" Margin="0,0,12,0" Padding="8,4"
               Visibility="{Binding SelectedSheet.IsScene, Converter={StaticResource BoolVisibility}}"
               ToolTip="为当前节拍表新增一集"/>
-      <Button Content="+ 新增资产" Click="OnAddAssetRow" Margin="0,0,12,0" Padding="8,4"
+      <Button Click="OnAddAssetRow" Margin="0,0,12,0" Padding="10,5"
               Visibility="{Binding SelectedSheet.IsAsset, Converter={StaticResource BoolVisibility}}"
-              ToolTip="为当前资产表新增一行资产"/>
+              ToolTip="为当前资产表新增一行资产">
+       <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+        <Path Data="M5 12h14 M12 5v14"
+              Width="13" Height="13" Stretch="Uniform"
+              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+              StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+              VerticalAlignment="Center" Margin="0,0,6,0"/>
+        <TextBlock Text="新增资产列" VerticalAlignment="Center"/>
+       </StackPanel>
+      </Button>
       <TextBox Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}" Width="200" Padding="6" ToolTip="搜索当前工作表（场景、节拍、正文、规划或资产）" Background="{DynamicResource Brush.Surface.Panel}" Foreground="{DynamicResource Brush.Text.Primary}"/>
       <ComboBox ItemsSource="{Binding LevelFilters}" SelectedItem="{Binding LevelFilter}" Width="150" Margin="12,0,0,0" ToolTip="制作难度筛选"
                 Visibility="{Binding SelectedSheet.IsScene, Converter={StaticResource BoolVisibility}}">

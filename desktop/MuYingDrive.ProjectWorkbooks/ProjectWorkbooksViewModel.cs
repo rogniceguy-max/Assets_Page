@@ -88,23 +88,38 @@ public sealed class AssetRowItem(AssetRow row, ImageItem? selected, IReadOnlyLis
         Selected = row.SelectedImage == null ? null : new ImageItem(row.SelectedImage, null);
         Candidates = row.CandidateImages.Select(asset => new ImageItem(asset, null)).ToList();
         Changed(nameof(Row)); Changed(nameof(Selected)); Changed(nameof(Candidates));
+        Changed(nameof(HasSelected)); Changed(nameof(HasNoSelected));
     }
+    public bool HasSelected => Selected != null;
+    public bool HasNoSelected => Selected == null;
     internal bool SummaryLoading { get; set; }
     internal bool SummaryLoaded { get; set; }
     private ReviewSummary? _generalSummary;
     public string GeneralSummaryText => _generalSummary is { } summary ? $"整条记录讨论 · 评论 {summary.CommentCount}" : "整条记录讨论 · 评论 ?";
-    public string ReviewCountText => _generalSummary is { } summary
-        ? (summary.CommentCount > 0 ? $"{summary.CommentCount} 条评论" : "暂无评论")
-        : "评论 ?";
-    public string ReviewSnippetText => _generalSummary is { } summary
-        ? (summary.CommentCount > 0 ? "点击查看或发表讨论" : "点击添加首条批注")
-        : "点击打开评审侧栏";
+    public bool HasReviews => _generalSummary is { } summary && summary.CommentCount > 0;
+    public string ReviewCountText => _generalSummary is { } summary && summary.CommentCount > 0
+        ? $"{summary.CommentCount} 条讨论"
+        : string.Empty;
+    public string ReviewSnippetText
+    {
+        get
+        {
+            if (_generalSummary is not { } summary || summary.CommentCount <= 0) return string.Empty;
+            if (!string.IsNullOrWhiteSpace(summary.LatestComment))
+            {
+                var userPrefix = string.IsNullOrWhiteSpace(summary.LatestUser) ? "" : $"{summary.LatestUser}: ";
+                return $"最新: {userPrefix}{summary.LatestComment}";
+            }
+            return "点击查看所有讨论";
+        }
+    }
     public void SetSummaries(IReadOnlyList<ReviewSummary>? summaries)
     {
         _generalSummary = summaries?.FirstOrDefault(s => s.ImageId == null);
         Selected?.SetSummary(summaries?.FirstOrDefault(s => s.ImageId == Selected.Asset.Id));
         foreach (var image in Candidates) image.SetSummary(summaries?.FirstOrDefault(s => s.ImageId == image.Asset.Id));
         Changed(nameof(GeneralSummaryText));
+        Changed(nameof(HasReviews));
         Changed(nameof(ReviewCountText));
         Changed(nameof(ReviewSnippetText));
     }

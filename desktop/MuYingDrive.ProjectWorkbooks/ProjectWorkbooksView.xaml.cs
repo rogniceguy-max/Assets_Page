@@ -62,6 +62,13 @@ public partial class ProjectWorkbooksView : UserControl
     }
     private static AssetRowItem? Row(object sender)
     {
+        if (sender is FrameworkElement { DataContext: AssetRowItem directItem }) return directItem;
+        if (sender is MenuItem menuItem)
+        {
+            if (menuItem.DataContext is AssetRowItem item) return item;
+            if (menuItem.Parent is ContextMenu { PlacementTarget: FrameworkElement target } && target.DataContext is AssetRowItem targetItem)
+                return targetItem;
+        }
         DependencyObject? current = sender as DependencyObject;
         while (current != null)
         {
@@ -421,6 +428,23 @@ public partial class ProjectWorkbooksView : UserControl
     {
         if (Model.Document is not { } document || Model.SelectedSheet is not { IsAsset: true }) return;
         await Model.ExecuteAsync(Model.AddAssetRowAsync);
+    }
+
+    private async void OnDeleteAssetRow(object sender, RoutedEventArgs e)
+    {
+        if (Row(sender) is not { } row || !row.Row.CanEdit) return;
+        var name = string.IsNullOrWhiteSpace(row.Row.Name) ? "此资产" : $"「{row.Row.Name}」";
+        if (MessageBox.Show(Window.GetWindow(this), $"确定要删除资产{name}这一行吗？", "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        if (_assetPanelItem != null && ReferenceEquals(_assetPanelItem, row))
+        {
+            HideAssetPanel();
+        }
+
+        await Model.ExecuteAsync(() => Model.DeleteAssetRowAsync(row));
     }
 
     private async void OnAssetFieldLostFocus(object sender, RoutedEventArgs e)
