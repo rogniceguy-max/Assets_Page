@@ -247,17 +247,8 @@ public sealed class SceneRowItem(SceneRow row) : ObservableModel
     {
         get
         {
-            var list = new List<SceneVideoItem>();
             var rawList = Row.Videos.Count > 0 ? Row.Videos : (Row.Video != null ? [Row.Video] : []);
-            foreach (var v in rawList)
-            {
-                var isFinal = Row.FinalVideo != null && (
-                    (!string.IsNullOrEmpty(Row.FinalVideo.Id) && Row.FinalVideo.Id == v.Id) ||
-                    string.Equals(Row.FinalVideo.Name, v.Name, StringComparison.OrdinalIgnoreCase)
-                );
-                list.Add(new SceneVideoItem(v, isFinal));
-            }
-            return list;
+            return rawList.Select(v => new SceneVideoItem(v)).ToList();
         }
     }
 
@@ -1062,11 +1053,10 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
     }
 }
 
-public sealed class SceneVideoItem(VideoItem video, bool isFinal) : ObservableModel
+public sealed class SceneVideoItem(VideoItem video) : ObservableModel
 {
     public VideoItem Video { get; } = video;
     public string Id => Video.Id ?? string.Empty;
     public string Name => Video.Name;
     public string? Path => Video.Path;
-    public bool IsFinal { get; } = isFinal;
 }

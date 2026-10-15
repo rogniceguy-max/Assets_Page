@@ -33,10 +33,12 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
     private int _loadRequestId;
     private readonly bool _smbConnected;
     private readonly string _smbConnectionError;
+    private readonly DriveSession _session;
 
     public FilesViewModel(DriveSession session, NasClientSettings settings, TransferViewModel transfers)
     {
         ArgumentNullException.ThrowIfNull(session);
+        _session = session;
         _transfers = transfers;
         // One resolver for both halves: reads and writes must not disagree about what
         // "inside the share" means, which is what happened when each carried its own copy.
@@ -179,7 +181,7 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
     public int SelectedCount => _selection.Count;
     public string SelectedLabel => SelectedCount == 1 ? "已选择 1 项" : $"已选择 {SelectedCount} 项";
     public bool HasSelection => SelectedCount > 0;
-    public bool IsReadOnly => !_scope.CanWrite;
+    public bool IsReadOnly => !_scope.CanWrite || _session.User.Id == 0;
 
     private string _truncationNotice = string.Empty;
 

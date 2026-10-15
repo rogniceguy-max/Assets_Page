@@ -121,11 +121,13 @@ class ProjectSpaceService:
     """The two project-space routes the client has today."""
 
     def __init__(self, root: Path | None, session: Any,
-                 provisioner: ProjectProvisioner | None = None, catalog: Any = None):
+                 provisioner: ProjectProvisioner | None = None, catalog: Any = None,
+                 visitor_authenticate: Any = None):
         self._root = root
         self._session = session
         self._provisioner = provisioner or ProjectProvisioner(None)
         self._catalog = catalog
+        self._visitor_authenticate = visitor_authenticate
 
     @property
     def configured(self) -> bool:
@@ -141,7 +143,24 @@ class ProjectSpaceService:
         """
         if token is None:
             raise ApiError(401, "SESSION_INVALID", "请先登录。")
-        return self._session(token)
+        try:
+            return self._session(token)
+        except ApiError:
+            if self._visitor_authenticate and self._visitor_authenticate(token):
+                return {
+                    "authenticated": True,
+                    "user": {
+                        "id": 0,
+                        "username": "访客",
+                        "system_username": "my_visitor",
+                        "group_type": "visitor",
+                        "role": "visitor",
+                        "can_write": False,
+                    },
+                    "role": "visitor",
+                    "can_write": False,
+                }
+            raise
 
     def list_projects(self, actor: Any) -> list[dict[str, str]]:
         """Every project directory, assigned a stable SQLite ID independent of its name."""
@@ -161,6 +180,8 @@ class ProjectSpaceService:
         return [{"id": str(entry.stat().st_ino), "name": entry.name} for entry in directories]
 
     def create_project(self, actor: Any, name: object) -> dict[str, Any]:
+        if actor and (actor.get("role") == "visitor" or not actor.get("can_write", True)):
+            raise ApiError(403, "FORBIDDEN", "访客账户只有只读权限。")
         if self._root is None:
             raise ApiError(503, "STORAGE_UNAVAILABLE", "项目目录暂不可用。")
         try:

@@ -206,34 +206,24 @@
             <Border.ContextMenu>
              <ContextMenu>
               <MenuItem Header="播放 (系统默认程序)" Click="OnPlayVideoDirectly"/>
-              <MenuItem Header="设为成片" Click="OnSetFinalVideoItem" IsEnabled="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}}"/>
-              <MenuItem Header="取消成片" Click="OnUnsetFinalVideoItem" IsEnabled="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}}"/>
               <Separator/>
               <MenuItem Header="移入废片" Click="OnDiscardVideoItem" IsEnabled="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}}"/>
-              <MenuItem Header="在文件夹中显示" Click="OnRevealVideoInExplorer"/>
-              <Separator/>
               <MenuItem Header="{Binding DataContext.DiscardedCount, RelativeSource={RelativeSource AncestorType=ItemsControl}, StringFormat=查看废片库 ({0})}" Click="OnOpenDiscardedVideos"/>
+              <Separator/>
               <MenuItem Header="删除此节拍行" Click="OnDeleteSceneRow" Foreground="{DynamicResource Brush.Status.Danger}" IsEnabled="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}}"/>
              </ContextMenu>
             </Border.ContextMenu>
             <Grid Cursor="Hand" MouseLeftButtonUp="OnPlayVideoDirectly">
              <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="Auto"/>
               <ColumnDefinition Width="*"/>
               <ColumnDefinition Width="Auto"/>
              </Grid.ColumnDefinitions>
-             <!-- 成片标记 -->
-             <Border Grid.Column="0" Background="{DynamicResource Brush.Accent.Primary}" CornerRadius="3"
-                     Padding="3,1" Margin="0,0,4,0"
-                     Visibility="{Binding IsFinal, Converter={StaticResource BoolVisibility}}">
-              <TextBlock Text="成片" FontSize="9" Foreground="White" FontWeight="Bold"/>
-             </Border>
              <!-- 视频名 -->
-             <TextBlock Grid.Column="1" Text="{Binding Name}" FontSize="11"
+             <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="11"
                         Foreground="{DynamicResource Brush.Text.Primary}"
                         TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
              <!-- 播放提示 -->
-             <TextBlock Grid.Column="2" Text="▶" FontSize="9" Margin="4,0,0,0"
+             <TextBlock Grid.Column="1" Text="▶" FontSize="9" Margin="4,0,0,0"
                         Foreground="{DynamicResource Brush.Text.Secondary}" VerticalAlignment="Center"/>
             </Grid>
            </Border>

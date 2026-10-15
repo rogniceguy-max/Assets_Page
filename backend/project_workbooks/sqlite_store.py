@@ -539,8 +539,22 @@ class SqliteProjectWorkbookStore:
                                 (project_id,)).fetchall()
         return [self._file_payload(row) for row in rows]
 
+    @staticmethod
+    def _is_read_only_actor(actor: Any) -> bool:
+        if not actor or not isinstance(actor, dict):
+            return False
+        role = actor.get("role") or actor.get("user", {}).get("role")
+        can_write = actor.get("can_write", actor.get("user", {}).get("can_write", True))
+        return role == "visitor" or can_write is False
+
+    @staticmethod
+    def _check_writable(actor: Any) -> None:
+        if SqliteProjectWorkbookStore._is_read_only_actor(actor):
+            raise ApiFault(403, "FORBIDDEN", "访客账户只有只读权限。")
+
     def create(self, actor: Any, template_kind: str, project_id: str | None = None,
                operation_id: str | None = None, name: str | None = None) -> dict[str, Any]:
+        self._check_writable(actor)
         if project_id is None or operation_id is None:
             raise ApiFault(422, "MISSING_PROJECT", "创建工作簿需要项目和操作标识。")
         self._project(project_id)
@@ -597,6 +611,7 @@ class SqliteProjectWorkbookStore:
 
     def rename_workbook(self, actor: Any, file_id: str, expected_name_version: int,
                         display_name: Any) -> dict[str, Any]:
+        self._check_writable(actor)
         name = self._display_name(display_name, "工作簿名")
         with self._transaction() as conn:
             workbook = conn.execute("SELECT * FROM workbooks WHERE id=?", (file_id,)).fetchone()
@@ -617,6 +632,7 @@ class SqliteProjectWorkbookStore:
 
     def rename_sheet(self, actor: Any, file_id: str, sheet_id: str, expected_name_version: int,
                      display_name: Any) -> dict[str, Any]:
+        self._check_writable(actor)
         name = self._display_name(display_name, "工作表名称", 31)
         if any(char in "\\/?*:[]'" for char in name):
             raise ApiFault(422, "INVALID_SHEET_NAME", "工作表名称不能包含 \\ / ? * : [ ] 或首尾单引号。")
@@ -640,13 +656,16 @@ class SqliteProjectWorkbookStore:
         return {"id": sheet_id, "name": name, "name_version": name_version}
 
     def add_scene_row(self, actor: Any, file_id: str, sheet_id: str) -> dict[str, Any]:
+        self._check_writable(actor)
         return self._add_row(file_id, sheet_id, "scene_beats")
 
     def add_asset_row(self, actor: Any, file_id: str, sheet_id: str) -> dict[str, Any]:
+        self._check_writable(actor)
         return self._add_row(file_id, sheet_id, "asset_review")
 
     def delete_row(self, actor: Any, file_id: str, row_id: str, expected_version: int,
                    kind: str) -> dict[str, Any]:
+        self._check_writable(actor)
         if kind not in {"scene_beats", "asset_review"}:
             raise ApiFault(422, "INVALID_ROW_KIND", "不支持删除此类型的工作表行。")
         user = actor.get("user", {}) if isinstance(actor, dict) else {}
@@ -674,6 +693,7 @@ class SqliteProjectWorkbookStore:
         return {"ok": True, "id": row_id, "deleted_at": deleted_at}
 
     def delete_workbook(self, actor: Any, file_id: str) -> dict[str, Any]:
+        self._check_writable(actor)
         with self._transaction() as conn:
             workbook = conn.execute("SELECT id, project_id, display_name FROM workbooks WHERE id=?", (file_id,)).fetchone()
             if workbook is None:
@@ -752,6 +772,7 @@ class SqliteProjectWorkbookStore:
             folder_paths = {row["id"]: row["relative_path"] for row in conn.execute(
                 "SELECT id,relative_path FROM asset_folders WHERE project_id=?", (workbook["project_id"],))}
         _, project_dir = self._project(workbook["project_id"])
+        can_edit = not self._is_read_only_actor(actor)
         projected_sheets = []
         for sheet in sheets:
             projected = {"id": sheet["id"], "name": sheet["display_name"],
@@ -777,7 +798,7 @@ class SqliteProjectWorkbookStore:
                     item["candidate_images"] = images
                     item["selected_image"] = next((img for img in images if img["id"] == selected_id), None) if selected_id else next(
                         (img for img in images if data.get("name") and data["name"] in img["name"]), images[0] if images else None)
-                    item["can_edit"] = True
+                    item["can_edit"] = can_edit
                     projected["asset_rows"].append(item)
                 elif stored["kind"] == "scene_beats":
                     item.setdefault("note", None)
@@ -789,7 +810,7 @@ class SqliteProjectWorkbookStore:
                         item["videos"] = [item["video"]]
                     if item["videos"] and not item["video"]:
                         item["video"] = item["videos"][0]
-                    item["can_edit"] = True
+                    item["can_edit"] = can_edit
                     projected["scene_rows"].append(item)
                 else:
                     projected["generic_rows"].append(item)
@@ -978,6 +999,7 @@ class SqliteProjectWorkbookStore:
 
     def _update_row(self, actor: Any, file_id: str, row_id: str, expected_versions: Mapping[str, int],
                     changes: Mapping[str, Any], kind: str) -> dict[str, Any]:
+        self._check_writable(actor)
         with self._transaction() as conn:
             row = conn.execute("""SELECT r.*,s.workbook_id,w.project_id
                 FROM workbook_rows r JOIN sheets s ON s.id=r.sheet_id
@@ -1038,6 +1060,7 @@ class SqliteProjectWorkbookStore:
 
     def update_scene_row(self, actor: Any, file_id: str, row_id: str,
                          expected_version: Any, changes: Mapping[str, Any]) -> dict[str, Any]:
+        self._check_writable(actor)
         with self._transaction() as conn:
             row = conn.execute("""SELECT r.*,s.workbook_id,w.project_id
                 FROM workbook_rows r JOIN sheets s ON s.id=r.sheet_id
@@ -1190,6 +1213,7 @@ class SqliteProjectWorkbookStore:
 
     def update_asset_row(self, actor: Any, file_id: str, row_id: str, expected_version: int,
                          category: Any, name: Any) -> dict[str, Any]:
+        self._check_writable(actor)
         self._recover_pending_moves(row_id=row_id)
         category = _asset_component(category, "类别")
         name = _asset_component(name, "名称")
@@ -1650,24 +1674,29 @@ class StableReviewServices:
         return result
 
     def vote(self, actor: Any, file_id: str, row_id: str, image_id: str, verdict: str | None):
+        SqliteProjectWorkbookStore._check_writable(actor)
         legacy_file, legacy_row, legacy_image = self._ids(file_id, row_id, image_id)
         return self._inner.vote(actor, legacy_file, legacy_row, legacy_image or image_id, verdict)
 
     def add_comment(self, actor: Any, file_id: str, row_id: str, image_id: str | None, text: str):
+        SqliteProjectWorkbookStore._check_writable(actor)
         legacy_file, legacy_row, legacy_image = self._ids(file_id, row_id, image_id)
         return self._inner.add_comment(actor, legacy_file, legacy_row, legacy_image, text)
 
     def edit_comment(self, actor: Any, file_id: str, row_id: str, comment_id: str,
                      expected_version: int, text: str):
+        SqliteProjectWorkbookStore._check_writable(actor)
         legacy_file, legacy_row, _ = self._ids(file_id, row_id)
         return self._inner.edit_comment(actor, legacy_file, legacy_row, comment_id, expected_version, text)
 
     def delete_comment(self, actor: Any, file_id: str, row_id: str, comment_id: str, expected_version: int):
+        SqliteProjectWorkbookStore._check_writable(actor)
         legacy_file, legacy_row, _ = self._ids(file_id, row_id)
         return self._inner.delete_comment(actor, legacy_file, legacy_row, comment_id, expected_version)
 
     def resolve_comment(self, actor: Any, file_id: str, row_id: str, comment_id: str,
                         expected_version: int, resolved: bool, resolution_note: str | None):
+        SqliteProjectWorkbookStore._check_writable(actor)
         legacy_file, legacy_row, _ = self._ids(file_id, row_id)
         return self._inner.resolve_comment(actor, legacy_file, legacy_row, comment_id,
                                            expected_version, resolved, resolution_note)

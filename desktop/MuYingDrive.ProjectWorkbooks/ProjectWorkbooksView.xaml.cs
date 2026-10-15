@@ -897,26 +897,13 @@ public partial class ProjectWorkbooksView : UserControl
             }
             else
             {
-                MessageBox.Show(Window.GetWindow(this), $"视频文件未在指定路径找到：\n{video.Path}", "无法播放", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show(Window.GetWindow(this), $"未找到视频文件「{video.Name}」。", "无法播放", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
         catch (Exception ex)
         {
             MessageBox.Show(Window.GetWindow(this), $"播放失败：{ex.Message}", "无法播放", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
-    }
-
-    private async void OnSetFinalVideoItem(object sender, RoutedEventArgs e)
-    {
-        if (Scene(sender) is not { } row || !row.Row.CanEdit) return;
-        var video = GetVideoItem(sender);
-        await Model.UpdateSceneVideoAsync(row, "set_final", videoId: video?.Id, videoName: video?.Name);
-    }
-
-    private async void OnUnsetFinalVideoItem(object sender, RoutedEventArgs e)
-    {
-        if (Scene(sender) is not { } row || !row.Row.CanEdit) return;
-        await Model.UpdateSceneVideoAsync(row, "unset_final");
     }
 
     private async void OnDiscardVideoItem(object sender, RoutedEventArgs e)
@@ -927,26 +914,6 @@ public partial class ProjectWorkbooksView : UserControl
         if (MessageBox.Show(Window.GetWindow(this), $"确定将视频「{video.Name}」移入废片库吗？", "移入废片", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
             return;
         await Model.UpdateSceneVideoAsync(row, "discard", videoId: video.Id, videoName: video.Name);
-    }
-
-    private void OnRevealVideoInExplorer(object sender, RoutedEventArgs e)
-    {
-        var video = GetVideoItem(sender) ?? Scene(sender)?.Video;
-        if (video == null || string.IsNullOrWhiteSpace(video.Path)) return;
-        try
-        {
-            if (File.Exists(video.Path))
-            {
-                System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{video.Path}\"");
-            }
-            else
-            {
-                var dir = Path.GetDirectoryName(video.Path);
-                if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
-                    System.Diagnostics.Process.Start("explorer.exe", $"\"{dir}\"");
-            }
-        }
-        catch { }
     }
 
     private async void OnVideoDrop(object sender, DragEventArgs e)
@@ -984,8 +951,6 @@ public partial class ProjectWorkbooksView : UserControl
         }
     }
 
-    private void OnSetFinalVideo(object sender, RoutedEventArgs e) => OnSetFinalVideoItem(sender, e);
-    private void OnUnsetFinalVideo(object sender, RoutedEventArgs e) => OnUnsetFinalVideoItem(sender, e);
     private void OnDiscardVideo(object sender, RoutedEventArgs e) => OnDiscardVideoItem(sender, e);
 
     private async void OnOpenDiscardedVideos(object sender, RoutedEventArgs e)

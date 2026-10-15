@@ -778,7 +778,7 @@ def make_server(settings: Settings, app: V2Application) -> ThreadingHTTPServer:
         scene_review_services = (StableReviewServices(NasReviewServices(review_db, row_kind="scene-rows"), workbook_store)
                                  if NasReviewServices is not None else None)
         project_workbooks = ProjectsApi(
-            NasSecurity(app.session),
+            NasSecurity(app.session, visitor_authenticate=visitor.has_session),
             workbook_store,
             workflow=workbook_store,
             reviews=review_services,
@@ -789,7 +789,8 @@ def make_server(settings: Settings, app: V2Application) -> ThreadingHTTPServer:
     project_spaces = None
     if settings.project_docs_root is not None and ProjectSpaceService is not None:
         project_spaces = ProjectSpaceService(
-            settings.project_docs_root, app.session, provisioner, catalog=workbook_store)
+            settings.project_docs_root, app.session, provisioner, catalog=workbook_store,
+            visitor_authenticate=visitor.has_session)
     server = V2HTTPServer((settings.bind_host, settings.port),
                           create_handler(app, update_releases_dir=settings.update_releases_dir,
                                          installer_dir=settings.installer_dir,

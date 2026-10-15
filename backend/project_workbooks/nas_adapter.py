@@ -47,8 +47,9 @@ def _not_implemented() -> ApiFault:
 class NasSecurity:
     """Turns a bearer token into the host's session principal."""
 
-    def __init__(self, session) -> None:
+    def __init__(self, session, visitor_authenticate: Any = None) -> None:
         self._session = session
+        self._visitor_authenticate = visitor_authenticate
 
     def authenticate(self, headers: Mapping[str, str]) -> Any:
         # The router lower-cases every header key before calling (projects_api.py), so the
@@ -62,6 +63,20 @@ class NasSecurity:
         try:
             principal = self._session(token)
         except Exception as error:  # noqa: BLE001 - the host raises its own ApiError type
+            if self._visitor_authenticate and self._visitor_authenticate(token):
+                return {
+                    "authenticated": True,
+                    "user": {
+                        "id": 0,
+                        "username": "访客",
+                        "system_username": "my_visitor",
+                        "group_type": "visitor",
+                        "role": "visitor",
+                        "can_write": False,
+                    },
+                    "role": "visitor",
+                    "can_write": False,
+                }
             # Translated rather than allowed to propagate: the router's catch-all turns an
             # unexpected exception into a 503, which would report a signed-out user as a
             # broken server.

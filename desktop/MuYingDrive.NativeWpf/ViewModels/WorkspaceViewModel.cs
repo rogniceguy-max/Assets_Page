@@ -398,35 +398,43 @@ public sealed class WorkspaceViewModel : ObservableObject
             // — 图片, 个人空间, 传输, 反馈 — while it does.
             _ = workspace.LoadProjectsAsync();
 
-            workspace.CreateProjectToolTip = "新建项目";
-            workspace.CreateProjectCommand = new AsyncRelayCommand(async _ =>
+            if (session.User.Id != 0)
             {
-                var dialog = new TextInputWindow(
-                    "新建项目", "为项目取一个名字。创建后会生成节拍表和资产表。", string.Empty, "创建", 0)
+                workspace.CreateProjectToolTip = "新建项目";
+                workspace.CreateProjectCommand = new AsyncRelayCommand(async _ =>
                 {
-                    Owner = System.Windows.Application.Current?.MainWindow
-                };
-                if (dialog.ShowDialog() != true) return;
-                var name = dialog.Value.Trim();
-                if (name.Length == 0) return;
+                    var dialog = new TextInputWindow(
+                        "新建项目", "为项目取一个名字。创建后会生成节拍表和资产表。", string.Empty, "创建", 0)
+                    {
+                        Owner = System.Windows.Application.Current?.MainWindow
+                    };
+                    if (dialog.ShowDialog() != true) return;
+                    var name = dialog.Value.Trim();
+                    if (name.Length == 0) return;
 
-                try
-                {
-                    await createApi.CreateProjectSpaceAsync(session.SessionToken, name);
-                }
-                catch (Exception error)
-                {
-                    // The server knows which rule was broken — a taken name, an unusable one —
-                    // and its sentence is the one to show. A silent failure here would look
-                    // like the + doing nothing at all.
-                    System.Windows.MessageBox.Show(
-                        error.Message, "无法创建项目",
-                        System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
-                    return;
-                }
+                    try
+                    {
+                        await createApi.CreateProjectSpaceAsync(session.SessionToken, name);
+                    }
+                    catch (Exception error)
+                    {
+                        // The server knows which rule was broken — a taken name, an unusable one —
+                        // and its sentence is the one to show. A silent failure here would look
+                        // like the + doing nothing at all.
+                        System.Windows.MessageBox.Show(
+                            error.Message, "无法创建项目",
+                            System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+                        return;
+                    }
 
-                await workspace.LoadProjectsAsync();
-            });
+                    await workspace.LoadProjectsAsync();
+                });
+            }
+            else
+            {
+                workspace.CreateProjectToolTip = "访客为只读模式";
+                workspace.CreateProjectCommand = null;
+            }
         }
 
         // Opening a workbook from the file browser goes to the reader rather than to Excel.

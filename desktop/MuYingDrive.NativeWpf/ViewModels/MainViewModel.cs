@@ -95,40 +95,47 @@ public sealed class MainViewModel : ObservableObject
 
     public void ShowRegister() => CurrentPage = new RegisterViewModel(this);
 
-    /// <summary>Enters the login-free tour. No credentials are involved.</summary>
+    /// <summary>Enters the login-free tour. Logically a read-only account into the standard workspace shell.</summary>
     public async Task EnterVisitorAsync()
     {
         if (_api is null)
         {
-            // A configuration problem belongs on the login page, not in a silent no-op.
             if (CurrentPage is LoginViewModel unavailable)
                 unavailable.ErrorMessage = _configurationError ?? "客户端尚未配置 NAS 服务，请联系管理员。";
             return;
         }
 
-        // The tour uses the same shell as a signed-in employee, so it is presented as a
-        // workspace with one navigation entry and three read-only spaces. The spaces are
-        // only known once the server session exists, hence the ordering.
-        var browser = new VisitorViewModel(this, _api);
-        await browser.InitializeAsync().ConfigureAwait(true);
+        if (CurrentPage is LoginViewModel login)
+            login.IsBusy = true;
 
-        // The tour may post feedback anonymously; the server reports CanManage false
-        // for a visitor session, so the maintenance controls never appear.
-        var feedback = new FeedbackViewModel(_api, browser.SessionToken ?? string.Empty);
-        var workspace = WorkspaceViewModel.ForVisitor(
-            this,
-            browser,
-            browser.SidebarSpaces,
-            new Dictionary<string, object>(StringComparer.Ordinal)
+        try
+        {
+            var visitorSession = await _api.CreateVisitorSessionAsync();
+            var visitorUser = new V2UserSession
             {
-                ["文件"] = browser,
-                ["反馈"] = feedback
-            },
-            key => browser.SelectSpaceByKeyAsync(key),
-            () => ExitVisitorAsync(browser),
-            feedback,
-            disposeExtra: () => browser.DisposeAsync());
-        CurrentPage = workspace;
+                Id = 0,
+                UserName = "访客",
+                Department = "只读访问",
+                GroupType = "film",
+                Spaces = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["film"] = "/film",
+                    ["writing"] = "/writing",
+                    ["public"] = "/public",
+                    ["personal"] = "/public"
+                }
+            };
+            var driveSession = new DriveSession(visitorUser, visitorSession.SessionToken, new SmbConnectionResult(0));
+            await EnterWorkspaceAsync(driveSession);
+        }
+        catch (Exception ex)
+        {
+            if (CurrentPage is LoginViewModel currentLogin)
+            {
+                currentLogin.IsBusy = false;
+                currentLogin.ErrorMessage = ex.Message;
+            }
+        }
     }
 
     /// <summary>Leaves the tour, revoking the visitor session and clearing its cache.</summary>
@@ -179,14 +186,24 @@ public sealed class MainViewModel : ObservableObject
 
     public async Task SignOutAsync(DriveSession session)
     {
-        if (_sessionService is null)
-            return;
         try
         {
             var workspace = CurrentPage as WorkspaceViewModel;
             if (workspace?.Transfers is { } transfers)
                 await transfers.PauseAllAsync();
-            await _sessionService.SignOutAsync(session);
+
+            if (session.User.Id == 0)
+            {
+                if (_api is not null && !string.IsNullOrWhiteSpace(session.SessionToken))
+                {
+                    try { await _api.EndVisitorSessionAsync(session.SessionToken); } catch { }
+                }
+            }
+            else if (_sessionService is not null)
+            {
+                await _sessionService.SignOutAsync(session);
+            }
+
             if (workspace is not null)
                 await workspace.DisposeAsync();
             ShowLogin();

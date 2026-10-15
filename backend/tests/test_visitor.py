@@ -101,5 +101,29 @@ class VisitorSessionTests(unittest.TestCase):
             service.list(token, "film", "")
 
 
+    def test_visitor_authentication_for_workbooks_and_spaces(self):
+        from backend.project_workbooks.nas_adapter import NasSecurity
+        from backend.project_spaces import ProjectSpaceService
+
+        token = self.service.start_session()["session_token"]
+
+        def mock_session(t):
+            raise ApiError(401, "SESSION_INVALID", "invalid")
+
+        security = NasSecurity(mock_session, visitor_authenticate=self.service.has_session)
+        principal = security.authenticate({"authorization": f"Bearer {token}"})
+        self.assertEqual(principal["role"], "visitor")
+        self.assertFalse(principal["can_write"])
+
+        spaces = ProjectSpaceService(None, mock_session, visitor_authenticate=self.service.has_session)
+        actor = spaces.authorize(token)
+        self.assertEqual(actor["role"], "visitor")
+        self.assertFalse(actor["can_write"])
+
+        with self.assertRaises(ApiError) as ctx:
+            spaces.create_project(actor, "NewProject")
+        self.assertEqual(ctx.exception.status, 403)
+
+
 if __name__ == "__main__":
     unittest.main()
