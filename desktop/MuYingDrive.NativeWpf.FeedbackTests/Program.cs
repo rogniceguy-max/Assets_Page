@@ -74,7 +74,7 @@ internal static class Program
             workspace.NavigateCommand.Execute("视频");
             Assert(ReferenceEquals(workspace.CurrentContent, files) && files.SearchText == "fixture-browse-filter", "Navigation must retain file browsing state.");
             workspace.NavigateCommand.Execute("图片");
-            Assert(workspace.CurrentContent is ProjectImagesViewModel, "图片 navigation opens the project images gallery.");
+            Assert(ReferenceEquals(workspace.CurrentContent, files), "Navigation must retain file browsing state for 图片.");
 
             // --- the shape of the sidebar ---------------------------------------------------
             var navKeys = workspace.NavigationItems.Select(item => item.Key).ToArray();

@@ -267,11 +267,8 @@ public sealed class WorkspaceViewModel : ObservableObject
         var projectWorkbooks = main.ApiClient is { } api
             ? new ProjectWorkbookPage(api, session.SessionToken, session.User.Id)
             : null;
-        var projectImages = projectWorkbooks is null ? null : new ProjectImagesViewModel(projectWorkbooks);
         var files = new FilesViewModel(session, settings, transfers);
 
-        // 图片 is a gallery of images linked from asset-table rows. 视频 and 个人空间 remain
-        // file-browser scopes; 传输 and 反馈 are separate pages.
         var chrome = new WorkspaceChrome(
             [
                 new WorkspaceNavItem("图片", "图片", "Image"),
@@ -290,7 +287,7 @@ public sealed class WorkspaceViewModel : ObservableObject
 
         var pages = new Dictionary<string, object>(StringComparer.Ordinal)
         {
-            ["图片"] = (object?)projectImages ?? files,
+            ["图片"] = files,
             ["视频"] = files,
             ["个人空间"] = files,
             ["传输"] = transfers,
@@ -304,7 +301,7 @@ public sealed class WorkspaceViewModel : ObservableObject
             main, chrome, pages,
             key =>
             {
-                if (projectImages is null || key != "图片") files.ActivateNavigation(key);
+                files.ActivateNavigation(key);
                 return Task.CompletedTask;
             },
             () => main.SignOutAsync(session),
@@ -313,25 +310,27 @@ public sealed class WorkspaceViewModel : ObservableObject
                 ? null
                 : () =>
                 {
-                    projectImages?.Dispose();
                     projectWorkbooks.Dispose();
                     return ValueTask.CompletedTask;
                 },
             onPageActivated: key =>
             {
                 if (key == "反馈") _ = feedback.EnsureLoadedAsync();
-                if (key == "图片") projectImages?.ShowAllProjects();
-                else projectImages?.Deactivate();
             });
 
         workspace._projectWorkbooksPage = projectWorkbooks;
-        projectImages?.ShowAllProjects();
         if (projectWorkbooks is not null)
         {
             projectWorkbooks.ProjectFilesChanged = () =>
             {
                 _ = workspace.LoadProjectsAsync();
-                if (projectImages is { IsLoaded: true, IsActive: true }) _ = projectImages.LoadAsync();
+            };
+            projectWorkbooks.ViewModel.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName is "IsOpen" or "Document")
+                {
+                    workspace.OnPropertyChanged(nameof(workspace.PageTitle));
+                }
             };
         }
 
@@ -353,16 +352,10 @@ public sealed class WorkspaceViewModel : ObservableObject
                     _ = workspace.LoadProjectsAsync();
                     break;
                 case ProjectNodeKind.MediaGroup:
-                    if (node.Name == ProjectNavigation.ImageGroupName && projectImages is not null)
-                    {
-                        workspace.ShowBrowser(projectImages);
-                        projectImages.ShowProject(node.ProjectId, node.ProjectName);
-                    }
-                    else
-                    {
-                        files.OpenProjectMedia(node.ProjectName, SpaceMediaKind.Videos);
-                        workspace.ShowBrowser(files);
-                    }
+                    files.OpenProjectMedia(
+                        node.ProjectName,
+                        node.Name == ProjectNavigation.ImageGroupName ? SpaceMediaKind.Images : SpaceMediaKind.Videos);
+                    workspace.ShowBrowser(files);
                     break;
                 default:
                     files.OpenProject(node.ProjectName);
@@ -549,7 +542,12 @@ public sealed class WorkspaceViewModel : ObservableObject
     }
 
     public string SelectedNavigation { get; private set; } = "文件";
-    public string PageTitle => SelectedNavigation;
+    public string PageTitle =>
+        CurrentContent == _projectWorkbooksPage?.ViewModel || CurrentContent == _projectWorkbooksPage
+            ? (_projectWorkbooksPage?.ViewModel.IsOpen == true
+                ? _projectWorkbooksPage.ViewModel.Document?.File.Name ?? "工作簿"
+                : "工作簿")
+            : SelectedNavigation;
 
     public object CurrentContent
     {

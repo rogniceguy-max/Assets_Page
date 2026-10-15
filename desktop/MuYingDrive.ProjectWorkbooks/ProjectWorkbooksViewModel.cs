@@ -210,9 +210,9 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
     public string Notice => Document == null ? "" : string.Join("\n", (Document.Fidelity == "values_only"
         ? new[] { "当前显示全部单元格内容；原 Excel 样式与公式重算不在此视图中提供，可下载原文件。" } : Array.Empty<string>()).Concat(Document.Notices).Distinct());
     private SheetItem? _selectedSheet;
-    public SheetItem? SelectedSheet { get => _selectedSheet; set { _selectedSheet = value; Changed(); Changed(nameof(VisibleScenes)); } }
+    public SheetItem? SelectedSheet { get => _selectedSheet; set { _selectedSheet = value; Changed(); Changed(nameof(VisibleScenes)); Changed(nameof(VisibleAssets)); } }
     private string _search = "";
-    public string Search { get => _search; set { _search = value; Changed(); Changed(nameof(VisibleScenes)); } }
+    public string Search { get => _search; set { _search = value; Changed(); Changed(nameof(VisibleScenes)); Changed(nameof(VisibleAssets)); } }
     private string _levelFilter = "全部等级";
     public string LevelFilter { get => _levelFilter; set { _levelFilter = value; Changed(); Changed(nameof(VisibleScenes)); } }
     public IReadOnlyList<string> LevelFilters { get; } = ["全部等级", "红", "黄", "绿", "未标注"];
@@ -220,6 +220,9 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         (LevelFilter == "全部等级" || (LevelFilter == "未标注" ? string.IsNullOrWhiteSpace(item.Row.LabelLevel) : item.Row.LabelLevel == LevelFilter)) &&
         (string.IsNullOrWhiteSpace(Search) || string.Join(" ", item.Row.SceneNumber, item.Row.BeatNumber, item.Row.StoryContent,
             item.Row.BreakdownPlan, item.Row.SceneContext, item.Row.CastContext).Contains(Search, StringComparison.OrdinalIgnoreCase)));
+    public IEnumerable<AssetRowItem> VisibleAssets => (SelectedSheet?.Assets.AsEnumerable() ?? []).Where(item =>
+        string.IsNullOrWhiteSpace(Search) ||
+        string.Join(" ", item.Row.Category, item.Row.Name, item.Row.Variant, item.Row.Appearance).Contains(Search, StringComparison.OrdinalIgnoreCase));
     private readonly SemaphoreSlim _thumbnailGate = new(4);
     private readonly Dictionary<string, ImageSource> _thumbnailCache = new(StringComparer.Ordinal);
     private CancellationTokenSource? _liveUpdatesCts;

@@ -115,28 +115,13 @@
         </DataTemplate>
     </UserControl.Resources>
 
-    <Grid Margin="24,19,24,22">
+    <Grid Margin="24,20,24,22">
         <Grid.RowDefinitions>
-            <RowDefinition Height="52" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="52" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
-        <Grid Grid.Row="1" Margin="0,0,0,16">
-            <Grid.Style>
-                <Style TargetType="Grid">
-                    <Style.Triggers>
-                        <MultiDataTrigger>
-                            <MultiDataTrigger.Conditions>
-                                <Condition Binding="{Binding CanNavigateUp}" Value="False" />
-                                <Condition Binding="{Binding IsReadOnly}" Value="False" />
-                                <Condition Binding="{Binding HasError}" Value="False" />
-                                <Condition Binding="{Binding TruncationNotice}" Value="" />
-                            </MultiDataTrigger.Conditions>
-                            <Setter Property="Visibility" Value="Collapsed" />
-                        </MultiDataTrigger>
-                    </Style.Triggers>
-                </Style>
-            </Grid.Style>
+        <Grid Grid.Row="0" Margin="0,0,0,16">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                 <Button Command="{Binding NavigateUpCommand}" Width="28" MinWidth="28" Height="28" Padding="0"
@@ -145,8 +130,7 @@
                     <controls:LucideIcon Icon="ChevronLeft" Width="16" Height="16" Stroke="{DynamicResource Brush.Text.Secondary}" />
                 </Button>
                 <TextBlock Text="{Binding CurrentPathLabel}" FontSize="{StaticResource Typography.FontSize.SmallTitle}" FontWeight="SemiBold"
-                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding CurrentPathLabel}"
-                           Visibility="{Binding CanNavigateUp, Converter={StaticResource BoolToVisibility}}" />
+                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding CurrentPathLabel}" />
             </StackPanel>
             <Border Grid.Column="1" Padding="9,4" CornerRadius="{StaticResource CornerRadius.Small}"
                     Background="{DynamicResource Brush.Surface.Subtle}" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1">
@@ -173,22 +157,17 @@
                 </StackPanel>
                 <Border.Style>
                     <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
                         <Style.Triggers>
-                            <MultiDataTrigger>
-                                <MultiDataTrigger.Conditions>
-                                    <Condition Binding="{Binding IsReadOnly}" Value="False" />
-                                    <Condition Binding="{Binding HasError}" Value="False" />
-                                    <Condition Binding="{Binding TruncationNotice}" Value="" />
-                                </MultiDataTrigger.Conditions>
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </MultiDataTrigger>
+                            <DataTrigger Binding="{Binding IsReadOnly}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                            <DataTrigger Binding="{Binding HasError}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
                         </Style.Triggers>
                     </Style>
                 </Border.Style>
             </Border>
         </Grid>
 
-        <Grid Grid.Row="0" Margin="0,0,0,16">
+        <Grid Grid.Row="1" Margin="0,0,0,16">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="2*" MinWidth="180" MaxWidth="320" />
                 <ColumnDefinition Width="*" />
