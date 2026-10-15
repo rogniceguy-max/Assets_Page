@@ -33,14 +33,26 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
             _syncService = new EpisodeSyncService(workbooks.ViewModel.Service, shareRoot);
             _syncService.PropertyChanged += (s, e) =>
             {
-                if (e.PropertyName == nameof(EpisodeSyncService.StatusText))
-                    OnPropertyChanged(nameof(StatusText));
-                else if (e.PropertyName == nameof(EpisodeSyncService.IsSyncing))
-                    OnPropertyChanged(nameof(IsSyncing));
-                else if (e.PropertyName == nameof(EpisodeSyncService.IsWatching))
+                void Update()
                 {
-                    OnPropertyChanged(nameof(IsWatching));
-                    OnPropertyChanged(nameof(ToggleButtonLabel));
+                    if (e.PropertyName == nameof(EpisodeSyncService.StatusText))
+                        OnPropertyChanged(nameof(StatusText));
+                    else if (e.PropertyName == nameof(EpisodeSyncService.IsSyncing))
+                        OnPropertyChanged(nameof(IsSyncing));
+                    else if (e.PropertyName == nameof(EpisodeSyncService.IsWatching))
+                    {
+                        OnPropertyChanged(nameof(IsWatching));
+                        OnPropertyChanged(nameof(ToggleButtonLabel));
+                    }
+                }
+
+                if (System.Windows.Application.Current?.Dispatcher is { } dispatcher && !dispatcher.CheckAccess())
+                {
+                    dispatcher.InvokeAsync(Update);
+                }
+                else
+                {
+                    Update();
                 }
             };
         }
@@ -123,7 +135,7 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
 
     public async Task InitializeAsync()
     {
-        if (_workbooks == null) return;
+        if (_workbooks == null || Projects.Count > 0) return;
         IsLoadingProjects = true;
         try
         {

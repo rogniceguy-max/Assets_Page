@@ -109,6 +109,7 @@ public static class UpdateExecutionGuard
     public static async Task WaitForClientProcessesExitAsync(string installRoot, CancellationToken cancellationToken)
     {
         var expectedPath = Path.GetFullPath(Path.Combine(installRoot, "MuYingDrive.NativeWpf.exe"));
+        var startTime = DateTimeOffset.UtcNow;
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -121,19 +122,27 @@ public static class UpdateExecutionGuard
                     {
                         var processPath = process.MainModule?.FileName;
                         if (processPath is null)
-                            throw new IOException("无法确认沐影盘进程的安装路径。");
+                            continue;
                         if (!string.Equals(Path.GetFullPath(processPath), expectedPath, StringComparison.OrdinalIgnoreCase))
                             continue;
                         active = true;
-                        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+
+                        if ((DateTimeOffset.UtcNow - startTime).TotalSeconds > 5)
+                        {
+                            try { process.Kill(entireProcessTree: true); } catch { }
+                        }
+                        else
+                        {
+                            using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                            waitCts.CancelAfter(TimeSpan.FromSeconds(2));
+                            try { await process.WaitForExitAsync(waitCts.Token).ConfigureAwait(false); }
+                            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { }
+                        }
                         break;
                     }
                     catch (ArgumentException) { }
                     catch (InvalidOperationException) { }
-                    catch (System.ComponentModel.Win32Exception exception)
-                    {
-                        throw new IOException("无法确认其他沐影盘进程是否已退出。", exception);
-                    }
+                    catch (System.ComponentModel.Win32Exception) { }
                 }
             }
             if (!active) return;

@@ -116,7 +116,17 @@ public sealed class UpdateRunner
             using var process = Process.GetProcessById(request.ClientProcessId);
             if (process.StartTime.ToUniversalTime().Ticks != request.ClientProcessStartUtcTicks)
                 return;
-            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(5));
+            try
+            {
+                await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+            }
         }
         catch (ArgumentException)
         {

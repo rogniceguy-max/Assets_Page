@@ -10,6 +10,7 @@
                 <ResourceDictionary Source="Themes/Light.xaml" />
                 <ResourceDictionary Source="Themes/SharedStyles.xaml" />
             </ResourceDictionary.MergedDictionaries>
+            <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
             <DataTemplate DataType="{x:Type vm:LoginViewModel}"><views:LoginView /></DataTemplate>
             <DataTemplate DataType="{x:Type vm:RegisterViewModel}"><views:RegisterView /></DataTemplate>
             <DataTemplate DataType="{x:Type vm:WorkspaceViewModel}"><views:WorkspaceView /></DataTemplate>
