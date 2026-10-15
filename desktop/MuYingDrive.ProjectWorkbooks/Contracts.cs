@@ -85,7 +85,7 @@ public interface IProjectWorkbookService
     Task<IReadOnlyList<ProjectInfo>> ListProjectsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<ProjectFile>> ListProjectFilesAsync(string projectId, CancellationToken ct = default);
     IAsyncEnumerable<ProjectChangeEvent> SubscribeProjectEventsAsync(string projectId, long? afterSequence = null, CancellationToken ct = default);
-    Task<ProjectFile> CreateInProjectAsync(string projectId, string templateKind, string operationId, CancellationToken ct = default);
+    Task<ProjectFile> CreateInProjectAsync(string projectId, string templateKind, string operationId, string? name = null, CancellationToken ct = default);
     Task<ProjectFile> ImportRevisionAsync(string projectId, string fileName, Stream source, string operationId,
         string? revisionOf = null, CancellationToken ct = default);
     Task<IReadOnlyList<ProjectFile>> ListRevisionsAsync(string fileId, CancellationToken ct = default);

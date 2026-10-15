@@ -518,20 +518,26 @@ class SqliteProjectWorkbookStore:
         return [self._file_payload(row) for row in rows]
 
     def create(self, actor: Any, template_kind: str, project_id: str | None = None,
-               operation_id: str | None = None) -> dict[str, Any]:
+               operation_id: str | None = None, name: str | None = None) -> dict[str, Any]:
         if project_id is None or operation_id is None:
             raise ApiFault(422, "MISSING_PROJECT", "创建工作簿需要项目和操作标识。")
         self._project(project_id)
         with self._transaction() as conn:
-            base = "节拍表" if template_kind == "scene_beats" else "资产表"
-            name = base
+            if name:
+                cleaned = self._display_name(name, "工作簿名称")
+                if cleaned.lower().endswith(".xlsx"):
+                    cleaned = cleaned[:-5].strip()
+                base = cleaned if cleaned else ("节拍表" if template_kind == "scene_beats" else "资产表")
+            else:
+                base = "节拍表" if template_kind == "scene_beats" else "资产表"
+            final_name = base
             suffix = 2
             while conn.execute("SELECT 1 FROM workbooks WHERE project_id=? AND display_name=? COLLATE NOCASE",
-                               (project_id, name)).fetchone():
-                name = f"{base} {suffix}"
+                               (project_id, final_name)).fetchone():
+                final_name = f"{base} {suffix}"
                 suffix += 1
             result = self._create_workbook_tx(conn, project_id,
-                name, template_kind, operation_id)
+                final_name, template_kind, operation_id)
         self._signal_change()
         return result
 

@@ -6,9 +6,9 @@ namespace MuYingDrive.ProjectWorkbooks;
 
 // Stores no credential. The exact source fingerprint prevents a changed file being retried as the old operation.
 public sealed record PendingWorkbookOperation(string Scope, string OperationId, string ProjectId, string? TemplateKind,
-    string? SourcePath, string? SourceSha256, string? RevisionOf)
+    string? SourcePath, string? SourceSha256, string? RevisionOf, string? Name = null)
 {
-    public string Description => TemplateKind == null ? Path.GetFileName(SourcePath) + (RevisionOf == null ? "（导入）" : "（修订）") : TemplateKind == "scene_beats" ? "新建节拍表" : "新建资产表";
+    public string Description => TemplateKind == null ? Path.GetFileName(SourcePath) + (RevisionOf == null ? "（导入）" : "（修订）") : !string.IsNullOrWhiteSpace(Name) ? $"新建 {Name}" : TemplateKind == "scene_beats" ? "新建节拍表" : "新建资产表";
     private static string DirectoryPath(string scope)
     {
         if (scope.Length != 64 || scope.Any(c => !Uri.IsHexDigit(c))) throw new InvalidDataException("待重试操作的服务器/账号范围无效。");
@@ -66,7 +66,7 @@ public sealed record PendingWorkbookOperation(string Scope, string OperationId, 
     public async Task<ProjectFile> SubmitAsync(IProjectWorkbookService service)
     {
         if (Scope != service.OperationScope) throw new InvalidDataException("该待重试操作属于不同服务器或账号，请切回原账号后处理。");
-        if (TemplateKind != null) return await service.CreateInProjectAsync(ProjectId, TemplateKind, OperationId);
+        if (TemplateKind != null) return await service.CreateInProjectAsync(ProjectId, TemplateKind, OperationId, Name);
         if (SourcePath == null || SourceSha256 == null) throw new InvalidDataException("待重试记录缺少原文件信息，请检查项目列表后取消此操作。");
         await using var source = File.OpenRead(SourcePath);
         if (source.Length > service.MaximumUploadBytes) throw new InvalidDataException("文件超过宿主配置的上传上限。");

@@ -395,21 +395,29 @@ class NasWorkflowServices:
             raise ApiFault(status, code, str(error)) from error
 
     # --- creating, importing and other host-backed workflows ------------------------------
-    def create(self, actor: Any, template_kind: str, project_id: str, operation_id: str) -> dict:
+    def create(self, actor: Any, template_kind: str, project_id: str, operation_id: str, name: str | None = None) -> dict:
         from backend.project_helper import (
             _template_bytes, BEAT_HEADERS, ASSET_HEADERS,
             BEAT_SHEET_NAME, ASSET_SHEET_NAME, FILE_MODE, _write_atomic,
             _ownership, _apply_ownership
         )
         directory = _resolve_project(self._root, project_id)
-        if template_kind == "scene_beats":
+        if name:
+            cleaned = name.strip()
+            if cleaned.lower().endswith(".xlsx"):
+                cleaned = cleaned[:-5].strip()
+            base_name = cleaned if cleaned else ("节拍表" if template_kind == "scene_beats" else "资产表")
+        elif template_kind == "scene_beats":
             base_name = "节拍表"
-            data = _template_bytes(BEAT_HEADERS, BEAT_SHEET_NAME)
         elif template_kind == "asset_review":
             base_name = "资产表"
-            data = _template_bytes(ASSET_HEADERS, ASSET_SHEET_NAME)
         else:
             raise ApiFault(422, "INVALID_TEMPLATE", "请选择一种内置模板。")
+
+        if template_kind == "scene_beats":
+            data = _template_bytes(BEAT_HEADERS, BEAT_SHEET_NAME)
+        else:
+            data = _template_bytes(ASSET_HEADERS, ASSET_SHEET_NAME)
 
         target_name = f"{base_name}.xlsx"
         idx = 2

@@ -111,13 +111,33 @@ public partial class ProjectWorkbooksView : UserControl
         var picker = new OpenFileDialog { Filter = "Excel 工作簿 (*.xlsx)|*.xlsx", Multiselect = true };
         if (picker.ShowDialog(Window.GetWindow(this)) == true) await Model.ExecuteAsync(() => ImportPathsAsync(picker.FileNames));
     }
-    private async void OnCreate(object sender, RoutedEventArgs e) => await Model.ExecuteAsync(async () =>
+    private async void OnCreate(object sender, RoutedEventArgs e)
     {
-        if (Model.HasPendingOperation) throw new InvalidDataException("请先重试或取消待确认的操作。");
+        if (Model.HasPendingOperation)
+        {
+            MessageBox.Show(Window.GetWindow(this), "请先重试或取消待确认的操作。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
         var kind = (string)((FrameworkElement)sender).Tag;
-        Model.SetPending(new PendingWorkbookOperation(Model.Service.OperationScope, Guid.NewGuid().ToString("D"), RequireProject(), kind, null, null, null));
-        var file = await SubmitPendingAsync(); await Model.OpenAsync(file);
-    });
+        var heading = kind == "scene_beats" ? "新建节拍表" : "新建资产表";
+        var prompt = kind == "scene_beats" ? "为节拍表取一个名称：" : "为资产表取一个名称：";
+        var defaultName = kind == "scene_beats" ? "节拍表" : "资产表";
+
+        var dialog = new WorkbookNameDialog(Window.GetWindow(this), Resources, heading, prompt, defaultName, "创建");
+        if (dialog.ShowDialog() != true) return;
+
+        var name = dialog.Value.Trim();
+        if (string.IsNullOrWhiteSpace(name)) return;
+
+        await Model.ExecuteAsync(async () =>
+        {
+            Model.SetPending(new PendingWorkbookOperation(Model.Service.OperationScope, Guid.NewGuid().ToString("D"), RequireProject(), kind, null, null, null, name));
+            var file = await SubmitPendingAsync();
+            await Model.OpenAsync(file);
+            Model.ProjectFilesChanged?.Invoke();
+        });
+    }
     private async void OnOpenFile(object sender, RoutedEventArgs e)
     {
         if (((FrameworkElement)sender).DataContext is ProjectFile file) await Model.ExecuteAsync(() => Model.OpenAsync(file));

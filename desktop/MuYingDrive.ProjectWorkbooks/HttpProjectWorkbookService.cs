@@ -271,11 +271,14 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
             }
         }
     }
-    public Task<ProjectFile> CreateInProjectAsync(string projectId, string templateKind, string operationId, CancellationToken ct = default)
+    public Task<ProjectFile> CreateInProjectAsync(string projectId, string templateKind, string operationId, string? name = null, CancellationToken ct = default)
     {
         _ = OperationScope;
         Template(templateKind); _ = Id(projectId); _ = Id(operationId);
-        return ReadAsync<ProjectFile>(HttpMethod.Post, "create", JsonBody(new { template_kind = templateKind, project_id = projectId, operation_id = operationId }), ct);
+        object body = string.IsNullOrWhiteSpace(name)
+            ? new { template_kind = templateKind, project_id = projectId, operation_id = operationId }
+            : new { template_kind = templateKind, project_id = projectId, operation_id = operationId, name = name.Trim() };
+        return ReadAsync<ProjectFile>(HttpMethod.Post, "create", JsonBody(body), ct);
     }
     public Task<ProjectFile> ImportRevisionAsync(string projectId, string fileName, Stream source, string operationId, string? revisionOf = null, CancellationToken ct = default)
     {

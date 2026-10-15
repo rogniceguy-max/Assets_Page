@@ -224,6 +224,19 @@ class WorkbookRouteTests(unittest.TestCase):
         self.assertEqual("scene_beats", created["template_kind"])
         self.assertTrue((self.root / "空项目" / created["name"]).is_file())
 
+    def test_creating_a_template_with_custom_name(self):
+        by_name = {item["name"]: item["id"] for item in self.projects()}
+        project_id = by_name["空项目"]
+        body = json.dumps({"template_kind": "asset_review", "project_id": project_id,
+                           "operation_id": "fedcba9876543210", "name": "核心角色表"}).encode("utf-8")
+        status, _, response = self.request(
+            "POST", "/api/v2/project-workbooks/create", body=body, content_type="application/json")
+        self.assertEqual(201, status, response[:200])
+        created = json.loads(response.decode("utf-8"))
+        self.assertEqual("asset_review", created["template_kind"])
+        self.assertEqual("核心角色表.xlsx", created["name"])
+        self.assertTrue((self.root / "空项目" / "核心角色表.xlsx").is_file())
+
     def test_importing_a_workbook_creates_file(self):
         by_name = {item["name"]: item["id"] for item in self.projects()}
         project_id = by_name["空项目"]

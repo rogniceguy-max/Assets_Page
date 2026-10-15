@@ -119,17 +119,22 @@ public sealed class WorkspaceViewModel : ObservableObject
         ProjectNodeActivator?.Invoke(node);
     }
 
+    private ProjectNode? _selectedProjectNode;
+    public ProjectNode? SelectedProjectNode => _selectedProjectNode;
+
     /// <summary>
     /// Highlights the active project node in the sidebar tree.
     /// </summary>
     public void SelectProjectNode(ProjectNode? target)
     {
+        _selectedProjectNode = target;
         void UpdateNode(ProjectNode n)
         {
             n.IsSelected = target != null && (ReferenceEquals(n, target) || n.Id == target.Id);
             foreach (var child in n.Children) UpdateNode(child);
         }
         foreach (var project in Projects) UpdateNode(project);
+        OnPropertyChanged(nameof(PageTitle));
     }
 
     /// <summary>
@@ -155,6 +160,8 @@ public sealed class WorkspaceViewModel : ObservableObject
         ShowPage(WorkbookPageKey);
         if (_projectWorkbooksPage is not null)
         {
+            var node = FindWorkbookNode(fullPath);
+            if (node is not null) SelectProjectNode(node);
             _ = _projectWorkbooksPage.OpenWorkbookByNameAsync(projectNode.ProjectId, fileName);
             _ = LoadProjectsAsync();
         }
@@ -542,12 +549,43 @@ public sealed class WorkspaceViewModel : ObservableObject
     }
 
     public string SelectedNavigation { get; private set; } = "文件";
-    public string PageTitle =>
-        CurrentContent == _projectWorkbooksPage?.ViewModel || CurrentContent == _projectWorkbooksPage
-            ? (_projectWorkbooksPage?.ViewModel.IsOpen == true
-                ? _projectWorkbooksPage.ViewModel.Document?.File.Name ?? "工作簿"
-                : "工作簿")
-            : SelectedNavigation;
+    public string PageTitle
+    {
+        get
+        {
+            if (CurrentContent == _projectWorkbooksPage?.ViewModel || CurrentContent == _projectWorkbooksPage)
+            {
+                var projectName = _selectedProjectNode?.ProjectName;
+                if (string.IsNullOrWhiteSpace(projectName))
+                {
+                    projectName = _projectWorkbooksPage?.ViewModel.SelectedProject?.Name;
+                }
+                var docTitle = _projectWorkbooksPage?.ViewModel.IsOpen == true
+                    ? _projectWorkbooksPage.ViewModel.Document?.File.Name ?? "工作簿"
+                    : "工作簿";
+
+                if (!string.IsNullOrWhiteSpace(projectName))
+                {
+                    return $"{projectName} · {docTitle}";
+                }
+                return docTitle;
+            }
+
+            if (_selectedProjectNode != null)
+            {
+                var projectName = _selectedProjectNode.ProjectName;
+                if (_selectedProjectNode.Kind == ProjectNodeKind.Project)
+                {
+                    return projectName;
+                }
+                return string.IsNullOrWhiteSpace(projectName)
+                    ? _selectedProjectNode.Name
+                    : $"{projectName} · {_selectedProjectNode.Name}";
+            }
+
+            return SelectedNavigation;
+        }
+    }
 
     public object CurrentContent
     {

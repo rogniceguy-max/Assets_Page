@@ -217,21 +217,23 @@
    </StackPanel>
   </StackPanel>
   <Grid Grid.Row="1" IsEnabled="{Binding Ready}">
-   <Grid Visibility="{Binding IsHome, Converter={StaticResource BoolVisibility}}" AllowDrop="True" DragOver="OnWorkbookDragOver" Drop="OnWorkbookDrop" Background="Transparent">
+   <Grid Visibility="{Binding IsHome, Converter={StaticResource BoolVisibility}}" Background="Transparent">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
     <!-- The gap below the button row: without it the first file card sat right against the
          buttons, which reads as one cramped block rather than "actions, then what they act
          on". -->
     <StackPanel><WrapPanel Margin="0,0,0,14">
-     <Button Content="导入 .xlsx" Click="OnImport" Style="{DynamicResource Button.Primary}"/>
-     <Button Content="新建节拍表" Tag="scene_beats" Click="OnCreate"/>
+     <Button Content="新建节拍表" Tag="scene_beats" Click="OnCreate" Style="{DynamicResource Button.Primary}"/>
      <Button Content="新建资产表" Tag="asset_review" Click="OnCreate"/>
     </WrapPanel></StackPanel>
     <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
      <ItemsControl ItemsSource="{Binding Files}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
       <ItemsControl.ItemTemplate><DataTemplate>
        <Button Click="OnOpenFile" Width="200" Height="130" Margin="0,0,12,12" HorizontalContentAlignment="Stretch">
-        <StackPanel><TextBlock Text="▦" FontSize="35" Foreground="{DynamicResource Brush.Accent.Primary}" Margin="0,0,0,12"/><TextBlock Text="{Binding Name}" TextWrapping="Wrap"/><TextBlock Text="XLSX 工作簿" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}"/></StackPanel>
+        <StackPanel VerticalAlignment="Center">
+         <TextBlock Text="▦" FontSize="36" Foreground="{DynamicResource Brush.Accent.Primary}" Margin="0,0,12,0" HorizontalAlignment="Center"/>
+         <TextBlock Text="{Binding Name}" TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center" FontWeight="Medium"/>
+        </StackPanel>
        </Button>
       </DataTemplate></ItemsControl.ItemTemplate>
      </ItemsControl>

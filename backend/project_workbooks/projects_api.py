@@ -350,12 +350,18 @@ class ProjectsApi:
             return json_response(200, {"items": svc.list_files(actor)})
         if parts == ["create"] and method == "POST":
             value = object_body(headers, body)
-            if set(value) == {"template_kind", "project_id", "operation_id"}:
+            if {"template_kind", "project_id", "operation_id"}.issubset(value.keys()) and set(value.keys()).issubset({"template_kind", "project_id", "operation_id", "name"}):
                 if value["template_kind"] not in ("scene_beats", "asset_review"):
                     raise invalid("请选择一种内置模板。")
+                name_val = value.get("name")
+                if name_val is not None:
+                    name_val = str(name_val).strip()
+                    if not name_val:
+                        name_val = None
                 return json_response(201, self._workflow().create(actor, value["template_kind"],
                     review_target(value["project_id"], allow_general=False),
-                    review_target(value["operation_id"], allow_general=False)))
+                    review_target(value["operation_id"], allow_general=False),
+                    name=name_val))
             if set(value) != {"template_kind"} or value["template_kind"] not in ("scene_beats", "asset_review"):
                 raise invalid("请选择一种内置模板。")
             return json_response(201, svc.create(actor, value["template_kind"]))
