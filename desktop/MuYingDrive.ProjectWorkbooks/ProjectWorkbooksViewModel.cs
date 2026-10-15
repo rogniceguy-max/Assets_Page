@@ -193,7 +193,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         {
             if (ReferenceEquals(_selectedProject, value)) return;
             _selectedProject = value; Changed();
-            if (value != null) EnsureLiveUpdates(value.Id);
+            if (value != null) _ = EnsureLiveUpdatesAsync(value.Id);
         }
     }
     public ObservableCollection<SheetItem> Sheets { get; } = [];

@@ -5,8 +5,8 @@ cover the service-side contract that the HTTP layer depends on.
 """
 import unittest
 
-from backend.v2.service import ApiError
-from backend.v2.visitor import SPACES, VisitorReader, VisitorService, VisitorUnavailable
+from backend.service import ApiError
+from backend.visitor import SPACES, VisitorReader, VisitorService, VisitorUnavailable
 
 
 class FakeReader:

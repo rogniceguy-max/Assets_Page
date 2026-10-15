@@ -1,7 +1,7 @@
 """Privileged project provisioner for the V2 service.
 
 Runs as root, socket-activated, one request per connection, stdin/stdout framed as one
-JSON line each way. Same shape as :mod:`backend.v2.account_helper`, and for the same
+JSON line each way. Same shape as :mod:`backend.account_helper`, and for the same
 reason: creating a project means writing to ``/volume1``, and the V2 service unit runs with
 ``ProtectSystem=strict`` so its writable set is ``/var/lib/muying-v2`` and nothing else.
 
@@ -17,7 +17,7 @@ Two things are easy to get wrong here and are handled explicitly below:
   That is enough — it was measured on the real share, employees read and write and the
   visitor is denied — but it is why the owner, group and mode are set here rather than left
   to the umask.
-* **Templates must be recognised by content.** :mod:`backend.v2.project_workbooks.projector`
+* **Templates must be recognised by content.** :mod:`backend.project_workbooks.projector`
   decides what a workbook is by reading its header row, never its filename. The headers
   below are the ones that make it answer ``scene_beats`` and ``asset_review``; the test that
   asserts this feeds each generated template back through the projector, so the two cannot

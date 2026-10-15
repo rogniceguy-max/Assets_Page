@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 import openpyxl  # noqa: E402
 
-from backend.v2.project_workbooks.projector import classify, project_document  # noqa: E402
+from backend.project_workbooks.projector import classify, project_document  # noqa: E402
 
 SAMPLES = Path(r"C:\Users\CHEN\Desktop\temp\mengpo-workflow-audit\sources")
 MASTER = SAMPLES / "孟婆2_场景节拍表.xlsx"

@@ -1,7 +1,7 @@
 """Creating a project: the templates, the name rules, and what a failure leaves behind.
 
 The load-bearing test is the first two. A project is created with two workbooks whose only
-job is to be recognised by :mod:`backend.v2.project_workbooks.projector` — which decides what
+job is to be recognised by :mod:`backend.project_workbooks.projector` — which decides what
 a workbook is by reading its header row and never its filename. So the template and the
 parser are two halves of one contract that nothing else enforces: get the headers subtly
 wrong and every new project opens as an untitled generic grid, with no error anywhere. These
@@ -21,11 +21,11 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from backend.v2 import project_helper  # noqa: E402
-from backend.v2.project_spaces import (  # noqa: E402
+from backend import project_helper  # noqa: E402
+from backend.project_spaces import (  # noqa: E402
     ProjectHelperFailed, ProjectHelperUnavailable, ProjectProvisioner, ProjectSpaceService)
-from backend.v2.project_workbooks import projector  # noqa: E402
-from backend.v2.service import ApiError  # noqa: E402
+from backend.project_workbooks import projector  # noqa: E402
+from backend.service import ApiError  # noqa: E402
 
 
 def _write(path: Path, data: bytes) -> Path:
@@ -128,9 +128,7 @@ class CreateProjectTests(unittest.TestCase):
         created = self.root / "孟婆"
         self.assertTrue(created.is_dir())
         names = sorted(path.name for path in created.iterdir())
-        self.assertEqual(["节拍表.xlsx", "资产表.xlsx"], names)
-        self.assertEqual("scene_beats", projector.classify(created / "节拍表.xlsx"))
-        self.assertEqual("asset_review", projector.classify(created / "资产表.xlsx"))
+        self.assertEqual([], names)
 
     def test_the_modes_are_set_explicitly_rather_than_left_to_the_creation_call(self):
         # Asserted because the call is not what decides. On the NAS a directory asked for as
@@ -143,24 +141,11 @@ class CreateProjectTests(unittest.TestCase):
             project_helper.create_project({"name": "孟婆"})
 
         self.assertIn((".creating-孟婆", project_helper.DIRECTORY_MODE), applied)
-        self.assertIn(("节拍表.xlsx", project_helper.FILE_MODE), applied)
-        self.assertIn(("资产表.xlsx", project_helper.FILE_MODE), applied)
 
     def test_nothing_is_left_behind_when_a_template_fails(self):
-        # The contract forbids a half-built project: one workbook and not the other is
-        # exactly the state a user would find and not know what to do with.
-        calls = {"n": 0}
-        real = project_helper._template_bytes
-
-        def flaky(headers, sheet_name):
-            calls["n"] += 1
-            if calls["n"] == 2:
-                raise project_helper.HelperFailure("TEMPLATE_UNAVAILABLE", "第二张表生成失败。")
-            return real(headers, sheet_name)
-
         with mock.patch.object(project_helper, "PROJECT_ROOT", self.root), \
-             mock.patch.object(project_helper, "_template_bytes", flaky):
-            with self.assertRaises(project_helper.HelperFailure):
+             mock.patch("os.rename", side_effect=OSError("disk error")):
+            with self.assertRaises(OSError):
                 project_helper.create_project({"name": "孟婆"})
 
         self.assertEqual([], sorted(path.name for path in self.root.iterdir()),
@@ -193,6 +178,7 @@ class CreateProjectTests(unittest.TestCase):
     def test_add_sheet_creates_episode_sheet_in_workbook(self):
         self._create("孟婆")
         with mock.patch.object(project_helper, "PROJECT_ROOT", self.root):
+            project_helper.ensure_workbooks({"project_name": "孟婆"})
             res = project_helper.add_sheet({
                 "project_name": "孟婆",
                 "file_name": "节拍表.xlsx",
@@ -209,6 +195,7 @@ class CreateProjectTests(unittest.TestCase):
     def test_add_sheet_duplicate_refused(self):
         self._create("孟婆")
         with mock.patch.object(project_helper, "PROJECT_ROOT", self.root):
+            project_helper.ensure_workbooks({"project_name": "孟婆"})
             project_helper.add_sheet({
                 "project_name": "孟婆",
                 "file_name": "节拍表.xlsx",

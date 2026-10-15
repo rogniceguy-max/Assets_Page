@@ -251,6 +251,10 @@ def _target_row(workbook: Any, row_id: str, expected_kind: str):
         raise ApiFault(422, "INVALID_ROW_ID", "无效的行标识。")
     worksheet = next((sheet for sheet in workbook.worksheets
                       if projector._safe_id(sheet.title) == sheet_id), None)
+    if worksheet is None and sheet_id.startswith("s") and sheet_id[1:].isdigit():
+        sheet_index = int(sheet_id[1:])
+        if 0 <= sheet_index < len(workbook.worksheets):
+            worksheet = workbook.worksheets[sheet_index]
     if worksheet is None:
         raise ApiFault(404, "NOT_FOUND", "工作表不存在。")
     classification = projector._classify_sheet(worksheet)
@@ -273,9 +277,12 @@ def _projected_row(worksheet: Any, classification: Any, row_id: str, version: in
         projected = projector._asset_sheet(projector._safe_id(worksheet.title), worksheet.title,
             worksheet, classification, project_dir=project_dir, project_id=project_id,
             row_fingerprints=fingerprints)["asset_rows"]
-    result = next((row for row in projected if row["id"] == row_id), None)
+    _, raw_row = row_id.rsplit("#", 1)
+    canonical_id = f"{projector._safe_id(worksheet.title)}#{raw_row}"
+    result = next((row for row in projected if row["id"] in {row_id, canonical_id}), None)
     if result is None:
         raise ApiFault(404, "NOT_FOUND", "工作表行不存在。")
+    result["id"] = row_id
     result["version"] = version
     return result
 
@@ -389,7 +396,7 @@ class NasWorkflowServices:
 
     # --- creating, importing and other host-backed workflows ------------------------------
     def create(self, actor: Any, template_kind: str, project_id: str, operation_id: str) -> dict:
-        from backend.v2.project_helper import (
+        from backend.project_helper import (
             _template_bytes, BEAT_HEADERS, ASSET_HEADERS,
             BEAT_SHEET_NAME, ASSET_SHEET_NAME, FILE_MODE, _write_atomic,
             _ownership, _apply_ownership
@@ -430,7 +437,7 @@ class NasWorkflowServices:
 
     def import_xlsx_stream(self, actor: Any, name: str, source: BinaryIO, length: int,
                            project_id: Any, operation_id: Any, revision_of: Any) -> dict:
-        from backend.v2.project_helper import (
+        from backend.project_helper import (
             _validate_name, FILE_MODE, _write_atomic,
             _ownership, _apply_ownership
         )

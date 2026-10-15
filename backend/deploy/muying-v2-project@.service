@@ -9,7 +9,7 @@ EnvironmentFile=/etc/muying-v2/helper.env
 # interpreter (see deploy/install-pylib.sh). Set here rather than inherited, because this
 # unit does not read server.env.
 Environment=PYTHONPATH=/opt/muying-v2/pylib
-ExecStart=/usr/bin/python3 -m backend.v2.project_helper
+ExecStart=/usr/bin/python3 -m backend.project_helper
 StandardInput=socket
 StandardOutput=socket
 StandardError=journal

@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
-from backend.v2.project_workbooks.nas_adapter import NasReviewServices
+from backend.project_workbooks.nas_adapter import NasReviewServices
 
 class TestNasReviewServices(unittest.TestCase):
     def setUp(self):
@@ -54,7 +54,7 @@ class TestNasReviewServices(unittest.TestCase):
 
     def test_update_scene(self):
         import openpyxl
-        from backend.v2.project_workbooks.nas_adapter import NasWorkflowServices, _encode_file_id
+        from backend.project_workbooks.nas_adapter import NasWorkflowServices, _encode_file_id
         
         proj_dir = Path(self.temp_dir.name) / "项目"
         proj_dir.mkdir()

@@ -7,8 +7,8 @@ other people's feedback".
 """
 import unittest
 
-from backend.v2.feedback import FeedbackService
-from backend.v2.service import ApiError
+from backend.feedback import FeedbackService
+from backend.service import ApiError
 
 EMPLOYEE_TOKEN = "employee-token"
 VISITOR_TOKEN = "visitor-token"

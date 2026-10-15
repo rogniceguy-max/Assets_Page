@@ -71,8 +71,10 @@ internal static class Program
             Assert(ReferenceEquals(workspace.CurrentContent, workspace.Feedback), "Feedback must be a peer workspace.");
             workspace.NavigateCommand.Execute("传输");
             Assert(ReferenceEquals(workspace.CurrentContent, transfers) && transfers.Tasks.Contains(failed), "Navigation must retain the transfer queue instance.");
-            workspace.NavigateCommand.Execute("图片");
+            workspace.NavigateCommand.Execute("视频");
             Assert(ReferenceEquals(workspace.CurrentContent, files) && files.SearchText == "fixture-browse-filter", "Navigation must retain file browsing state.");
+            workspace.NavigateCommand.Execute("图片");
+            Assert(workspace.CurrentContent is ProjectImagesViewModel, "图片 navigation opens the project images gallery.");
 
             // --- the shape of the sidebar ---------------------------------------------------
             var navKeys = workspace.NavigationItems.Select(item => item.Key).ToArray();

@@ -25,7 +25,7 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    data_dir = Path(os.environ.get("MUYING_V2_DATA_DIR", "backend/v2/data")).resolve()
+    data_dir = Path(os.environ.get("MUYING_V2_DATA_DIR", "backend/data")).resolve()
     certificate = os.environ.get("MUYING_V2_TLS_CERT")
     private_key = os.environ.get("MUYING_V2_TLS_KEY")
     socket_path = os.environ.get("MUYING_V2_PROVISIONER_SOCKET")

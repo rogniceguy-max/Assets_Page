@@ -13,9 +13,9 @@ from unittest.mock import patch
 
 from PIL import Image, PngImagePlugin
 
-from backend.v2.feedback import FeedbackService, MAX_IMAGE_BYTES, MAX_BODY_BYTES, sanitize_image
-from backend.v2.server import create_handler
-from backend.v2.service import ApiError
+from backend.feedback import FeedbackService, MAX_IMAGE_BYTES, MAX_BODY_BYTES, sanitize_image
+from backend.server import create_handler
+from backend.service import ApiError
 
 
 def screenshot(format="PNG", **save):
@@ -151,11 +151,11 @@ class FeedbackTests(unittest.TestCase):
         self.assertFalse(closed.capabilities("maintainer-session")["can_manage"])
 
     def test_global_short_window_rate_limit_has_no_identity_keys(self):
-        with patch("backend.v2.feedback.time.monotonic", return_value=100):
+        with patch("backend.feedback.time.monotonic", return_value=100):
             for _ in range(30): self.service.create("employee-session", submission())
             self.error(429, lambda: self.service.create("maintainer-session", submission()))
         self.assertTrue(all(isinstance(t, (int, float)) for t in self.service._recent))
-        with patch("backend.v2.feedback.time.monotonic", return_value=701):
+        with patch("backend.feedback.time.monotonic", return_value=701):
             self.service.create("employee-session", submission())
 
     def test_storage_fault_is_safe_and_independent_and_bad_id_is_not_a_path(self):

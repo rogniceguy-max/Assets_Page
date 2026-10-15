@@ -18,10 +18,10 @@ import unittest
 from email.parser import BytesParser
 from pathlib import Path
 
-from backend.v2.installer_store import _has_write_bit, newest_setup_name
-from backend.v2.release_store import OpenRelease, ReleaseNotFound, ReleaseUnavailable
-from backend.v2.server import INSTALLER_FILE_PATH, MAX_CONCURRENT_DOWNLOADS, create_handler
-from backend.v2.service import ApiError
+from backend.installer_store import _has_write_bit, newest_setup_name
+from backend.release_store import OpenRelease, ReleaseNotFound, ReleaseUnavailable
+from backend.server import INSTALLER_FILE_PATH, MAX_CONCURRENT_DOWNLOADS, create_handler
+from backend.service import ApiError
 
 
 class NewestSetupNameTests(unittest.TestCase):

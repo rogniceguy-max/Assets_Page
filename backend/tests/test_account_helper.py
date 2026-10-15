@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from backend.v2 import account_helper
+from backend import account_helper
 
 
 class AccountHelperTransactionTests(unittest.TestCase):

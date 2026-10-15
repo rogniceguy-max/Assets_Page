@@ -22,10 +22,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from backend.v2.project_workbooks.nas_adapter import NasSecurity, NasWorkbookServices, NasWorkflowServices  # noqa: E402
-from backend.v2.project_workbooks.projects_api import ProjectsApi  # noqa: E402
-from backend.v2.server import create_handler  # noqa: E402
-from backend.v2.service import ApiError  # noqa: E402
+from backend.project_workbooks.nas_adapter import NasSecurity, NasWorkbookServices, NasWorkflowServices  # noqa: E402
+from backend.project_workbooks.projects_api import ProjectsApi  # noqa: E402
+from backend.server import create_handler  # noqa: E402
+from backend.service import ApiError  # noqa: E402
 
 SAMPLES = Path(r"C:\Users\CHEN\Desktop\temp\mengpo-workflow-audit\sources")
 MASTER = SAMPLES / "孟婆2_场景节拍表.xlsx"

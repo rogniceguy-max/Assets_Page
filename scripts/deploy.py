@@ -56,15 +56,14 @@ DEFAULT_KEY_PATH = Path(r"C:\Users\CHEN\Desktop\MuYing Drive\release-signing\muy
 DEFAULT_PUB_KEY = DESKTOP_DIR / "MuYingDrive.UpdateCore" / "Trust" / "trusted-update-publisher.pem"
 SETUP_OUTPUT_DIR = Path(r"C:\Users\CHEN\Desktop\MuYing Drive")
 
-BACKEND_FILES = [
-    "backend/v2/project_helper.py",
-    "backend/v2/project_spaces.py",
-    "backend/v2/server.py",
-    "backend/v2/project_workbooks/nas_adapter.py",
-    "backend/v2/project_workbooks/projector.py",
-    "backend/v2/project_workbooks/projects_api.py",
-    "backend/v2/project_workbooks/workflow_services.py",
-]
+def get_backend_files():
+    backend_dir = REPO_ROOT / "backend"
+    files = []
+    for p in backend_dir.rglob("*"):
+        if p.is_file() and not p.name.endswith(".pyc") and "__pycache__" not in p.parts and "tests" not in p.parts:
+            rel = p.relative_to(REPO_ROOT).as_posix()
+            files.append(rel)
+    return files
 
 
 def create_ssh_client():
@@ -133,15 +132,17 @@ def deploy_backend(client):
     release_dir = f"/opt/muying-v2/releases/{timestamp}"
 
     # 1. Upload modified files
-    print("1. Uploading backend files...")
-    client.exec_command("rm -rf /tmp/muying_deploy && mkdir -p /tmp/muying_deploy/backend/v2/project_workbooks")
+    backend_files = get_backend_files()
+    print(f"1. Uploading {len(backend_files)} backend files...")
+    client.exec_command("rm -rf /tmp/muying_deploy && mkdir -p /tmp/muying_deploy/backend/project_workbooks /tmp/muying_deploy/backend/deploy")
 
-    for rel_path in BACKEND_FILES:
+    for rel_path in backend_files:
         local_path = REPO_ROOT / rel_path.replace("/", os.sep)
         if not local_path.exists():
-            print(f"  Warning: local file {rel_path} does not exist, skipping.")
             continue
         remote_path = f"/tmp/muying_deploy/{rel_path}"
+        remote_dir = os.path.dirname(remote_path)
+        client.exec_command(f"mkdir -p '{remote_dir}'")
         with open(local_path, "rb") as f:
             data = f.read()
         stdin, stdout, stderr = client.exec_command(f"cat > '{remote_path}'")
@@ -153,9 +154,10 @@ def deploy_backend(client):
     print(f"2. Preparing release {release_dir}...")
     run_sudo(client, f"cp -a /opt/muying-v2/current '{release_dir}'")
 
-    # 3. Copy uploaded files
-    for rel_path in BACKEND_FILES:
-        run_sudo(client, f"cp '/tmp/muying_deploy/{rel_path}' '{release_dir}/{rel_path}'")
+    # 3. Copy uploaded files into backend/
+    run_sudo(client, f"cp -r /tmp/muying_deploy/backend/* '{release_dir}/backend/'")
+    # Also create backend/v2 symlink to . so both backend.v2 and backend imports resolve
+    run_sudo(client, f"ln -sfn . '{release_dir}/backend/v2'")
 
     run_sudo(client, f"chown -R root:root '{release_dir}'")
     run_sudo(client, "rm -rf /tmp/muying_deploy")

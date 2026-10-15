@@ -6,11 +6,11 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 
-from backend.v2 import database
-from backend.v2.identity import normalize_username, valid_internal_username
-from backend.v2.passwords import hash_password, verify_password
-from backend.v2.provisioner import ProvisionerError
-from backend.v2.service import ApiError, V2Application
+from backend import database
+from backend.identity import normalize_username, valid_internal_username
+from backend.passwords import hash_password, verify_password
+from backend.provisioner import ProvisionerError
+from backend.service import ApiError, V2Application
 
 
 class FakeProvisioner:

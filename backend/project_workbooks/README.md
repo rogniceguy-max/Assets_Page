@@ -33,7 +33,7 @@ Legacy `成员批注一` … `成员批注六` columns are import/export compati
 SQLite table fields. Their labels and XLSX serialization live in `xlsx_compat.py`; imported
 values remain attached to their source rows so an explicit export can preserve them. Newly
 created SQLite rows do not contain these fields. To convert a saved workbook API JSON snapshot
-manually, run from `backend/v2`:
+manually, run from `backend`:
 
 ```powershell
 python -m project_workbooks.xlsx_compat document.json output.xlsx

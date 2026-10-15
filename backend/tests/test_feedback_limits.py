@@ -6,9 +6,9 @@ from contextlib import closing
 from unittest.mock import patch
 
 from PIL import Image
-from backend.v2.feedback import sanitize_image
-from backend.v2.tests import test_feedback as fixtures
-from backend.v2.tests.test_feedback import submission, screenshot
+from backend.feedback import sanitize_image
+from backend.tests import test_feedback as fixtures
+from backend.tests.test_feedback import submission, screenshot
 
 
 class FeedbackLimitsTests(unittest.TestCase):
@@ -27,7 +27,7 @@ class FeedbackLimitsTests(unittest.TestCase):
         self.error(400, lambda: sanitize_image({"mime": "image/png", "data": base64.b64encode(bomb.getvalue()).decode()}))
 
     def test_quota_failed_write_leaves_no_partial_record_and_no_raw_file(self):
-        with patch("backend.v2.feedback.MAX_STORAGE_BYTES", 1):
+        with patch("backend.feedback.MAX_STORAGE_BYTES", 1):
             self.error(507, lambda: self.service.create("employee-session", submission(images=[screenshot()])))
         self.assertFalse(self.service.list("employee-session", {})["items"])
         self.assertFalse(self.service.list("maintainer-session", {"scope": ["pending"]})["items"])
