@@ -181,7 +181,11 @@ public sealed class EpisodeSyncService : ObservableObject, IDisposable
                     // If backend workbook read fails, continue to next episode
                 }
 
-                var sceneSheet = doc?.Sheets.FirstOrDefault(s => s.Kind == "scene_review" || s.SceneRows.Count > 0);
+                var sceneSheet = (!string.IsNullOrWhiteSpace(episode.SheetId)
+                    ? doc?.Sheets.FirstOrDefault(s => s.Id == episode.SheetId)
+                    : null)
+                    ?? doc?.Sheets.FirstOrDefault(s => s.Name.Equals(episode.Name, StringComparison.OrdinalIgnoreCase))
+                    ?? doc?.Sheets.FirstOrDefault(s => s.Kind is "scene_beats" or "scene_review" || s.SceneRows.Count > 0);
                 var sceneRows = sceneSheet?.SceneRows ?? [];
 
                 // 1. Process each beat row in the workbook
@@ -337,7 +341,11 @@ public sealed class EpisodeSyncService : ObservableObject, IDisposable
                     try
                     {
                         var doc = await _service.OpenAsync(episode.FileId);
-                        var sheet = doc.Sheets.FirstOrDefault(s => s.Kind == "scene_review" || s.SceneRows.Count > 0);
+                        var sheet = (!string.IsNullOrWhiteSpace(episode.SheetId)
+                            ? doc.Sheets.FirstOrDefault(s => s.Id == episode.SheetId)
+                            : null)
+                            ?? doc.Sheets.FirstOrDefault(s => s.Name.Equals(episode.Name, StringComparison.OrdinalIgnoreCase))
+                            ?? doc.Sheets.FirstOrDefault(s => s.Kind is "scene_beats" or "scene_review" || s.SceneRows.Count > 0);
                         if (sheet != null)
                         {
                             var row = sheet.SceneRows.FirstOrDefault(r =>
@@ -403,7 +411,11 @@ public sealed class EpisodeSyncService : ObservableObject, IDisposable
                 try
                 {
                     var doc = await _service.OpenAsync(episode.FileId);
-                    var sheet = doc.Sheets.FirstOrDefault(s => s.Kind == "scene_review" || s.SceneRows.Count > 0);
+                    var sheet = (!string.IsNullOrWhiteSpace(episode.SheetId)
+                        ? doc.Sheets.FirstOrDefault(s => s.Id == episode.SheetId)
+                        : null)
+                        ?? doc.Sheets.FirstOrDefault(s => s.Name.Equals(episode.Name, StringComparison.OrdinalIgnoreCase))
+                        ?? doc.Sheets.FirstOrDefault(s => s.Kind is "scene_beats" or "scene_review" || s.SceneRows.Count > 0);
                     if (sheet != null)
                     {
                         var row = sheet.SceneRows.FirstOrDefault(r =>

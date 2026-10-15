@@ -91,14 +91,25 @@ internal static class Program
                 [new ProjectNavigation.WorkbookEntry("file-id", "孟婆2_场景节拍表.xlsx")]);
             Assert(tree.Kind == ProjectNodeKind.Project && tree.Name == "孟婆", "A project row is the project.");
             Assert(tree.Id == "211953005", "A project row is identified by the backend's id, not its name.");
+            Assert(tree.IsProject, "Project row IsProject is true.");
+            Assert(!tree.IsWorkbook, "Project row IsWorkbook is false.");
             Assert(tree.Children.Select(child => child.Name).SequenceEqual(["工作簿", "图片", "视频"]),
                 "A project carries its workbooks and the two media views.");
-            Assert(tree.Children[0].Children.Single().Id == "file-id",
+            var workbookNode = tree.Children[0].Children.Single();
+            Assert(workbookNode.Id == "file-id",
                 "A workbook row carries the file id the document route takes.");
+            Assert(workbookNode.IsWorkbook, "Workbook row IsWorkbook is true.");
+            Assert(workbookNode.IsOpenable, "Workbook row IsOpenable is true.");
+            Assert(!workbookNode.IsProject, "Workbook row IsProject is false.");
             Assert(tree.Children.All(child => child.ProjectId == "211953005"),
                 "Every row knows which project it belongs to.");
             Assert(new ProjectInfo("211953005", "孟婆").ToString() == "孟婆",
                 "ProjectInfo.ToString() must return only Name.");
+
+            Assert(workspace.OpenProjectNodeCommand != null, "OpenProjectNodeCommand must be present.");
+            Assert(workspace.RenameProjectNodeCommand != null, "RenameProjectNodeCommand must be present.");
+            Assert(workspace.DeleteWorkbookProjectNodeCommand != null, "DeleteWorkbookProjectNodeCommand must be present.");
+            Assert(workspace.DeleteProjectNodeCommand != null, "DeleteProjectNodeCommand must be present.");
 
             // --- the names a duplicate gets ---------------------------------------------
             Assert(UniqueName.WithSuffix("照片.jpg", 2) == "照片 (2).jpg", "A duplicate is numbered before its extension.");

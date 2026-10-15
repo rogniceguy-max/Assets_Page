@@ -44,6 +44,9 @@ class ProjectProvisioner:
     def create_project(self, name: str) -> dict[str, Any]:
         return self._request({"operation": "create_project", "name": name})
 
+    def delete_project(self, name: str) -> dict[str, Any]:
+        return self._request({"operation": "delete_project", "name": name})
+
     def move_asset_folder(self, project_name: str, source_path: str, target_path: str) -> dict[str, Any]:
         return self._request({"operation": "move_asset_folder", "project_name": project_name,
                               "source_path": source_path, "target_path": target_path})
@@ -208,3 +211,41 @@ class ProjectSpaceService:
         if created is None:
             raise ApiError(500, "PROJECT_NOT_LISTED", "项目已创建，但未能读回，请刷新后确认。")
         return created
+
+    def delete_project(self, actor: Any, project_id: str) -> dict[str, Any]:
+        if actor and (actor.get("role") == "visitor" or not actor.get("can_write", True)):
+            raise ApiError(403, "FORBIDDEN", "访客账户只有只读权限。")
+        if self._root is None:
+            raise ApiError(503, "STORAGE_UNAVAILABLE", "项目目录暂不可用。")
+
+        proj_name = None
+        if self._catalog is not None:
+            try:
+                row, directory = self._catalog._project(project_id)
+                proj_name = directory.name
+            except Exception:
+                pass
+
+        if not proj_name:
+            for directory in _project_directories(self._root):
+                if directory.name == project_id or str(directory.stat().st_ino) == project_id:
+                    proj_name = directory.name
+                    break
+
+        if not proj_name:
+            raise ApiError(404, "NOT_FOUND", "项目不存在。")
+
+        try:
+            self._provisioner.delete_project(proj_name)
+        except ProjectHelperUnavailable as error:
+            raise ApiError(503, "PROJECT_SERVICE_UNAVAILABLE", str(error)) from error
+        except ProjectHelperFailed as error:
+            raise ApiError(500, error.code, str(error)) from error
+
+        if self._catalog is not None:
+            try:
+                self._catalog.delete_project_record(project_id)
+            except Exception:
+                pass
+
+        return {"ok": True, "name": proj_name, "deleted": True}

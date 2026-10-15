@@ -638,7 +638,11 @@ class ProjectsApi:
         if path == ROOT + "/image-assets":
             if media_type not in IMAGE_TYPES:
                 raise ApiFault(415, "UNSUPPORTED_TYPE", "请选择 PNG、JPEG 或 WebP 图片。")
-            return json_response(201, workflow.upload_image_stream(actor, name, media_type, source, length, project))
+            folder_id = header_id(headers, "x-folder-id")
+            raw_folder_path = headers.get("x-folder-path")
+            folder_path = unquote(raw_folder_path, encoding="utf-8") if raw_folder_path else None
+            return json_response(201, workflow.upload_image_stream(
+                actor, name, media_type, source, length, project, folder_id=folder_id, folder_path=folder_path))
         raise ApiFault(404, "NOT_FOUND", "接口不存在。")
 
     def handle(self, handler: Any) -> bool:

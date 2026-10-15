@@ -305,10 +305,15 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
         if (!string.IsNullOrEmpty(cursor)) route += "&cursor=" + Uri.EscapeDataString(cursor);
         return ReadAsync<ImageSearchPage>(HttpMethod.Get, route, null, ct);
     }
-    public Task<ImageAsset> UploadProjectImageAsync(string projectId, string fileName, string mediaType, Stream source, CancellationToken ct = default)
+    public Task<ImageAsset> UploadProjectImageAsync(string projectId, string fileName, string mediaType, Stream source, string? folderPath = null, CancellationToken ct = default)
     {
         ImageType(mediaType); _ = Id(projectId);
-        return UploadAsync<ImageAsset>("image-assets", fileName, mediaType, source, new Dictionary<string, string> { ["X-Project-Id"] = projectId }, ct);
+        var headers = new Dictionary<string, string> { ["X-Project-Id"] = projectId };
+        if (!string.IsNullOrEmpty(folderPath))
+        {
+            headers["X-Folder-Path"] = Uri.EscapeDataString(folderPath);
+        }
+        return UploadAsync<ImageAsset>("image-assets", fileName, mediaType, source, headers, ct);
     }
     public Task<ImageAsset> GetProjectImageAsync(string imageId, CancellationToken ct = default) =>
         ReadAsync<ImageAsset>(HttpMethod.Get, "image-assets/" + Id(imageId), null, ct);

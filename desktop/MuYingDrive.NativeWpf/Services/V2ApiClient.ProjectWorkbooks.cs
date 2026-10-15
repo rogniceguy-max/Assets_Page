@@ -81,6 +81,30 @@ public sealed partial class V2ApiClient
         });
     }
 
+    /// <summary>
+    /// Deletes a project space by id.
+    /// </summary>
+    public async Task DeleteProjectSpaceAsync(
+        string bearerToken, string projectId, CancellationToken cancellationToken = default)
+    {
+        using var client = CreateProjectWorkbookClient();
+        using var request = new HttpRequestMessage(HttpMethod.Delete, new Uri(_baseUri, $"api/v2/project-spaces/{Uri.EscapeDataString(projectId)}"));
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearerToken);
+
+        using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        if (response.IsSuccessStatusCode) return;
+
+        var detail = await ReadErrorMessageAsync(response, cancellationToken).ConfigureAwait(false);
+        throw new InvalidOperationException(detail ?? response.StatusCode switch
+        {
+            HttpStatusCode.NotFound => "项目不存在或已被删除。",
+            HttpStatusCode.Forbidden => "当前用户无权删除该项目。",
+            HttpStatusCode.Unauthorized => "登录状态已失效，请重新登录。",
+            HttpStatusCode.ServiceUnavailable => "项目服务暂时不可用，请稍后重试。",
+            _ => "删除项目失败，请稍后重试。"
+        });
+    }
+
     private static async Task<string?> ReadErrorMessageAsync(
         HttpResponseMessage response, CancellationToken cancellationToken)
     {

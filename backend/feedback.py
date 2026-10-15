@@ -105,6 +105,8 @@ class FeedbackService:
         self.maintainers = frozenset(maintainers)
         self._lock = threading.Lock()
         self._recent = []  # Global ten-minute window; never keyed by user, IP or session.
+        self._cached_size: int | None = None
+        self._cached_count: int | None = None
 
     def authorize(self, token, manage=False):
         if not token:
@@ -127,6 +129,11 @@ class FeedbackService:
             self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
             db = sqlite3.connect(self.root / ("maintenance.db" if audit else "feedback.db"), timeout=10)
             db.row_factory = sqlite3.Row
+            db.execute("PRAGMA foreign_keys = ON")
+            db.execute("PRAGMA busy_timeout = 30000")
+            db.execute("PRAGMA synchronous = NORMAL")
+            db.execute("PRAGMA cache_size = -4000")
+            db.execute("PRAGMA temp_store = MEMORY")
             if audit:
                 db.execute("CREATE TABLE IF NOT EXISTS operations (time TEXT, maintainer INTEGER, feedback_id TEXT, status TEXT, visibility TEXT)")
             else:
@@ -236,14 +243,24 @@ class FeedbackService:
         visibility = "pending" if cleaned else "public"
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            size = db.execute("SELECT coalesce(sum(length(data)),0) FROM attachments").fetchone()[0]
-            count = db.execute("SELECT count(*) FROM feedback").fetchone()[0]
-            if size + sum(len(i[1]) for i in cleaned) > MAX_STORAGE_BYTES or count >= 50000:
+            with self._lock:
+                size = self._cached_size
+                count = self._cached_count
+            if size is None or count is None:
+                size = db.execute("SELECT coalesce(sum(length(data)),0) FROM attachments").fetchone()[0]
+                count = db.execute("SELECT count(*) FROM feedback").fetchone()[0]
+            new_bytes = sum(len(i[1]) for i in cleaned)
+            if size + new_bytes > MAX_STORAGE_BYTES or count >= 50000:
+                with self._lock:
+                    self._cached_size = size
+                    self._cached_count = count
                 raise ApiError(507, "FEEDBACK_QUOTA", "反馈存储空间不足，请联系维护人员。")
             db.execute("INSERT INTO feedback VALUES (?,?,?,?,?,?,?,?,?)", (feedback_id, kind, category, title, description, STATUSES[kind][0], stamp, stamp, visibility))
             for _, image, w, h in cleaned:
                 db.execute("INSERT INTO attachments VALUES (?,?,?,?,?)", (secrets.token_hex(16), feedback_id, w, h, image))
-            # Return confirmation without echoing potentially identifying image bytes.
+            with self._lock:
+                self._cached_size = size + new_bytes
+                self._cached_count = count + 1
         return {"feedback_id": feedback_id, "pending_review": visibility == "pending"}
 
     def attachment(self, token, attachment_id):

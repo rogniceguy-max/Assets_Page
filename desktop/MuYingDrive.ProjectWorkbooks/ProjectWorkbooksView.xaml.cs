@@ -384,7 +384,8 @@ public partial class ProjectWorkbooksView : UserControl
                         Model.Document?.File.ProjectId ?? RequireProject(),
                         Path.GetFileName(path),
                         Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" : "image/jpeg",
-                        source));
+                        source,
+                        row.Row.AssetFolderPath ?? (string.IsNullOrEmpty(row.Row.Category) ? null : $"{row.Row.Category}/{row.Row.Name}")));
                 }
                 var allIds = row.Row.CandidateImages.Select(a => a.Id).Concat(assets.Select(a => a.Id)).ToList();
                 await UpdateImagesWithReasonAsync(row, assets.First().Id, allIds);
@@ -430,7 +431,8 @@ public partial class ProjectWorkbooksView : UserControl
                     Model.Document?.File.ProjectId ?? RequireProject(),
                     Path.GetFileName(path),
                     Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" : "image/jpeg",
-                    source));
+                    source,
+                    row.Row.AssetFolderPath ?? (string.IsNullOrEmpty(row.Row.Category) ? null : $"{row.Row.Category}/{row.Row.Name}")));
             }
             var allIds = row.Row.CandidateImages.Select(a => a.Id).Concat(assets.Select(a => a.Id)).ToList();
             await UpdateImagesWithReasonAsync(row, row.Row.SelectedImage?.Id, allIds);
@@ -473,7 +475,12 @@ public partial class ProjectWorkbooksView : UserControl
             foreach (var path in paths)
             {
                 await using var source = File.OpenRead(path);
-                assets.Add(await Model.Service.UploadProjectImageAsync(Model.Document?.File.ProjectId ?? RequireProject(), Path.GetFileName(path), Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" : "image/jpeg", source));
+                assets.Add(await Model.Service.UploadProjectImageAsync(
+                    Model.Document?.File.ProjectId ?? RequireProject(),
+                    Path.GetFileName(path),
+                    Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" : "image/jpeg",
+                    source,
+                    row.Row.AssetFolderPath ?? (string.IsNullOrEmpty(row.Row.Category) ? null : $"{row.Row.Category}/{row.Row.Name}")));
             }
             await UpdateImagesWithReasonAsync(row, selected ? assets.Single().Id : row.Row.SelectedImage?.Id,
                 selected ? row.Row.CandidateImages.Select(a => a.Id).Concat(new[] { assets.Single().Id }) : row.Row.CandidateImages.Select(a => a.Id).Concat(assets.Select(a => a.Id)));

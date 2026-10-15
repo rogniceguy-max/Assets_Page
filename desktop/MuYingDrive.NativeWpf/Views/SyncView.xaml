@@ -66,18 +66,47 @@
                         <TextBlock Text="选择项目" FontSize="{StaticResource Typography.FontSize.SmallTitle}" FontWeight="SemiBold"
                                    Foreground="{DynamicResource Brush.Text.Primary}" Margin="0,0,0,12" />
                         <ComboBox ItemsSource="{Binding Projects}" SelectedItem="{Binding SelectedProject}"
+                                  DisplayMemberPath="Name"
                                   MinWidth="280" MaxWidth="380" HorizontalAlignment="Left"
-                                  AutomationProperties.Name="选择项目">
-                            <ComboBox.ItemTemplate>
-                                <DataTemplate>
-                                    <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
-                                </DataTemplate>
-                            </ComboBox.ItemTemplate>
-                        </ComboBox>
+                                  AutomationProperties.Name="选择项目" />
                     </StackPanel>
                 </Border>
 
-                <!-- Section 2: Episode Multi-Selection -->
+                <!-- Section 2: Workbook Selection -->
+                <Border Background="{DynamicResource Brush.Surface.Panel}" BorderBrush="{DynamicResource Brush.Border.Subtle}"
+                        BorderThickness="1" CornerRadius="{StaticResource CornerRadius.Card}" Padding="24,20" Margin="0,0,0,20">
+                    <StackPanel>
+                        <TextBlock Text="选择节拍表" FontSize="{StaticResource Typography.FontSize.SmallTitle}" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource Brush.Text.Primary}" Margin="0,0,0,12" />
+                        <ComboBox ItemsSource="{Binding Workbooks}" SelectedItem="{Binding SelectedWorkbook}"
+                                  DisplayMemberPath="Name"
+                                  MinWidth="280" MaxWidth="380" HorizontalAlignment="Left"
+                                  AutomationProperties.Name="选择节拍表" />
+
+                        <TextBlock Text="正在加载项目节拍表..." Foreground="{DynamicResource Brush.Text.Secondary}"
+                                   Margin="0,8" Visibility="{Binding IsLoadingWorkbooks, Converter={StaticResource BoolToVisibility}}" />
+
+                        <TextBlock Text="该项目暂无节拍表工作簿" Foreground="{DynamicResource Brush.Text.Secondary}"
+                                   Margin="0,8">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <MultiDataTrigger>
+                                            <MultiDataTrigger.Conditions>
+                                                <Condition Binding="{Binding Workbooks.Count}" Value="0" />
+                                                <Condition Binding="{Binding IsLoadingWorkbooks}" Value="False" />
+                                            </MultiDataTrigger.Conditions>
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </MultiDataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+                </Border>
+
+                <!-- Section 3: Episode Multi-Selection -->
                 <Border Background="{DynamicResource Brush.Surface.Panel}" BorderBrush="{DynamicResource Brush.Border.Subtle}"
                         BorderThickness="1" CornerRadius="{StaticResource CornerRadius.Card}" Padding="24,20" Margin="0,0,0,20">
                     <StackPanel>
@@ -100,10 +129,10 @@
                             </StackPanel>
                         </Grid>
 
-                        <TextBlock Text="正在加载项目集数..." Foreground="{DynamicResource Brush.Text.Secondary}"
+                        <TextBlock Text="正在加载集数..." Foreground="{DynamicResource Brush.Text.Secondary}"
                                    Margin="0,8" Visibility="{Binding IsLoadingEpisodes, Converter={StaticResource BoolToVisibility}}" />
 
-                        <TextBlock Text="该项目暂无可同步的集数节拍表" Foreground="{DynamicResource Brush.Text.Secondary}"
+                        <TextBlock Text="该节拍表暂无集数或分表" Foreground="{DynamicResource Brush.Text.Secondary}"
                                    Margin="0,8">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">

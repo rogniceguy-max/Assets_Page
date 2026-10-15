@@ -532,8 +532,27 @@ class NasWorkflowServices:
         return {"items": items[:page_size], "next_cursor": None}
 
     def upload_image_stream(self, actor: Any, name: str, media_type: str, source: BinaryIO,
-                            length: int, project_id: Any) -> dict:
-        raise _not_implemented()
+                            length: int, project_id: Any, folder_id: str | None = None,
+                            folder_path: str | None = None) -> dict:
+        directory = _resolve_project(self._root, project_id)
+        relative_folder = folder_path.replace("\\", "/").strip("/") if folder_path else "_uploads"
+        target_dir = (directory / relative_folder).resolve()
+        try:
+            target_dir.relative_to(directory.resolve())
+        except ValueError:
+            raise ApiFault(400, "INVALID_PATH", "素材存储路径无效。")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = Path(name).name.strip()
+        dest = target_dir / safe_name
+        with open(dest, "wb") as f:
+            if length >= 0:
+                f.write(source.read(length))
+            else:
+                f.write(source.read())
+        rel_path = f"{relative_folder}/{safe_name}"
+        return {"id": _encode_asset_id(project_id, rel_path), "name": Path(name).stem, "version": 1,
+                "media_type": media_type, "width": 0, "height": 0, "project_id": str(project_id),
+                "category": relative_folder.split("/")[0], "variant": None, "revision_label": None}
 
     def image_content_stream(self, actor: Any, asset_id: str, thumbnail: bool):
         from .workflow_services import StreamAsset

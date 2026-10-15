@@ -63,25 +63,40 @@ class SqliteProjectWorkbookStore:
     def __init__(self, root: Path, db_path: Path | str, provisioner: Any = None) -> None:
         self._root = Path(root)
         self._db_path = Path(db_path)
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._provisioner = provisioner
         self._events = threading.Condition()
+        self._local = threading.local()
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self._db_path, timeout=30, isolation_level=None)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA cache_size=-8000")
+        conn.execute("PRAGMA temp_store=MEMORY")
         return conn
 
     @contextmanager
     def _reading(self) -> Iterator[sqlite3.Connection]:
-        conn = self._connect()
+        depth = getattr(self._local, "depth", 0)
+        self._local.depth = depth + 1
+        if depth == 0:
+            self._local.conn = self._connect()
         try:
-            yield conn
+            yield self._local.conn
         finally:
-            conn.close()
+            self._local.depth = max(0, getattr(self._local, "depth", 1) - 1)
+            if self._local.depth == 0:
+                conn = getattr(self._local, "conn", None)
+                self._local.conn = None
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
@@ -97,8 +112,10 @@ class SqliteProjectWorkbookStore:
             conn.close()
 
     def _init_db(self) -> None:
-        with self._reading() as conn:
+        conn = self._connect()
+        try:
             conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS projects (
                     id TEXT PRIMARY KEY,
@@ -245,6 +262,8 @@ class SqliteProjectWorkbookStore:
                 conn.execute("ALTER TABLE workbook_rows ADD COLUMN deleted_at TEXT")
             if "deleted_by" not in row_columns:
                 conn.execute("ALTER TABLE workbook_rows ADD COLUMN deleted_by TEXT")
+        finally:
+            conn.close()
 
     def _signal_change(self) -> None:
         with self._events:
@@ -305,6 +324,19 @@ class SqliteProjectWorkbookStore:
             raise
         except Exception as error:
             raise ApiFault(503, "STORAGE_UNAVAILABLE", "项目数据库暂不可用。") from error
+
+    def delete_project_record(self, project_id: str) -> None:
+        try:
+            with self._writing() as conn:
+                row = conn.execute("SELECT id FROM projects WHERE id=?", (project_id,)).fetchone()
+                if row:
+                    real_id = row["id"]
+                    conn.execute("DELETE FROM workbook_rows WHERE sheet_id IN (SELECT id FROM sheets WHERE workbook_id IN (SELECT id FROM workbooks WHERE project_id=?))", (real_id,))
+                    conn.execute("DELETE FROM sheets WHERE workbook_id IN (SELECT id FROM workbooks WHERE project_id=?)", (real_id,))
+                    conn.execute("DELETE FROM workbooks WHERE project_id=?", (real_id,))
+                    conn.execute("DELETE FROM projects WHERE id=?", (real_id,))
+        except Exception:
+            pass
 
     def _project(self, project_id: str) -> tuple[sqlite3.Row, Path]:
         with self._reading() as conn:
@@ -590,8 +622,8 @@ class SqliteProjectWorkbookStore:
     def list_images_legacy(self, actor: Any) -> list[dict[str, Any]]:
         raise ApiFault(422, "MISSING_PROJECT", "素材检索需要指定项目。")
 
-    def upload_image(self, actor: Any, name: str, media_type: str, data: bytes) -> dict[str, Any]:
-        raise ApiFault(503, "STORAGE_UNAVAILABLE", "图片上传服务尚未接入。")
+    def upload_image(self, actor: Any, name: str, media_type: str, data: bytes, project_id: str | None = None) -> dict[str, Any]:
+        return self.upload_image_stream(actor, name, media_type, io.BytesIO(data), len(data), project_id)
 
     def image_content(self, actor: Any, asset_id: str, thumbnail: bool) -> BinaryAsset:
         stream = self.image_content_stream(actor, asset_id, thumbnail)
@@ -1511,8 +1543,88 @@ class SqliteProjectWorkbookStore:
             "variant": None, "revision_label": None} for row in rows], "next_cursor": None}
 
     def upload_image_stream(self, actor: Any, name: str, media_type: str, source: Any,
-                            length: int, project_id: str | None) -> dict[str, Any]:
-        raise ApiFault(503, "STORAGE_UNAVAILABLE", "图片上传服务尚未接入。")
+                            length: int, project_id: str | None,
+                            folder_id: str | None = None,
+                            folder_path: str | None = None) -> dict[str, Any]:
+        self._check_writable(actor)
+        if not project_id:
+            raise ApiFault(422, "MISSING_PROJECT", "上传素材需要指定项目。")
+        _, project_dir = self._project(project_id)
+
+        relative_folder: str | None = None
+        if folder_id:
+            with self._reading() as conn:
+                folder_row = conn.execute(
+                    "SELECT relative_path FROM asset_folders WHERE id=? AND project_id=?",
+                    (folder_id, project_id)).fetchone()
+            if folder_row:
+                relative_folder = folder_row["relative_path"]
+
+        if not relative_folder and folder_path:
+            norm_folder = Path(folder_path.replace("\\", "/")).as_posix().strip("/")
+            if norm_folder and not any(part in {"", ".", ".."} for part in Path(norm_folder).parts):
+                relative_folder = norm_folder
+                with self._transaction() as conn:
+                    folder_id = self._ensure_folder_tx(conn, project_id, relative_folder)
+
+        if not relative_folder:
+            relative_folder = "_uploads"
+            with self._transaction() as conn:
+                folder_id = self._ensure_folder_tx(conn, project_id, relative_folder)
+
+        target_dir = (project_dir / Path(relative_folder)).resolve()
+        try:
+            target_dir.relative_to(project_dir.resolve())
+        except ValueError:
+            raise ApiFault(400, "INVALID_PATH", "素材存储路径无效。")
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        safe_name = Path(name).name.strip()
+        if not safe_name or any(c in safe_name for c in '/\\:') or any(ord(c) < 32 for c in safe_name):
+            raise ApiFault(422, "INVALID_NAME", "图片文件名无效。")
+
+        dest_file = target_dir / safe_name
+        if dest_file.exists():
+            stem = dest_file.stem
+            suffix = dest_file.suffix
+            safe_name = f"{stem}_{_uid()[:8]}{suffix}"
+            dest_file = target_dir / safe_name
+
+        try:
+            with open(dest_file, "wb") as out:
+                if length >= 0:
+                    remaining = length
+                    while remaining > 0:
+                        chunk = source.read(min(65536, remaining))
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                        remaining -= len(chunk)
+                else:
+                    while True:
+                        chunk = source.read(65536)
+                        if not chunk:
+                            break
+                        out.write(chunk)
+        except OSError as err:
+            if dest_file.exists():
+                dest_file.unlink(missing_ok=True)
+            raise ApiFault(503, "STORAGE_UNAVAILABLE", "保存图片文件失败。") from err
+
+        image_id = _uid()
+        rel_path = f"{relative_folder}/{safe_name}"
+        now = _now()
+        legacy_image_id = _legacy_asset_id(str(project_dir.stat().st_ino), rel_path)
+        with self._transaction() as conn:
+            conn.execute("""INSERT INTO image_assets
+                (id, project_id, folder_id, relative_path, file_name, display_name, media_type, active, legacy_image_id, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)""",
+                (image_id, project_id, folder_id, rel_path, safe_name, Path(name).stem, media_type, legacy_image_id, now))
+            self._event_tx(conn, project_id, "", "image", image_id, ["created"])
+
+        self._signal_change()
+        return self.image_metadata(actor, image_id)
 
     @staticmethod
     def _image_payload(image: sqlite3.Row) -> dict[str, Any]:
@@ -1606,10 +1718,14 @@ class SqliteProjectWorkbookStore:
             folder_id = _dict(row["data"]).get("folder_id")
             if conn.execute("SELECT 1 FROM filesystem_operations WHERE row_id=? AND state='pending'", (row_id,)).fetchone():
                 raise ApiFault(409, "CONFLICT", "该资产目录正在移动，请稍后重试。")
+            relink_images: list[str] = []
             for image_id in filter(None, values):
-                if not conn.execute("SELECT 1 FROM image_assets WHERE id=? AND project_id=? AND active=1 AND folder_id=?",
-                                    (image_id, project_row["project_id"], folder_id)).fetchone():
+                img = conn.execute("SELECT * FROM image_assets WHERE id=? AND project_id=? AND active=1",
+                                   (image_id, project_row["project_id"])).fetchone()
+                if not img:
                     raise ApiFault(422, "INVALID_IMAGE", "图片不属于当前项目或已不存在。")
+                if folder_id and img["folder_id"] != folder_id:
+                    relink_images.append(image_id)
         old_selection = _dict(row["data"]).get("image_selection") or {}
         new_selection = {"selected_image_id": selected_image_id,
                          "candidate_image_ids": candidate_image_ids,
@@ -1618,6 +1734,10 @@ class SqliteProjectWorkbookStore:
                          {"image_selection": new_selection}, "asset_review")
         user = actor.get("user", {}) if isinstance(actor, dict) else {}
         with self._transaction() as conn:
+            if folder_id and relink_images:
+                for img_id in relink_images:
+                    conn.execute("UPDATE image_assets SET folder_id=?, updated_at=? WHERE id=?",
+                                 (folder_id, _now(), img_id))
             conn.execute("""INSERT INTO selection_history
                 (id,workbook_id,row_id,previous_image_id,image_id,user_name,reason,created_at)
                 VALUES(?,?,?,?,?,?,?,?)""",

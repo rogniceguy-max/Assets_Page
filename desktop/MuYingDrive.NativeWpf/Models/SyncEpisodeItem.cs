@@ -11,6 +11,7 @@ public sealed class SyncEpisodeItem : ObservableObject
 
     public required string Name { get; init; }
     public required string FileId { get; init; }
+    public string? SheetId { get; init; }
 
     public bool IsSelected
     {

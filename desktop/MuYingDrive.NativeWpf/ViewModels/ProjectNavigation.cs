@@ -86,6 +86,8 @@ public sealed class ProjectNode : ObservableObject
 
     /// <summary>Whether activating this row is meant to open something.</summary>
     public bool IsOpenable => Kind is ProjectNodeKind.Workbook or ProjectNodeKind.MediaGroup or ProjectNodeKind.Folder;
+    public bool IsWorkbook => Kind == ProjectNodeKind.Workbook;
+    public bool IsProject => Kind == ProjectNodeKind.Project;
 }
 
 /// <summary>Builds the tree the sidebar shows, and names its groups.</summary>

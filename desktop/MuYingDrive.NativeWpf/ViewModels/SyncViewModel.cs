@@ -20,8 +20,10 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
     private readonly EpisodeSyncService? _syncService;
 
     private ProjectInfo? _selectedProject;
+    private ProjectFile? _selectedWorkbook;
     private string _localDirectory = string.Empty;
     private bool _isLoadingProjects;
+    private bool _isLoadingWorkbooks;
     private bool _isLoadingEpisodes;
     private string _validationMessage = string.Empty;
 
@@ -58,6 +60,7 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
         }
 
         Projects = [];
+        Workbooks = [];
         Episodes = [];
 
         BrowseLocalDirectoryCommand = new RelayCommand(_ => BrowseLocalDirectory());
@@ -71,6 +74,7 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
     }
 
     public ObservableCollection<ProjectInfo> Projects { get; }
+    public ObservableCollection<ProjectFile> Workbooks { get; }
     public ObservableCollection<SyncEpisodeItem> Episodes { get; }
 
     public ProjectInfo? SelectedProject
@@ -81,7 +85,20 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
             if (SetProperty(ref _selectedProject, value))
             {
                 SaveConfig();
-                _ = LoadEpisodesAsync(value?.Id);
+                _ = LoadWorkbooksAsync(value?.Id);
+            }
+        }
+    }
+
+    public ProjectFile? SelectedWorkbook
+    {
+        get => _selectedWorkbook;
+        set
+        {
+            if (SetProperty(ref _selectedWorkbook, value))
+            {
+                SaveConfig();
+                _ = LoadEpisodesAsync(value);
             }
         }
     }
@@ -105,6 +122,12 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
         private set => SetProperty(ref _isLoadingProjects, value);
     }
 
+    public bool IsLoadingWorkbooks
+    {
+        get => _isLoadingWorkbooks;
+        private set => SetProperty(ref _isLoadingWorkbooks, value);
+    }
+
     public bool IsLoadingEpisodes
     {
         get => _isLoadingEpisodes;
@@ -125,7 +148,7 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
 
     public string ToggleButtonLabel => IsWatching ? "停止同步" : "开启同步";
 
-    public bool CanSyncNow => !IsSyncing && SelectedProject != null && Episodes.Any(e => e.IsSelected) && !string.IsNullOrWhiteSpace(LocalDirectory);
+    public bool CanSyncNow => !IsSyncing && SelectedProject != null && SelectedWorkbook != null && Episodes.Any(e => e.IsSelected) && !string.IsNullOrWhiteSpace(LocalDirectory);
 
     public ICommand BrowseLocalDirectoryCommand { get; }
     public ICommand SelectAllEpisodesCommand { get; }
@@ -165,57 +188,86 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
         }
     }
 
-    public async Task LoadEpisodesAsync(string? projectId)
+    public async Task LoadWorkbooksAsync(string? projectId)
+    {
+        Workbooks.Clear();
+        Episodes.Clear();
+        SelectedWorkbook = null;
+        if (_workbooks == null || string.IsNullOrWhiteSpace(projectId)) return;
+
+        IsLoadingWorkbooks = true;
+        try
+        {
+            var files = await _workbooks.ListProjectFilesAsync(projectId);
+            var beatFiles = files.Where(f =>
+                f.TemplateKind == "scene_beats" ||
+                f.TemplateKind == "scene_review" ||
+                f.Name.Contains("节拍", StringComparison.OrdinalIgnoreCase)).ToList();
+
+            var displayFiles = beatFiles.Count > 0 ? beatFiles : files.ToList();
+            foreach (var file in displayFiles)
+            {
+                Workbooks.Add(file);
+            }
+
+            var savedWbId = _savedWorkbookId;
+            if (!string.IsNullOrWhiteSpace(savedWbId) && Workbooks.FirstOrDefault(w => w.Id == savedWbId) is { } matched)
+            {
+                SelectedWorkbook = matched;
+            }
+            else if (Workbooks.Count > 0)
+            {
+                SelectedWorkbook = Workbooks[0];
+            }
+        }
+        catch
+        {
+        }
+        finally
+        {
+            IsLoadingWorkbooks = false;
+            SyncNowCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    public async Task LoadEpisodesAsync(ProjectFile? workbook)
     {
         Episodes.Clear();
-        if (_workbooks == null || string.IsNullOrWhiteSpace(projectId)) return;
+        if (_workbooks == null || workbook == null) return;
 
         IsLoadingEpisodes = true;
         try
         {
-            var files = await _workbooks.ListProjectFilesAsync(projectId);
-            var sceneFiles = files.Where(f =>
-                f.TemplateKind == "scene_review" ||
-                f.TemplateKind == "scene_beats" ||
-                f.Name.Contains("节拍表", StringComparison.OrdinalIgnoreCase)).ToList();
-
-            if (sceneFiles.Count == 0)
+            var doc = await _workbooks.ViewModel.Service.OpenAsync(workbook.Id);
+            if (doc?.Sheets != null)
             {
-                // Fallback: create default episode row if none found
-                sceneFiles = files.ToList();
-            }
+                var sceneSheets = doc.Sheets.Where(s =>
+                    s.Kind == "scene_beats" ||
+                    s.Kind == "scene_review" ||
+                    s.SceneRows.Count > 0).ToList();
+                var sheets = sceneSheets.Count > 0 ? sceneSheets : doc.Sheets;
 
-            var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var file in sceneFiles)
-            {
-                var epName = file.Name
-                    .Replace("_场景节拍表", "", StringComparison.OrdinalIgnoreCase)
-                    .Replace("_节拍表", "", StringComparison.OrdinalIgnoreCase)
-                    .Replace(".xlsx", "", StringComparison.OrdinalIgnoreCase)
-                    .Trim();
-
-                if (string.IsNullOrWhiteSpace(epName) || epName.Equals("节拍表", StringComparison.OrdinalIgnoreCase))
-                    epName = "第1集";
-
-                if (!seenNames.Add(epName)) continue;
-
-                var isSelected = _savedEpisodes.Contains(epName) || _savedEpisodes.Count == 0;
-                var item = new SyncEpisodeItem
+                foreach (var sheet in sheets)
                 {
-                    Name = epName,
-                    FileId = file.Id,
-                    IsSelected = isSelected
-                };
-                item.PropertyChanged += (s, e) =>
-                {
-                    if (e.PropertyName == nameof(SyncEpisodeItem.IsSelected))
+                    var isSelected = _savedEpisodes.Contains(sheet.Name) || _savedEpisodes.Count == 0;
+                    var item = new SyncEpisodeItem
                     {
-                        SaveConfig();
-                        ClearValidation();
-                        SyncNowCommand.RaiseCanExecuteChanged();
-                    }
-                };
-                Episodes.Add(item);
+                        Name = sheet.Name,
+                        FileId = workbook.Id,
+                        SheetId = sheet.Id,
+                        IsSelected = isSelected
+                    };
+                    item.PropertyChanged += (s, e) =>
+                    {
+                        if (e.PropertyName == nameof(SyncEpisodeItem.IsSelected))
+                        {
+                            SaveConfig();
+                            ClearValidation();
+                            SyncNowCommand.RaiseCanExecuteChanged();
+                        }
+                    };
+                    Episodes.Add(item);
+                }
             }
 
             SyncNowCommand.RaiseCanExecuteChanged();
@@ -272,6 +324,12 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
                 return;
             }
 
+            if (SelectedWorkbook == null)
+            {
+                ValidationMessage = "请先选择项目节拍表。";
+                return;
+            }
+
             var selectedEpisodes = Episodes.Where(e => e.IsSelected).ToList();
             if (selectedEpisodes.Count == 0)
             {
@@ -299,7 +357,7 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
     {
         try
         {
-            if (_syncService == null || SelectedProject == null) return;
+            if (_syncService == null || SelectedProject == null || SelectedWorkbook == null) return;
             var selectedEpisodes = Episodes.Where(e => e.IsSelected).ToList();
             if (selectedEpisodes.Count == 0 || string.IsNullOrWhiteSpace(LocalDirectory)) return;
 
@@ -325,6 +383,7 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
     }
 
     private string? _savedProjectId;
+    private string? _savedWorkbookId;
     private readonly HashSet<string> _savedEpisodes = new(StringComparer.OrdinalIgnoreCase);
 
     private void LoadSavedConfig()
@@ -339,6 +398,8 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
                 _localDirectory = dirElem.GetString() ?? string.Empty;
             if (root.TryGetProperty("ProjectId", out var idElem))
                 _savedProjectId = idElem.GetString();
+            if (root.TryGetProperty("WorkbookId", out var wbElem))
+                _savedWorkbookId = wbElem.GetString();
             if (root.TryGetProperty("Episodes", out var epElem) && epElem.ValueKind == JsonValueKind.Array)
             {
                 foreach (var item in epElem.EnumerateArray())
@@ -363,6 +424,7 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
             {
                 LocalDirectory = _localDirectory,
                 ProjectId = SelectedProject?.Id,
+                WorkbookId = SelectedWorkbook?.Id,
                 Episodes = Episodes.Where(e => e.IsSelected).Select(e => e.Name).ToArray()
             };
 

@@ -251,6 +251,22 @@ class WorkbookRouteTests(unittest.TestCase):
         self.assertEqual("imported.xlsx", imported["name"])
         self.assertTrue((self.root / "空项目" / "imported.xlsx").is_file())
 
+    def test_upload_image_asset_and_relink_to_asset_row(self):
+        from urllib.parse import quote
+        by_name = {item["name"]: item["id"] for item in self.projects()}
+        project_id = by_name["空项目"]
+        fake_png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4"
+        status, _, response = self.request(
+            "POST", "/api/v2/project-workbooks/image-assets", body=fake_png,
+            content_type="image/png",
+            extra_headers={"X-Project-Id": project_id, "X-File-Name": "uploaded_hero.png",
+                           "X-Folder-Path": quote("角色/孟婆")})
+        self.assertEqual(201, status, response[:200])
+        payload = json.loads(response.decode("utf-8"))
+        self.assertEqual("uploaded_hero", payload["name"])
+        self.assertEqual(project_id, payload["project_id"])
+        self.assertTrue((self.root / "空项目" / "角色" / "孟婆" / "uploaded_hero.png").is_file())
+
     def test_the_host_sends_its_own_404_for_paths_it_does_not_own(self):
         self.assertEqual(404, self.request("GET", "/api/v2/not-a-workbook-route")[0])
 

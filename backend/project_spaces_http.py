@@ -37,6 +37,11 @@ def dispatch(handler, service, token, method: str) -> bool:
                 if not isinstance(payload, dict):
                     raise ApiError(422, "INVALID_NAME", "请求内容无效。")
                 handler._send_json(201, service.create_project(actor, payload.get("name")))
+        elif method == "DELETE" and url.path.startswith(ROOT + "/"):
+            project_id = url.path[len(ROOT) + 1:].strip()
+            if not project_id:
+                raise ApiError(404, "NOT_FOUND", "项目不存在。")
+            handler._send_json(200, service.delete_project(actor, project_id))
         else:
             raise ApiError(404, "NOT_FOUND", "接口不存在。")
     except ApiError as error:

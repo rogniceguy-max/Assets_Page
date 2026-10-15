@@ -117,7 +117,7 @@ public interface IProjectWorkbookService
     Task<ImageSearchPage> SearchImagesAsync(string projectId, string? q = null, string? category = null,
         string? cursor = null, int pageSize = 40, CancellationToken ct = default);
     Task<ImageAsset> GetProjectImageAsync(string imageId, CancellationToken ct = default);
-    Task<ImageAsset> UploadProjectImageAsync(string projectId, string fileName, string mediaType, Stream source, CancellationToken ct = default);
+    Task<ImageAsset> UploadProjectImageAsync(string projectId, string fileName, string mediaType, Stream source, string? folderPath = null, CancellationToken ct = default);
     Task<ImageAsset> RenameImageAsync(string imageId, long expectedVersion, string displayName, CancellationToken ct = default);
     Task<AddSheetResponse> AddSheetAsync(string fileId, string sheetName, CancellationToken ct = default);
     Task<ProjectFile> RenameWorkbookAsync(string fileId, long expectedNameVersion, string displayName, CancellationToken ct = default);

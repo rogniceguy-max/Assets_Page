@@ -231,9 +231,6 @@ def create_handler(app: V2Application, *,
             if project_spaces is not None and dispatch_project_spaces(
                     self, project_spaces, _bearer_token(self.headers), "GET"):
                 return
-            if project_spaces is not None and dispatch_project_spaces(
-                    self, project_spaces, _bearer_token(self.headers), "POST"):
-                return
             if project_workbooks is not None and dispatch_project_workbooks(self, project_workbooks):
                 return
             path = urlsplit(self.path).path
@@ -269,6 +266,9 @@ def create_handler(app: V2Application, *,
             self._send_error(ApiError(404, "NOT_FOUND", "接口不存在。"))
 
         def do_DELETE(self) -> None:  # noqa: N802
+            if project_spaces is not None and dispatch_project_spaces(
+                    self, project_spaces, _bearer_token(self.headers), "DELETE"):
+                return
             if project_workbooks is not None and dispatch_project_workbooks(self, project_workbooks):
                 return
             if not dispatch_visitor(self, visitor, "DELETE"):
@@ -283,6 +283,9 @@ def create_handler(app: V2Application, *,
             if dispatch_feedback(self, feedback, _bearer_token(self.headers), "POST"):
                 return
             if dispatch_visitor(self, visitor, "POST"):
+                return
+            if project_spaces is not None and dispatch_project_spaces(
+                    self, project_spaces, _bearer_token(self.headers), "POST"):
                 return
             # Wired so the module's create and import routes answer the contract's 503 rather
             # than falling through to the host's 404, which would read as "no such endpoint".

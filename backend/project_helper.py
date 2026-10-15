@@ -228,6 +228,28 @@ def create_project(request: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "name": name, "path": str(final)}
 
 
+def delete_project(request: dict[str, Any]) -> dict[str, Any]:
+    """Moves the project folder into .trash with a timestamp."""
+    name = _validate_name(request.get("name"))
+    root = PROJECT_ROOT
+    if not root.is_dir():
+        raise HelperFailure("ROOT_UNAVAILABLE", "项目根目录不可用，请联系管理员。")
+    project_dir = root / name
+    if not project_dir.is_dir() or project_dir.is_symlink():
+        raise HelperFailure("PROJECT_NOT_FOUND", "项目目录不存在。")
+    trash_dir = root / ".trash"
+    if not trash_dir.exists():
+        owner_uid, owner_gid = _ownership()
+        trash_dir.mkdir(mode=DIRECTORY_MODE)
+        _apply_mode(trash_dir, DIRECTORY_MODE)
+        _apply_ownership(trash_dir, owner_uid, owner_gid)
+    import datetime
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    target = trash_dir / f"{name}_{ts}"
+    os.rename(project_dir, target)
+    return {"ok": True, "name": name, "deleted": True}
+
+
 def move_asset_folder(request: dict[str, Any]) -> dict[str, Any]:
     """Move one asset folder within a project without exposing project-root writes to V2."""
     project_name = _validate_name(request.get("project_name"))
@@ -510,6 +532,8 @@ def handle_request(raw: bytes) -> dict[str, Any]:
         op = request.get("operation")
         if op == "create_project":
             return create_project(request)
+        if op == "delete_project":
+            return delete_project(request)
         if op == "move_asset_folder":
             return move_asset_folder(request)
         if op == "archive_legacy_workbook":

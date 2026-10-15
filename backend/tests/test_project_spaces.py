@@ -254,6 +254,12 @@ class StubProvisioner:
             raise self.error
         return self.result or {"ok": True, "name": name}
 
+    def delete_project(self, name):
+        self.calls.append(name)
+        if self.error is not None:
+            raise self.error
+        return self.result or {"ok": True, "name": name, "deleted": True}
+
 
 class ProjectSpaceServiceTests(unittest.TestCase):
     def setUp(self):
@@ -312,6 +318,14 @@ class ProjectSpaceServiceTests(unittest.TestCase):
         with self.assertRaises(ApiError) as caught:
             service.create_project(None, "孟婆")
         self.assertEqual(503, caught.exception.status)
+
+    def test_delete_project_removes_project(self):
+        service = self._service(StubProvisioner())
+        inode = str((self.root / "孟婆").stat().st_ino)
+        result = service.delete_project(None, inode)
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["deleted"])
+        self.assertEqual("孟婆", result["name"])
 
 
 @unittest.skipUnless(hasattr(socket, "AF_UNIX"),

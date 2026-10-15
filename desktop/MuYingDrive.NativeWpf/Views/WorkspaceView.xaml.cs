@@ -16,4 +16,23 @@ public partial class WorkspaceView : UserControl
             menu.IsOpen = true;
         }
     }
+
+    private void OnProjectNodeContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        if (sender is System.Windows.FrameworkElement { DataContext: ViewModels.ProjectNode node })
+        {
+            if (!node.IsOpenable && !node.IsProject)
+            {
+                e.Handled = true;
+            }
+        }
+    }
+
+    private void OnProjectNodePreviewMouseRightButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (sender is System.Windows.FrameworkElement { DataContext: ViewModels.ProjectNode node })
+        {
+            (DataContext as ViewModels.WorkspaceViewModel)?.SelectProjectNode(node);
+        }
+    }
 }

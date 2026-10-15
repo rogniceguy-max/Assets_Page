@@ -79,6 +79,108 @@ public sealed class WorkspaceViewModel : ObservableObject
         SelectSpaceCommand = new RelayCommand(parameter => _ = SelectSpaceAsync(parameter as string));
         ActivateProjectNodeCommand = new RelayCommand(
             parameter => { if (parameter is ProjectNode node) ActivateProjectNode(node); });
+        OpenProjectNodeCommand = new RelayCommand(
+            parameter => { if (parameter is ProjectNode node) ActivateProjectNode(node); });
+        RenameProjectNodeCommand = new AsyncRelayCommand(async parameter =>
+        {
+            if (parameter is not ProjectNode node || node.Kind != ProjectNodeKind.Workbook) return;
+            if (_projectWorkbooksPage is null) return;
+
+            var stem = System.IO.Path.GetFileNameWithoutExtension(node.Name);
+            var dialog = new TextInputWindow("重命名工作簿", "请输入工作簿的新名称：", node.Name, "确定", stem.Length)
+            {
+                Owner = System.Windows.Application.Current?.MainWindow
+            };
+            if (dialog.ShowDialog() != true) return;
+
+            var newName = dialog.Value.Trim();
+            if (string.IsNullOrWhiteSpace(newName) || string.Equals(newName, node.Name, StringComparison.Ordinal))
+                return;
+            if (!newName.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
+                newName += ".xlsx";
+
+            try
+            {
+                var files = await _projectWorkbooksPage.ListProjectFilesAsync(node.ProjectId);
+                var file = files.FirstOrDefault(f => f.Id == node.Id);
+                var nameVersion = file?.NameVersion ?? 1;
+
+                var updated = await _projectWorkbooksPage.ViewModel.Service.RenameWorkbookAsync(node.Id, nameVersion, newName);
+                if (_projectWorkbooksPage.ViewModel.Document?.File.Id == node.Id)
+                {
+                    await _projectWorkbooksPage.OpenWorkbookAsync(node.ProjectId, node.Id, newName);
+                }
+                await LoadProjectsAsync();
+            }
+            catch (Exception ex)
+            {
+                System.Windows.MessageBox.Show(
+                    ex.Message, "重命名失败",
+                    System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+            }
+        });
+        DeleteWorkbookProjectNodeCommand = new AsyncRelayCommand(async parameter =>
+        {
+            if (parameter is not ProjectNode node || node.Kind != ProjectNodeKind.Workbook) return;
+            if (_projectWorkbooksPage is null) return;
+
+            var confirm = new ConfirmDialog(
+                "删除工作簿",
+                "确定要删除该工作簿吗？\n删除后工作簿将从项目中移除。",
+                [node.Name],
+                "删除")
+            {
+                Owner = System.Windows.Application.Current?.MainWindow
+            };
+            if (confirm.ShowDialog() != true) return;
+
+            try
+            {
+                await _projectWorkbooksPage.ViewModel.Service.DeleteWorkbookAsync(node.Id);
+                if (_projectWorkbooksPage.ViewModel.Document?.File.Id == node.Id)
+                {
+                    _projectWorkbooksPage.ViewModel.Back();
+                }
+                await LoadProjectsAsync();
+            }
+            catch (Exception ex)
+            {
+                System.Windows.MessageBox.Show(
+                    ex.Message, "删除工作簿失败",
+                    System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+            }
+        });
+        DeleteProjectNodeCommand = new AsyncRelayCommand(async parameter =>
+        {
+            if (parameter is not ProjectNode node || node.Kind != ProjectNodeKind.Project) return;
+            if (Session is null || _main.ApiClient is null) return;
+
+            var confirm = new ConfirmDialog(
+                "删除项目",
+                "确定要删除该项目吗？\n项目将被移至备份目录，项目中的工作簿将被移除。",
+                [node.Name],
+                "删除")
+            {
+                Owner = System.Windows.Application.Current?.MainWindow
+            };
+            if (confirm.ShowDialog() != true) return;
+
+            try
+            {
+                await _main.ApiClient.DeleteProjectSpaceAsync(Session.SessionToken, node.Id);
+                if (_projectWorkbooksPage?.ViewModel.Document?.File.ProjectId == node.Id)
+                {
+                    _projectWorkbooksPage.ViewModel.Back();
+                }
+                await LoadProjectsAsync();
+            }
+            catch (Exception ex)
+            {
+                System.Windows.MessageBox.Show(
+                    ex.Message, "删除项目失败",
+                    System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+            }
+        });
         ThemeChangedCommand = new RelayCommand(parameter =>
             _main.ThemeService.SetPreference(parameter as string ?? "跟随系统"));
         ExitCommand = new AsyncRelayCommand(_ => exitAsync());
@@ -91,6 +193,10 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     /// <summary>Activating a row in the 项目 tree.</summary>
     public RelayCommand ActivateProjectNodeCommand { get; }
+    public RelayCommand OpenProjectNodeCommand { get; }
+    public AsyncRelayCommand RenameProjectNodeCommand { get; }
+    public AsyncRelayCommand DeleteWorkbookProjectNodeCommand { get; }
+    public AsyncRelayCommand DeleteProjectNodeCommand { get; }
 
     /// <summary>
     /// Creating a project, or null when nothing can serve it yet.
