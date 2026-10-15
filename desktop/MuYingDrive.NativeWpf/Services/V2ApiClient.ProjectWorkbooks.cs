@@ -61,7 +61,8 @@ public sealed partial class V2ApiClient
         using var client = CreateProjectWorkbookClient();
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(_baseUri, "api/v2/project-spaces"));
         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearerToken);
-        request.Content = JsonContent.Create(new { name });
+        var json = JsonSerializer.Serialize(new { name });
+        request.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
 
         using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
         if (response.IsSuccessStatusCode) return;
