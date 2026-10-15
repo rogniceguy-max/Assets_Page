@@ -7,15 +7,22 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/zsh</string>
-        <string>/Users/muying12345/media_worker/start.sh</string>
+        <string>__DEPLOYMENT_HOME__/media_worker/start.sh</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>MUYING_V2_API_BASE_URI</key>
+        <string></string>
+        <key>MUYING_V2_MEDIA_WORKER_TOKEN</key>
+        <string></string>
+    </dict>
     <key>StandardOutPath</key>
-    <string>/Users/muying12345/Library/Logs/media_worker.log</string>
+    <string>__DEPLOYMENT_HOME__/Library/Logs/media_worker.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/muying12345/Library/Logs/media_worker_error.log</string>
+    <string>__DEPLOYMENT_HOME__/Library/Logs/media_worker_error.log</string>
 </dict>
 </plist>

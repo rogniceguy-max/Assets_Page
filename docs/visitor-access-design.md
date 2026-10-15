@@ -1,4 +1,6 @@
-# 免登录参观访问设计（待实施）
+# 历史文档：免登录参观访问的旧设计（已被后续架构取代）
+
+> 本文记录 2026-10-13 的讨论，不代表当前权限或实现。当前访客使用 SQLite-backed API，只读公共区、影视/文学部门空间和所有项目/工作簿/项目文件；个人空间不可读。文件不经 SMB，访客也不使用独立 NAS 读取进程。请以 [`ARCHITECTURE.md`](../ARCHITECTURE.md)、[`docs/file-storage-v2.md`](file-storage-v2.md) 和 [`docs/handover.md`](handover.md) 为准。
 
 日期：2026-10-13。代码审查基线：`590de46`；工作分支：`codex/ugos-acl-visitor`。
 

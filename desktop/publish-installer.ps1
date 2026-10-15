@@ -10,7 +10,7 @@
     an embedded archive could not be.
 
 .PARAMETER NasClientConfigTemplate
-    A JSON file with ApiBaseUri, CertificateSha256, ShareRoot and (optionally)
+    A JSON file with ApiBaseUri, CertificateSha256 and (optionally)
     CredentialProfile. Keep it on the release machine and out of the repository.
 
 .PARAMETER TlsCertificatePath
@@ -67,7 +67,7 @@ try {
     if (-not [string]::IsNullOrWhiteSpace($TlsCertificatePath)) {
         $configuration.CertificateSha256 = Get-TlsCertificatePin -CertificatePath $TlsCertificatePath
     }
-    foreach ($required in @("ApiBaseUri", "CertificateSha256", "ShareRoot")) {
+    foreach ($required in @("ApiBaseUri", "CertificateSha256")) {
         if ([string]::IsNullOrWhiteSpace($configuration.$required)) {
             throw "The NAS client configuration template is missing '$required'."
         }

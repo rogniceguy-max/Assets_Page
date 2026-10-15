@@ -8,8 +8,7 @@
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
         <DataTemplate DataType="{x:Type vm:FeedbackViewModel}"><views:FeedbackView /></DataTemplate>
-        <!-- The employee workspace and the tour share this shell; the sidebar is driven
-             by data so the tour simply has fewer entries rather than a separate view. -->
+        <!-- All sessions use this shell; unavailable entries are disabled by capability. -->
         <Style x:Key="NavItem" TargetType="Button" BasedOn="{StaticResource Button.Nav}">
             <Style.Triggers>
                 <DataTrigger Binding="{Binding IsSidebarExpanded}" Value="False">
@@ -25,7 +24,7 @@
         <DataTemplate x:Key="NavItemTemplate">
             <Button Style="{StaticResource NavItem}"
                     Command="{Binding DataContext.NavigateCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                    CommandParameter="{Binding Key}" ToolTip="{Binding Label}"
+                    CommandParameter="{Binding Key}" IsEnabled="{Binding IsEnabled}" ToolTip="{Binding ToolTip}"
                     AutomationProperties.Name="{Binding Label}">
                 <StackPanel Orientation="Horizontal">
                     <controls:LucideIcon Icon="{Binding Icon}" Width="18" Height="18" Stroke="{DynamicResource Brush.Text.Secondary}" />
@@ -47,7 +46,7 @@
         <DataTemplate x:Key="SpaceItemTemplate">
             <Button Style="{StaticResource NavItem}"
                     Command="{Binding DataContext.SelectSpaceCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                    CommandParameter="{Binding Key}" ToolTip="{Binding Label}"
+                    CommandParameter="{Binding Key}" IsEnabled="{Binding IsEnabled}" ToolTip="{Binding ToolTip}"
                     AutomationProperties.Name="{Binding Label}">
                 <StackPanel Orientation="Horizontal">
                     <controls:LucideIcon Icon="{Binding Icon}" Width="18" Height="18" Stroke="{DynamicResource Brush.Text.Secondary}" />
@@ -114,6 +113,9 @@
                                         <DataTrigger Binding="{Binding PlacementTarget.DataContext.IsWorkbook, RelativeSource={RelativeSource AncestorType=ContextMenu}}" Value="False">
                                             <Setter Property="Visibility" Value="Collapsed" />
                                         </DataTrigger>
+                                    <DataTrigger Binding="{Binding PlacementTarget.Tag.IsReadOnlySession, RelativeSource={RelativeSource AncestorType=ContextMenu}}" Value="True">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </MenuItem.Style>
@@ -127,6 +129,9 @@
                                         <DataTrigger Binding="{Binding PlacementTarget.DataContext.IsWorkbook, RelativeSource={RelativeSource AncestorType=ContextMenu}}" Value="False">
                                             <Setter Property="Visibility" Value="Collapsed" />
                                         </DataTrigger>
+                                    <DataTrigger Binding="{Binding PlacementTarget.Tag.IsReadOnlySession, RelativeSource={RelativeSource AncestorType=ContextMenu}}" Value="True">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </MenuItem.Style>
@@ -140,6 +145,9 @@
                                         <DataTrigger Binding="{Binding PlacementTarget.DataContext.IsProject, RelativeSource={RelativeSource AncestorType=ContextMenu}}" Value="False">
                                             <Setter Property="Visibility" Value="Collapsed" />
                                         </DataTrigger>
+                                    <DataTrigger Binding="{Binding PlacementTarget.Tag.IsReadOnlySession, RelativeSource={RelativeSource AncestorType=ContextMenu}}" Value="True">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </MenuItem.Style>
@@ -214,6 +222,7 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="项目" VerticalAlignment="Center"
                                FontSize="{StaticResource Typography.FontSize.Caption}"
@@ -228,9 +237,27 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
-                    <Button Grid.Column="1" Style="{StaticResource Button.Ghost}" Width="24" Height="24" Padding="0"
+                    <Button Grid.Column="1" Width="24" Height="24" Padding="0" Margin="0,0,4,0"
+                            Command="{Binding OpenProjectRecycleBinCommand}" ToolTip="已删除的项目和工作簿"
+                            AutomationProperties.Name="打开项目回收站">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource Button.Ghost}">
+                            </Style>
+                        </Button.Style>
+                        <controls:LucideIcon Icon="RotateCcw" Width="15" Height="15" Stroke="{DynamicResource Brush.Text.Secondary}" />
+                    </Button>
+                    <Button Grid.Column="2" Width="24" Height="24" Padding="0"
                             Command="{Binding CreateProjectCommand}" ToolTip="{Binding CreateProjectToolTip}"
                             AutomationProperties.Name="新建项目">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource Button.Ghost}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsReadOnlySession}" Value="True">
+                                        <Setter Property="IsEnabled" Value="False" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
                         <controls:LucideIcon Icon="Plus" Width="15" Height="15" Stroke="{DynamicResource Brush.Text.Secondary}" />
                     </Button>
                 </Grid>
@@ -304,7 +331,7 @@
                 <ComboBox Grid.Column="2" Width="112" Height="32" MinHeight="32" Margin="0,0,14,0"
                           ItemsSource="{Binding ThemeChoices}" SelectedItem="{Binding CurrentTheme, UpdateSourceTrigger=PropertyChanged}"
                           AutomationProperties.Name="主题" />
-                <!-- The tour has no update entry; the button is absent rather than disabled. -->
+                <!-- Same update entry in every session; it is client maintenance, not a data write. -->
                 <Button Grid.Column="3" Style="{StaticResource Button.Ghost}" Width="36" MinWidth="36" Height="36"
                         Padding="0" Margin="0,0,8,0" Command="{Binding InstallUpdateNowCommand}"
                         ToolTip="{Binding UpdateButtonToolTip}" AutomationProperties.Name="{Binding UpdateButtonName}"

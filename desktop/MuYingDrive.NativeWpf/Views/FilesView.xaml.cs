@@ -7,8 +7,8 @@ using System.Windows.Input;
 namespace MuYingDrive.NativeWpf.Views;
 
 /// <summary>
-/// The shared file browser. Driven by <see cref="IFileBrowser"/> so the employee file
-/// page and the visitor tour render exactly the same view.
+/// The shared file browser. Driven by <see cref="IFileBrowser"/> in both employee and
+/// read-only visitor workspaces.
 /// </summary>
 public partial class FilesView : UserControl
 {

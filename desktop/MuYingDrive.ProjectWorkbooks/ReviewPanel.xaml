@@ -7,6 +7,7 @@
  FontFamily="{DynamicResource Typography.FontFamily}" FontSize="13">
  <UserControl.Resources>
   <BooleanToVisibilityConverter x:Key="ReviewBoolVisibility"/>
+  <local:InverseBooleanToVisibilityConverter x:Key="ReviewInverseBoolVisibility"/>
   <Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/></Style>
   <Style TargetType="TextBox">
    <Setter Property="Background" Value="{DynamicResource Brush.Surface.Panel}"/>
@@ -29,7 +30,8 @@
     <StackPanel Visibility="{Binding IsImage, Converter={StaticResource ReviewBoolVisibility}}">
      <Border Background="{DynamicResource Brush.Surface.Panel}" CornerRadius="8" Padding="12"><local:ZoomImageView Source="{Binding Preview}" Height="360"/></Border>
      <TextBlock Text="{Binding ImageError}" Foreground="{DynamicResource Brush.Text.Secondary}" Margin="0,6,0,0"/>
-     <WrapPanel Margin="0,12,0,8" IsEnabled="{Binding Ready}">
+     <WrapPanel Margin="0,12,0,8" IsEnabled="{Binding Ready}"
+                Visibility="{Binding IsReadOnly, Converter={StaticResource ReviewInverseBoolVisibility}}">
       <Button Content="好" Tag="good" Click="OnVote" Style="{DynamicResource Button.Secondary}"/>
       <Button Content="不好" Tag="bad" Click="OnVote" Style="{DynamicResource Button.Secondary}"/>
       <Button Content="撤回评价" Click="OnWithdraw" Style="{DynamicResource Button.Secondary}"/>
@@ -52,7 +54,8 @@
     </ItemsControl>
    </StackPanel>
   </ScrollViewer>
-  <StackPanel Grid.Row="3" IsEnabled="{Binding Ready}">
+  <StackPanel Grid.Row="3" IsEnabled="{Binding Ready}"
+              Visibility="{Binding IsReadOnly, Converter={StaticResource ReviewInverseBoolVisibility}}">
    <TextBlock Text="{Binding ComposerTitle}" Margin="0,0,0,8"/>
    <TextBox Text="{Binding Draft, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="75" MaxHeight="140" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="10"/>
    <WrapPanel x:Name="ActionPanel" Margin="0,10,0,0"><Button Content="{Binding SendLabel}" Click="OnSend" Style="{DynamicResource Button.Primary}" Margin="0,0,8,0"/><Button Content="取消编辑" Click="OnCancelEdit" Visibility="{Binding IsEditing, Converter={StaticResource ReviewBoolVisibility}}" Style="{DynamicResource Button.Secondary}" Margin="0,0,8,0"/></WrapPanel>

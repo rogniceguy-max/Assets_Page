@@ -79,8 +79,13 @@
                     </StackPanel>
 
                     <ProgressBar Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Minimum="0" Maximum="100" Value="{Binding Progress, Mode=OneWay}" Margin="42,14,0,0" VerticalAlignment="Center" Height="4" />
-                    <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Text="{Binding ErrorMessage}" Foreground="{DynamicResource Brush.Status.Danger}"
-                               FontSize="{StaticResource Typography.FontSize.Caption}" Margin="42,8,0,0" TextWrapping="Wrap" />
+                    <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="42,8,0,0">
+                        <TextBlock Text="{Binding ErrorMessage}" Foreground="{DynamicResource Brush.Status.Danger}"
+                                   FontSize="{StaticResource Typography.FontSize.Caption}" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding CommitOutcomeNotice}" Foreground="{DynamicResource Brush.Text.Secondary}"
+                                   FontSize="{StaticResource Typography.FontSize.Caption}" TextWrapping="Wrap"
+                                   Visibility="{Binding CommitOutcomeUnknown, Converter={StaticResource BoolToVisibility}}" />
+                    </StackPanel>
                 </Grid>
             </Border>
         </DataTemplate>

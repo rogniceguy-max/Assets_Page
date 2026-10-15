@@ -37,13 +37,13 @@
                             Command="{Binding RegisterCommand}" IsEnabled="{Binding LoginCommand.CanExecute, FallbackValue=True}" />
                 </StackPanel>
 
-                <!-- Login-free tour: a quiet text link, deliberately not a second primary action. -->
+                <!-- A quiet read-only visitor entry, deliberately not a second primary action. -->
                 <Button Style="{StaticResource Button.Ghost}" Height="28" MinWidth="0" Padding="6,0" Margin="0,8,0,0"
-                        Content="免登录游览"
+                        Content="访客只读访问"
                         FontSize="{StaticResource Typography.FontSize.Caption}"
                         Foreground="{DynamicResource Brush.Text.Secondary}"
-                        Command="{Binding EnterTourCommand}"
-                        AutomationProperties.Name="免登录游览" />
+                        Command="{Binding EnterVisitorCommand}"
+                        AutomationProperties.Name="访客只读访问" />
             </StackPanel>
         </Border>
       </Grid>

@@ -18,18 +18,18 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
     private readonly Uri _root;
     private readonly WorkbookTransportOptions _limits;
     private readonly Func<string>? _getAccountId;
+    private readonly IProjectFileTransfer? _imageTransfer;
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
     private sealed record ApiError(string Code, string Message);
     private sealed record ErrorBody(ApiError? Error = null, string? Message = null);
     private sealed record ItemsEnvelope<T>(List<T> Items);
-    public long MaximumUploadBytes => _limits.MaxUploadBytes;
     public string OperationScope
     {
         get
         {
             var actor = _getAccountId?.Invoke();
             if (string.IsNullOrWhiteSpace(actor) || actor.Any(char.IsControl))
-                throw new InvalidDataException("宿主必须配置当前登录账号的稳定标识，才能安全保存和恢复导入操作。");
+                throw new InvalidDataException("宿主必须配置当前登录账号的稳定标识，才能安全保存和恢复创建操作。");
             LimitedText(actor, 512);
             // Only this digest goes to disk. Never persist a token or expose the underlying account ID.
             return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(_root.AbsoluteUri + "\n" + actor)));
@@ -37,12 +37,14 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
     }
 
     public HttpProjectWorkbookService(HttpClient client, Uri apiRoot, Func<string> getBearerToken,
-        WorkbookTransportOptions? options = null, Func<string>? getAccountId = null)
+        WorkbookTransportOptions? options = null, Func<string>? getAccountId = null,
+        IProjectFileTransfer? imageTransfer = null)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _getBearerToken = getBearerToken ?? throw new ArgumentNullException(nameof(getBearerToken));
         _limits = options ?? new WorkbookTransportOptions(); _limits.Validate();
         _getAccountId = getAccountId;
+        _imageTransfer = imageTransfer;
         if (!apiRoot.IsAbsoluteUri || !string.IsNullOrEmpty(apiRoot.Query) || !string.IsNullOrEmpty(apiRoot.Fragment))
             throw new ArgumentException("接口根地址必须是无查询参数的绝对地址。", nameof(apiRoot));
         _root = new Uri(apiRoot.AbsoluteUri.TrimEnd('/') + "/");
@@ -58,7 +60,7 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
     }
     private static string FileId(string value)
     {
-        if (value is "create" or "import" or "image-assets" or "projects") throw new InvalidDataException("工作簿标识与保留路径冲突。");
+        if (value is "create" or "image-assets" or "projects") throw new InvalidDataException("工作簿标识与保留路径冲突。");
         return Id(value);
     }
     private static void Version(long version)
@@ -68,11 +70,6 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
     private static void Template(string kind)
     {
         if (kind is not ("scene_beats" or "asset_review")) throw new InvalidDataException("仅支持两种模板。");
-    }
-    private static void WorkbookName(string name)
-    {
-        if (!string.Equals(Path.GetExtension(name), ".xlsx", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("项目只接收 .xlsx 文件。");
     }
     private static void ImageType(string mediaType)
     {
@@ -222,64 +219,6 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
         (await ReadAsync<ItemsEnvelope<T>>(HttpMethod.Get, route, null, ct)).Items
             ?? throw new InvalidDataException("接口缺少列表内容。");
 
-    private async Task<T> UploadAsync<T>(string route, string fileName, string mediaType, Stream source,
-        IReadOnlyDictionary<string, string>? extraHeaders, CancellationToken ct)
-    {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        deadline.CancelAfter(_limits.UploadTimeout);
-        // Includes any bounded non-seekable spool, sending, and the complete response in one deadline.
-        using var upload = await WorkbookUploadSource.PrepareAsync(source, _limits.MaxUploadBytes, deadline.Token);
-        using var content = new WorkbookStreamContent(upload.Stream, upload.Length, deadline.Token);
-        content.Headers.ContentType = new MediaTypeHeaderValue(mediaType);
-        content.Headers.ContentLength = upload.Length;
-        using var request = Request(HttpMethod.Post, route, content);
-        var basename = Path.GetFileName(fileName);
-        if (string.IsNullOrWhiteSpace(basename) || basename.Any(char.IsControl)) throw new InvalidDataException("文件名无效。");
-        request.Headers.Add("X-File-Name", Uri.EscapeDataString(basename));
-        if (extraHeaders != null) foreach (var header in extraHeaders) request.Headers.Add(header.Key, Id(header.Value));
-        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
-        await EnsureSuccessAsync(response, deadline.Token);
-        var value = JsonSerializer.Deserialize<T>(await BytesAsync(response.Content, _limits.MaxJsonResponseBytes, deadline.Token), Json)
-            ?? throw new InvalidDataException("接口返回为空。");
-        deadline.Token.ThrowIfCancellationRequested(); return value;
-    }
-    private async Task DownloadToAsync(string route, string destination, CancellationToken ct)
-    {
-        var target = Path.GetFullPath(destination);
-        var directory = Path.GetDirectoryName(target) ?? throw new InvalidDataException("保存路径无效。");
-        var temporary = Path.Combine(directory, ".pwb-" + Guid.NewGuid().ToString("N") + ".tmp");
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        deadline.CancelAfter(_limits.DownloadTimeout);
-        try
-        {
-            using var request = Request(HttpMethod.Get, route, null);
-            request.Headers.Accept.Clear(); request.Headers.Accept.ParseAdd("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-            using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
-            await EnsureSuccessAsync(response, deadline.Token);
-            var mediaType = response.Content.Headers.ContentType?.MediaType?.ToLowerInvariant();
-            if (mediaType is not ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" or "application/octet-stream"))
-                throw new InvalidDataException("接口没有返回工作簿文件，原有文件未被覆盖。");
-            if (response.Content.Headers.ContentLength == 0) throw new InvalidDataException("接口返回空文件。");
-            await using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 81920, FileOptions.Asynchronous))
-            {
-                await CopyBoundedAsync(response.Content, file, _limits.MaxDownloadBytes, deadline.Token);
-                if (file.Length < 4) throw new InvalidDataException("接口返回的工作簿不完整。");
-                await file.FlushAsync(deadline.Token);
-                file.Position = 0;
-                var signature = new byte[4];
-                await file.ReadExactlyAsync(signature.AsMemory(), deadline.Token);
-                if (signature[0] != 0x50 || signature[1] != 0x4b || signature[2] != 0x03 || signature[3] != 0x04)
-                    throw new InvalidDataException("接口没有返回 XLSX 容器，原有文件未被覆盖。");
-                // Full OOXML validation is still the authenticated host adapter's responsibility.
-            }
-            deadline.Token.ThrowIfCancellationRequested();
-            // Same-directory staging: an error never truncates the existing user file.
-            if (File.Exists(target)) File.Replace(temporary, target, null);
-            else File.Move(temporary, target); // A concurrently created target is not overwritten.
-        }
-        finally { if (File.Exists(temporary)) File.Delete(temporary); }
-    }
-
     public Task<IReadOnlyList<ProjectInfo>> ListProjectsAsync(CancellationToken ct = default) => ListAsync<ProjectInfo>("projects", ct);
     public Task<IReadOnlyList<ProjectFile>> ListProjectFilesAsync(string projectId, CancellationToken ct = default) => ListAsync<ProjectFile>("?project_id=" + Id(projectId), ct);
     public async IAsyncEnumerable<ProjectChangeEvent> SubscribeProjectEventsAsync(string projectId,
@@ -338,21 +277,6 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
             : new { template_kind = templateKind, project_id = projectId, operation_id = operationId, name = name.Trim() };
         return ReadAsync<ProjectFile>(HttpMethod.Post, "create", JsonBody(body), ct);
     }
-    public Task<ProjectFile> ImportRevisionAsync(string projectId, string fileName, Stream source, string operationId, string? revisionOf = null, CancellationToken ct = default)
-    {
-        _ = OperationScope;
-        WorkbookName(fileName); _ = Id(projectId); _ = Id(operationId);
-        var headers = new Dictionary<string, string> { ["X-Project-Id"] = projectId, ["X-Operation-Id"] = operationId };
-        if (revisionOf != null) { _ = FileId(revisionOf); headers["X-Revision-Of"] = revisionOf; }
-        return UploadAsync<ProjectFile>("import", fileName, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", source, headers, ct);
-    }
-    public Task<IReadOnlyList<ProjectFile>> ListRevisionsAsync(string fileId, CancellationToken ct = default) => ListAsync<ProjectFile>(FileId(fileId) + "/revisions", ct);
-    public Task DownloadOriginalToAsync(string fileId, string destination, CancellationToken ct = default) => DownloadToAsync(FileId(fileId) + "/original", destination, ct);
-    public Task ExportCurrentAsync(string fileId, long expectedVersion, string destination, CancellationToken ct = default)
-    {
-        Version(expectedVersion);
-        return DownloadToAsync(FileId(fileId) + "/export?expected_version=" + expectedVersion.ToString(CultureInfo.InvariantCulture), destination, ct);
-    }
     public Task<ImageSearchPage> SearchImagesAsync(string projectId, string? q = null, string? category = null, string? cursor = null, int pageSize = 40, CancellationToken ct = default)
     {
         if (pageSize is < 1 or > 100) throw new InvalidDataException("素材每页需为 1–100 张。");
@@ -363,15 +287,71 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
         if (!string.IsNullOrEmpty(cursor)) route += "&cursor=" + Uri.EscapeDataString(cursor);
         return ReadAsync<ImageSearchPage>(HttpMethod.Get, route, null, ct);
     }
-    public Task<ImageAsset> UploadProjectImageAsync(string projectId, string fileName, string mediaType, Stream source, string? folderPath = null, CancellationToken ct = default)
+    public async Task<ImageAsset> UploadProjectImageAsync(string projectId, string fileName, string mediaType, Stream source, string? folderPath = null, CancellationToken ct = default)
     {
         ImageType(mediaType); _ = Id(projectId);
-        var headers = new Dictionary<string, string> { ["X-Project-Id"] = projectId };
-        if (!string.IsNullOrEmpty(folderPath))
+        if (_imageTransfer is null)
+            throw new WorkbookApiException(409, "TRANSFER_REQUIRED", "项目图片必须通过本地传输代理上传。");
+        ArgumentNullException.ThrowIfNull(source);
+        var safeName = Path.GetFileName(fileName);
+        if (string.IsNullOrWhiteSpace(safeName) || safeName.Any(char.IsControl) || safeName.Contains('/') || safeName.Contains('\\'))
+            throw new InvalidDataException("文件名无效。");
+        var temporary = Path.Combine(Path.GetTempPath(), "muying-image-" + Guid.NewGuid().ToString("N") + Path.GetExtension(safeName));
+        try
         {
-            headers["X-Folder-Path"] = folderPath;
+            await using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
+            {
+                var buffer = new byte[128 * 1024];
+                long copied = 0;
+                while (true)
+                {
+                    var count = await source.ReadAsync(buffer, ct).ConfigureAwait(false);
+                    if (count == 0) break;
+                    copied += count;
+                    if (copied > _limits.MaxUploadBytes) throw new InvalidDataException("图片超过当前允许的上传大小。");
+                    await output.WriteAsync(buffer.AsMemory(0, count), ct).ConfigureAwait(false);
+                }
+                await output.FlushAsync(ct).ConfigureAwait(false);
+            }
+            var logicalPath = string.IsNullOrWhiteSpace(folderPath)
+                ? safeName : folderPath.Trim('/', '\\') + "/" + safeName;
+            var uploaded = await _imageTransfer.UploadAsync(projectId, safeName, mediaType, temporary, logicalPath, ct)
+                .ConfigureAwait(false);
+            return new ImageAsset(uploaded.FileId, Path.GetFileNameWithoutExtension(safeName), mediaType, 0, 0)
+            {
+                FileId = uploaded.FileId,
+                CurrentRevisionId = uploaded.RevisionId,
+                LogicalPath = uploaded.LogicalPath,
+                ProjectId = projectId
+            };
         }
-        return UploadAsync<ImageAsset>("image-assets", fileName, mediaType, source, headers, ct);
+        finally { try { if (File.Exists(temporary)) File.Delete(temporary); } catch (IOException) { } }
+    }
+    public async Task<ProjectFileTransferResult> UploadProjectFileAsync(string projectId, string fileName,
+        string mediaType, string localPath, string logicalPath, CancellationToken ct = default)
+    {
+        ImageType(mediaType);
+        _ = Id(projectId);
+        if (_imageTransfer is null)
+            throw new WorkbookApiException(409, "TRANSFER_REQUIRED", "项目文件必须通过本地传输代理上传。");
+        return await _imageTransfer.UploadAsync(projectId, Path.GetFileName(fileName), mediaType,
+            localPath, logicalPath, ct).ConfigureAwait(false);
+    }
+    public async Task<string> DownloadProjectFileAsync(string fileId, string? revisionId, string fileName,
+        CancellationToken ct = default)
+    {
+        _ = Id(fileId);
+        if (_imageTransfer is null)
+            throw new WorkbookApiException(409, "TRANSFER_REQUIRED", "项目文件必须通过本地传输代理下载。");
+        return await _imageTransfer.DownloadToLocalAsync(fileId, revisionId, fileName, ct).ConfigureAwait(false);
+    }
+    public async Task DeleteProjectFileAsync(string fileId, long expectedVersion, CancellationToken ct = default)
+    {
+        _ = Id(fileId); Version(expectedVersion);
+        if (_imageTransfer is null)
+            throw new WorkbookApiException(409, "TRANSFER_REQUIRED", "项目文件必须通过本地传输代理管理。");
+        await _imageTransfer.DeleteAsync(fileId, expectedVersion, ct).ConfigureAwait(false);
     }
     public Task<ImageAsset> GetProjectImageAsync(string imageId, CancellationToken ct = default) =>
         ReadAsync<ImageAsset>(HttpMethod.Get, "image-assets/" + Id(imageId), null, ct);
@@ -398,12 +378,6 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
     {
         await ReadAsync<JsonElement>(HttpMethod.Delete, FileId(fileId), null, ct);
     }
-    public Task RenameSheetAsync(string fileId, string sheetId, long expectedNameVersion, string displayName, CancellationToken ct = default)
-    {
-        _ = Id(sheetId); Version(expectedNameVersion); LimitedText(displayName, 31, nonEmpty: true);
-        return ReadAsync<JsonElement>(HttpMethod.Put, FileId(fileId) + "/sheets/" + Id(sheetId) + "/name",
-            JsonBody(new { expected_name_version = expectedNameVersion, display_name = displayName }), ct);
-    }
     public Task<SceneRow> CreateSceneRowAsync(string fileId, string sheetId, CancellationToken ct = default) =>
         ReadAsync<SceneRow>(HttpMethod.Post, FileId(fileId) + "/scene-rows", JsonBody(new { sheet_id = Id(sheetId) }), ct);
     public Task<AssetRow> CreateAssetRowAsync(string fileId, string sheetId, CancellationToken ct = default) =>
@@ -414,22 +388,20 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
         await ReadAsync<JsonElement>(HttpMethod.Delete, RowRoute(fileId, rowId, rowKind),
             JsonBody(new { expected_version = expectedVersion }), ct);
     }
-    public Task<SceneRow> UpdateSceneAsync(string fileId, string rowId, UpdateSceneRequest request, CancellationToken ct = default)
-    {
-        Version(request.ExpectedVersion);
-        if (request.LabelLevel is not (null or "红" or "黄" or "绿")) throw new InvalidDataException("等级仅允许红、黄、绿或空。");
-        LimitedText(request.BreakdownPlan, 20000);
-        return ReadAsync<SceneRow>(HttpMethod.Put, RowRoute(fileId, rowId, "scene-rows"), JsonBody(request, 256 * 1024), ct);
-    }
     public Task<SceneRow> UpdateSceneRowAsync(string fileId, string rowId, UpdateSceneRowRequest request, CancellationToken ct = default)
     {
+        if (request.LabelLevel is not (null or "红" or "黄" or "绿")
+            || (request.ClearLabelLevel && request.LabelLevel != null))
+            throw new InvalidDataException("等级仅允许红、黄、绿或空。");
+
         var dict = new Dictionary<string, object?>();
         if (request.ExpectedVersions != null) dict["expected_versions"] = request.ExpectedVersions;
         else if (request.ExpectedVersion.HasValue) dict["expected_version"] = request.ExpectedVersion.Value;
         if (request.SceneNumber != null) dict["scene_number"] = request.SceneNumber;
         if (request.BeatNumber != null) dict["beat_number"] = request.BeatNumber;
         if (request.StoryContent != null) dict["story_content"] = request.StoryContent;
-        if (request.LabelLevel != null) dict["label_level"] = request.LabelLevel;
+        if (request.ClearLabelLevel) dict["label_level"] = null;
+        else if (request.LabelLevel != null) dict["label_level"] = request.LabelLevel;
         if (request.BreakdownPlan != null) dict["breakdown_plan"] = request.BreakdownPlan;
         if (request.Note != null) dict["note"] = request.Note;
         if (request.VideoAction != null) dict["video_action"] = request.VideoAction;
@@ -451,34 +423,18 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
         AssetComponent(request.Category, "类别"); AssetComponent(request.Name, "名称");
         return ReadAsync<AssetRow>(HttpMethod.Put, RowRoute(fileId, rowId, "asset-rows"), JsonBody(request), ct);
     }
-    public Task<SceneRow> UpdateSceneOriginsAsync(string fileId, string rowId, UpdateSceneOriginsRequest request, CancellationToken ct = default)
-    {
-        Version(request.ExpectedVersion);
-        if (request.Origins == null || request.Origins.Count > 100 || request.Origins.Distinct().Count() != request.Origins.Count)
-            throw new InvalidDataException("来源需为最多 100 个唯一节拍行。");
-        foreach (var origin in request.Origins)
-        {
-            _ = FileId(origin.FileId); _ = Id(origin.RowId);
-            if (origin.FileId == fileId && origin.RowId == rowId) throw new InvalidDataException("不能关联当前行作为自己的来源。");
-        }
-        return ReadAsync<SceneRow>(HttpMethod.Put, RowRoute(fileId, rowId, "scene-rows") + "/origins", JsonBody(request), ct);
-    }
-    public Task<IReadOnlyList<SelectionHistoryEntry>> GetSelectionHistoryAsync(string fileId, string rowId, CancellationToken ct = default) =>
-        ListAsync<SelectionHistoryEntry>(RowRoute(fileId, rowId, "asset-rows") + "/selection-history", ct);
-
     public Task<WorkbookDocument> OpenAsync(string fileId, CancellationToken ct = default) => ReadAsync<WorkbookDocument>(HttpMethod.Get, FileId(fileId), null, ct);
     public async Task<byte[]> GetImageContentAsync(string assetId, bool thumbnail, CancellationToken ct = default)
     {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct); deadline.CancelAfter(_limits.RequestTimeout);
-        using var request = Request(HttpMethod.Get, $"image-assets/{Id(assetId)}/content?thumbnail={thumbnail.ToString().ToLowerInvariant()}", null);
-        request.Headers.Accept.Clear(); request.Headers.Accept.ParseAdd("image/*");
-        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
-        await EnsureSuccessAsync(response, deadline.Token);
-        return await BytesAsync(response.Content, _limits.MaxPreviewBytes, deadline.Token);
+        if (_imageTransfer is null)
+            throw new WorkbookApiException(409, "TRANSFER_REQUIRED", "项目图片必须通过本地传输代理下载。");
+        var metadata = await GetProjectImageAsync(assetId, ct).ConfigureAwait(false);
+        var fileId = metadata.FileId ?? metadata.Id;
+        return await _imageTransfer.DownloadImageAsync(fileId, metadata.CurrentRevisionId, thumbnail, ct).ConfigureAwait(false);
     }
     public Task<AssetRow> UpdateImagesAsync(string fileId, string rowId, UpdateImagesRequest request, CancellationToken ct = default)
     {
-        Version(request.ExpectedVersion); LimitedText(request.SelectionReason, 4000);
+        Version(request.ExpectedVersion);
         if (request.SelectedImageId != null) _ = Id(request.SelectedImageId);
         if (request.CandidateImageIds == null || request.CandidateImageIds.Count > 100 || request.CandidateImageIds.Distinct(StringComparer.Ordinal).Count() != request.CandidateImageIds.Count)
             throw new InvalidDataException("备选图片需为最多 100 个唯一图片。");
@@ -525,34 +481,4 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
         return ReadAsync<ReviewThread>(HttpMethod.Delete, RowRoute(fileId, rowId, rowKind) + "/reviews/comments/" + Id(commentId)
             + "?expected_version=" + expectedVersion.ToString(CultureInfo.InvariantCulture), null, ct);
     }
-    public Task<ReviewThread> ResolveCommentAsync(string fileId, string rowId, string rowKind, string commentId, ResolveCommentRequest request, CancellationToken ct = default)
-    {
-        Version(request.ExpectedVersion); LimitedText(request.ResolutionNote, 4000, request.Resolved);
-        return ReadAsync<ReviewThread>(HttpMethod.Put, RowRoute(fileId, rowId, rowKind) + "/reviews/comments/" + Id(commentId) + "/resolution", JsonBody(request), ct);
-    }
-
-    // Legacy v2 entry points for an incremental host migration. New UI never uses unscoped methods.
-    public Task<IReadOnlyList<ProjectFile>> ListAsync(CancellationToken ct = default) => ListAsync<ProjectFile>("", ct);
-    public Task<ProjectFile> CreateAsync(string templateKind, CancellationToken ct = default)
-    { Template(templateKind); return ReadAsync<ProjectFile>(HttpMethod.Post, "create", JsonBody(new { template_kind = templateKind }), ct); }
-    public Task<ProjectFile> ImportAsync(string fileName, Stream source, CancellationToken ct = default)
-    { WorkbookName(fileName); return UploadAsync<ProjectFile>("import", fileName, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", source, null, ct); }
-    public Task<IReadOnlyList<ImageAsset>> ListImagesAsync(CancellationToken ct = default) => ListAsync<ImageAsset>("image-assets", ct);
-    public Task<ImageAsset> UploadImageAsync(string fileName, string mediaType, Stream source, CancellationToken ct = default)
-    { ImageType(mediaType); return UploadAsync<ImageAsset>("image-assets", fileName, mediaType, source, null, ct); }
-    public async Task<byte[]> DownloadOriginalAsync(string fileId, CancellationToken ct = default)
-    {
-        // Compatibility only: legacy byte[] API remains bounded by the old JSON-sized cap.
-        // Use DownloadOriginalToAsync for large originals and atomic replacement.
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct); deadline.CancelAfter(_limits.DownloadTimeout);
-        using var request = Request(HttpMethod.Get, FileId(fileId) + "/original", null);
-        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
-        await EnsureSuccessAsync(response, deadline.Token);
-        return await BytesAsync(response.Content, _limits.MaxJsonResponseBytes, deadline.Token);
-    }
-    public Task<IReadOnlyList<ReviewSummary>> GetReviewSummariesAsync(string fileId, string rowId, CancellationToken ct = default) => GetReviewSummariesForRowAsync(fileId, rowId, "asset-rows", ct);
-    public Task<ReviewThread> GetReviewThreadAsync(string fileId, string rowId, string? imageId, CancellationToken ct = default) => GetReviewThreadForRowAsync(fileId, rowId, "asset-rows", imageId, ct);
-    public Task<ReviewThread> AddCommentAsync(string fileId, string rowId, AddReviewCommentRequest request, CancellationToken ct = default) => AddCommentForRowAsync(fileId, rowId, "asset-rows", request, ct);
-    public Task<ReviewThread> EditCommentAsync(string fileId, string rowId, string commentId, EditReviewCommentRequest request, CancellationToken ct = default) => EditCommentForRowAsync(fileId, rowId, "asset-rows", commentId, request, ct);
-    public Task<ReviewThread> DeleteCommentAsync(string fileId, string rowId, string commentId, long expectedVersion, CancellationToken ct = default) => DeleteCommentForRowAsync(fileId, rowId, "asset-rows", commentId, expectedVersion, ct);
 }

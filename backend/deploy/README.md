@@ -1,88 +1,54 @@
-# Parallel V2 NAS service
+# V2 service deployment notes
 
-These units install a separate API and account helper. They do not replace or
-modify `muying-hub.service`, its code, or its database.
+These files are source templates. This work did not install, restart, or remove anything on a
+NAS. Production deployment and retirement of previously installed units are separate actions.
 
-## Release layout
+## Services
 
-- `/opt/muying-v2/releases/<release-id>/` contains this repository's `backend/` tree.
-- `/opt/muying-v2/current` points to the selected release.
-- `/var/lib/muying-v2/` contains the independent SQLite database and WAL.
-- `/etc/muying-v2/server.env` and `helper.env` contain non-secret settings.
-- `/etc/muying-v2/server.crt` and `server.key` are the V2-only TLS certificate.
-- `/etc/samba/muying-v2-users.map` and `.json` are owned by the root helper.
-- `/volume1/muying-releases/` holds signed updater releases (`MUYING_V2_UPDATE_RELEASES_DIR`).
-- `/volume1/muying-download/` holds first-install packages (`MUYING_V2_INSTALLER_DIR`).
+- `muying-v2.service` serves the authenticated API and stores application users, sessions,
+  projects, workbooks, file metadata, and change events in SQLite. Employee accounts are
+  application records only; registration does not create Unix/Samba accounts or home folders.
+- The Rust transfer service is the only employee-file path to the private NAS object store.
+  It uses a dedicated service identity and signed tickets from the API. WPF and the API do not
+  mount or write SMB shares.
+- Visitor sessions are short-lived in-memory read-only tokens. They use the same SQLite-backed
+  project and file APIs as signed-in users; they do not mount SMB or run a separate NAS reader.
+- There is no project/account root-helper unit in the current source tree.
 
-## Publishing a first-install package
+## Environment and data
 
-`GET /download` is unauthenticated by design: a colleague with nothing installed has no
-session and no update channel, so the setup executable has to be fetchable by URL. Only
-the newest version is advertised.
+- `/var/lib/muying-v2/` contains the API SQLite databases and WAL files; the API service owns
+  this directory with mode `0700`.
+- `/etc/muying-v2/server.env` configures the listener, database, transfer-service URL and HMAC
+  ticket secret, optional Mac media-worker token, updater releases, and installer downloads.
+- The Rust transfer service has its own environment and restricted object/staging roots. Keep
+  its HMAC secret consistent with the API and outside the repository.
+- TLS private keys and transfer secrets must be provisioned outside source control.
 
-Drop `MuYingDrive.Setup-<X.Y.Z>.exe` into `MUYING_V2_INSTALLER_DIR` and drop the matching
-`.sha256` beside it if you want the published checksum to come from a file rather than be
-recomputed. No restart is needed; the directory is read per request.
+The new application-auth database schema does not contain `system_username` or
+`provisioning_token`. Starting the new source against an old account-helper schema discards the
+old `users` and `sessions` tables and creates a clean application-account schema. This is a
+source behavior only; do not run it against a production database as part of code review.
 
-Two properties are enforced by the service, and a package that fails either is **not
-served at all** — it does not fall back to an older one:
+## First deployment outline
 
-- **The file must be immutable.** Mode `0444`, owned `root:muying-v2`, directory `0755`.
-  Anything with a write bit is treated as a copy still in progress. This is not
-  decoration: a half-copied 154 MB executable would otherwise be advertised, and the
-  checksum published beside it would be computed from those same partial bytes, so a
-  recipient's verification would pass and the file would not run.
-- **The name must be exactly `MuYingDrive.Setup-<X.Y.Z>.exe`.** Anything else is ignored.
+1. Review and back up the existing service configuration and data using the operator's normal
+   procedure. Do not change legacy hub, NAS user, Samba, or ACL state as part of this release.
+2. Stage a reviewed application release and create the non-login API service user plus its
+   private SQLite data directory.
+3. Configure `server.env`, HTTPS credentials, and the Rust service URL/HMAC secret. Configure
+   the transfer daemon's own restricted NAS identity and object/staging roots independently.
+4. Install only the reviewed templates required for the release. The API does not require an
+   account-provisioner socket or direct SMB permission.
+5. Test account registration/login/session restore, file upload/download, interruption and
+   cancellation, revisions, deletion/restore, change-feed sync, and visitor read-only access
+   to department, public, and project data in an isolated environment before scheduling any
+   production deployment.
 
-Publish by copying to a temporary name and renaming into place, so the destination never
-exists in a partial state:
+## Publishing an installer
 
-```sh
-install -o root -g muying-v2 -m 0444 MuYingDrive.Setup-1.0.16.exe \
-    /volume1/muying-download/MuYingDrive.Setup-1.0.16.exe.new
-mv -T /volume1/muying-download/MuYingDrive.Setup-1.0.16.exe.new \
-      /volume1/muying-download/MuYingDrive.Setup-1.0.16.exe
-sudo -u muying-v2 sha256sum /volume1/muying-download/MuYingDrive.Setup-1.0.16.exe \
-    > /volume1/muying-download/MuYingDrive.Setup-1.0.16.exe.sha256
-```
-
-Older versions may stay in the directory; they are simply never selected. Delete them
-when you want the space back.
-
-The download routes share the API's listener, so they are capped separately
-(`MAX_CONCURRENT_DOWNLOADS`) and refuse with `503` and `Retry-After` when full, rather
-than queueing and consuming the capacity they are waiting for.
-
-## First installation outline
-
-1. Back up the current Samba configuration, share ACLs, and the contents of
-   `/etc/systemd/system/muying-hub.service`; do not edit the legacy unit or DB.
-2. Stage a reviewed release under `/opt/muying-v2/releases/`, create the
-   non-login `muying-v2` service user, and create `/var/lib/muying-v2` as
-   `muying-v2:muying-v2` mode `0700`.
-3. Create `/etc/muying-v2/`, install the example environment files with mode
-   `0600`, and set the fixed LAN bind address. Generate a V2-specific TLS leaf
-   certificate with that address in its IP subject alternative name. Keep the
-   private key root-owned mode `0600`; the API receives it using systemd
-   credentials. Pin the public certificate in the Windows client.
-4. Install these three units into `/etc/systemd/system/`, run
-   `systemd-analyze verify` against them, then enable only
-   `muying-v2.service` and `muying-v2-account.socket`.
-5. Before enabling registration, validate the Samba username-map file syntax
-   and effective share configuration with `testparm`; preserve the old
-   `valid users` and `write list` entries while adding the V2 groups.
-6. Reload Samba only after the backed-up config passes `testparm`. Apply the
-   separately reviewed minimal ACL changes, then verify them with `getfacl`.
-
-The privileged helper uses one systemd socket-activated process per request.
-It verifies the connecting service UID, accepts only create, transaction-scoped
-rollback, and transaction-status queries, and serializes all manifest/account
-changes with an advisory lock. Status queries verify the Unix account, Samba
-passdb entry, department group, private directory, and published username map
-before startup recovery can activate an account. The helper never accepts
-shell commands.
-
-The V2 API has no file proxy; the native client uses the Windows SMB redirector
-for file bytes. The 30-day transfer-checkpoint cleanup timer is intentionally
-not included until the Windows transfer journal and account scoping are in
-place.
+`GET /download` is unauthenticated so a colleague without an installed client can fetch the
+first installer. It serves only the newest correctly named immutable package from
+`MUYING_V2_INSTALLER_DIR`. Publish by copying to a temporary name and atomically renaming into
+place; optionally include a matching `.sha256` file. The API reads the directory per request, so
+publishing a package does not require a service restart.

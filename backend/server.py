@@ -20,32 +20,30 @@ from urllib.parse import urlsplit
 
 from .config import Settings, load_settings
 from .installer_store import InstallerStore
-from .provisioner import AccountProvisioner
 from .release_store import ReleaseNotFound, ReleaseStore, ReleaseUnavailable
 from .service import ApiError, V2Application
 from .feedback import FeedbackService
 from .feedback_http import dispatch as dispatch_feedback
 from .update_failure_reports import InvalidUpdateFailureReport, UpdateFailureReportStore, validate_report
-from .visitor import VisitorReader, VisitorService
+from .visitor import VisitorService
 from .visitor_http import dispatch as dispatch_visitor
 
-# The workbook routes need their SQLite store and XLSX import/export support. If the optional
-# workbook dependencies are absent, login and unrelated service routes still start normally.
+# The workbook routes use the built-in SQLite implementation. If the module cannot be loaded,
+# login and unrelated service routes still start normally.
 try:
     from .project_workbooks_http import dispatch as dispatch_project_workbooks
-    from .project_workbooks.nas_adapter import NasReviewServices, NasSecurity
+    from .project_workbooks.host_adapters import HostSecurity, SqliteReviewServices
     from .project_workbooks.projects_api import ProjectsApi
-    from .project_workbooks.sqlite_store import StableReviewServices, SqliteProjectWorkbookStore
-    # The project-space routes are the host's own, but they reuse the vendored package's
-    # directory scan so the two cannot disagree about what a project is — which means they
-    # share its spreadsheet dependency and go unavailable together with it.
-    from .project_spaces import ProjectProvisioner, ProjectSpaceService
+    from .project_workbooks.sqlite_store import SqliteProjectWorkbookStore
+    from .file_storage import FileStorageApi, FileStorageService
+    from .project_spaces import ProjectSpaceService
     from .project_spaces_http import dispatch as dispatch_project_spaces
 except ImportError:
     dispatch_project_workbooks = None
     dispatch_project_spaces = None
-    ProjectsApi = ProjectSpaceService = ProjectProvisioner = None
-    NasSecurity = NasReviewServices = StableReviewServices = SqliteProjectWorkbookStore = None
+    ProjectsApi = ProjectSpaceService = None
+    FileStorageApi = FileStorageService = None
+    HostSecurity = SqliteReviewServices = SqliteProjectWorkbookStore = None
 
 
 API_ROOT = "/api/v2"
@@ -158,11 +156,12 @@ def create_handler(app: V2Application, *,
                    feedback: FeedbackService | None = None,
                    visitor: VisitorService | None = None,
                    project_workbooks: ProjectsApi | None = None,
-                   project_spaces: ProjectSpaceService | None = None):
+                   project_spaces: ProjectSpaceService | None = None,
+                   file_storage: FileStorageApi | None = None):
     feedback = feedback or FeedbackService(app.session, app.db_path.parent / "feedback")
     # No visitor reader configured means the tour is unavailable, not open: the routes
     # still answer, but every read fails closed.
-    visitor = visitor or VisitorService(VisitorReader(None))
+    visitor = visitor or VisitorService()
     release_store = ReleaseStore(update_releases_dir)
     # Unset means the download routes answer 503 rather than serving something
     # unintended; the same fail-closed posture the update store takes. Injectable so the
@@ -226,6 +225,8 @@ def create_handler(app: V2Application, *,
                 return
             if dispatch_visitor(self, visitor, "GET"):
                 return
+            if file_storage is not None and file_storage.handle(self):
+                return
             # The workbook module writes its own response and returns whether it owned the
             # path; it has to run before the host's routes because it authenticates itself.
             if project_spaces is not None and dispatch_project_spaces(
@@ -283,6 +284,8 @@ def create_handler(app: V2Application, *,
             if dispatch_feedback(self, feedback, _bearer_token(self.headers), "POST"):
                 return
             if dispatch_visitor(self, visitor, "POST"):
+                return
+            if file_storage is not None and file_storage.handle(self):
                 return
             if project_spaces is not None and dispatch_project_spaces(
                     self, project_spaces, _bearer_token(self.headers), "POST"):
@@ -762,37 +765,39 @@ def make_server(settings: Settings, app: V2Application) -> ThreadingHTTPServer:
     raw_maintainers = os.environ.get("MUYING_V2_FEEDBACK_MAINTAINERS", "")
     maintainers = {int(value.strip()) for value in raw_maintainers.split(",") if value.strip().isdigit() and int(value.strip()) > 0}
     feedback_root = Path(os.environ.get("MUYING_V2_FEEDBACK_DIR", str(settings.data_dir / "feedback")))
-    visitor = VisitorService(VisitorReader(settings.visitor_socket))
+    visitor = VisitorService()
     # A tour session may read public feedback and post anonymously; maintenance still
     # requires an employee session with a maintainer id.
     feedback = FeedbackService(app.session, feedback_root, maintainers,
                                visitor_authenticate=visitor.has_session)
-    # The local SQLite database is authoritative for project tables. NAS directories retain
-    # project files and media; workbook clients read/write table rows only through this API.
-    provisioner = ProjectProvisioner(settings.project_socket) if ProjectProvisioner is not None else None
+    # One SQLite catalog owns project/workbook metadata and the logical file catalog.
+    # Project records no longer depend on a directory tree or privileged helper.
     project_workbooks = None
     workbook_store = None
-    if settings.project_docs_root is not None and ProjectsApi is not None:
+    file_storage = None
+    project_spaces = None
+    if ProjectsApi is not None and ProjectSpaceService is not None:
         review_db = Path(settings.database_path).parent / "project_reviews.db"
-        workbook_store = SqliteProjectWorkbookStore(settings.project_docs_root,
-            Path(settings.database_path).parent / "project_workbooks.db", provisioner=provisioner)
-        review_services = (StableReviewServices(NasReviewServices(review_db, row_kind="asset-rows"), workbook_store)
-                           if NasReviewServices is not None else None)
-        scene_review_services = (StableReviewServices(NasReviewServices(review_db, row_kind="scene-rows"), workbook_store)
-                                 if NasReviewServices is not None else None)
+        workbook_store = SqliteProjectWorkbookStore(
+            Path(settings.database_path).parent / "project_workbooks.db")
+        review_services = (SqliteReviewServices(review_db, row_kind="asset-rows")
+                           if SqliteReviewServices is not None else None)
+        scene_review_services = (SqliteReviewServices(review_db, row_kind="scene-rows")
+                                 if SqliteReviewServices is not None else None)
         project_workbooks = ProjectsApi(
-            NasSecurity(app.session, visitor_authenticate=visitor.has_session),
+            HostSecurity(app.session, visitor_authenticate=visitor.has_session),
             workbook_store,
             workflow=workbook_store,
             reviews=review_services,
             scene_reviews=scene_review_services)
-    # Listing needs only the directory; creating needs the root helper. Unset socket means
-    # listing still works and creating answers 503 with the reason, which is better than a
-    # + that appears to work.
-    project_spaces = None
-    if settings.project_docs_root is not None and ProjectSpaceService is not None:
-        project_spaces = ProjectSpaceService(
-            settings.project_docs_root, app.session, provisioner, catalog=workbook_store,
+        if FileStorageApi is not None and FileStorageService is not None:
+            file_storage = FileStorageApi(
+                HostSecurity(app.session, visitor_authenticate=visitor.has_session),
+                FileStorageService(workbook_store,
+                    transfer_base_url=settings.transfer_base_url,
+                    ticket_secret=settings.transfer_ticket_secret,
+                    media_worker_token=settings.media_worker_token))
+        project_spaces = ProjectSpaceService(app.session, catalog=workbook_store,
             visitor_authenticate=visitor.has_session)
     server = V2HTTPServer((settings.bind_host, settings.port),
                           create_handler(app, update_releases_dir=settings.update_releases_dir,
@@ -800,7 +805,8 @@ def make_server(settings: Settings, app: V2Application) -> ThreadingHTTPServer:
                                          update_failure_db_path=settings.database_path,
                                          feedback=feedback, visitor=visitor,
                                          project_workbooks=project_workbooks,
-                                         project_spaces=project_spaces))
+                                         project_spaces=project_spaces,
+                                         file_storage=file_storage))
     server.daemon_threads = True
     server.request_queue_size = 64
 
@@ -826,10 +832,7 @@ def make_server(settings: Settings, app: V2Application) -> ThreadingHTTPServer:
 
 
 def build_app(settings: Settings) -> V2Application:
-    return V2Application(
-        settings.database_path,
-        AccountProvisioner(settings.provisioner_socket),
-    )
+    return V2Application(settings.database_path)
 
 
 def main() -> int:

@@ -62,6 +62,7 @@ Thumbs.db
 # Desktop project build outputs.
 desktop/**/bin/
 desktop/**/obj/
+transfer/target/
 
 # Release signing material. The private key is the update root of trust and must
 # never be committed; only the public key anchors under

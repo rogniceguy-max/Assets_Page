@@ -293,8 +293,10 @@ public sealed class InstallEngine
     {
         var client = Path.Combine(extracted, ClientExecutableName);
         var updater = Path.Combine(extracted, UpdaterExecutableRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        var transferAgent = Path.Combine(extracted, "transfer", "MuYingDrive.TransferAgent.exe");
         if (!File.Exists(client)) throw new InvalidDataException("客户端安装包缺少主程序。");
         if (!File.Exists(updater)) throw new InvalidDataException("客户端安装包缺少更新程序。");
+        if (!File.Exists(transferAgent)) throw new InvalidDataException("客户端安装包缺少 Rust 传输代理。");
     }
 
     /// <summary>
@@ -303,12 +305,11 @@ public sealed class InstallEngine
     /// </summary>
     /// <remarks>
     /// The split is deliberate. <c>CredentialProfile</c> selects which Credential Manager
-    /// entries hold the session token and SMB password, so it must survive a reinstall
-    /// untouched — replacing it would silently drop the user's stored login. The address,
-    /// pin and share root are the opposite: they are the one thing a new installer carries
-    /// that the update channel cannot deliver, because <c>nas-client.json</c> is not part
-    /// of any update package. A rotated server certificate that never reaches this file
-    /// leaves every installed client pinning the old one, with no way out but a reinstall.
+    /// entry holds the app session token, so it must survive a reinstall untouched. The
+    /// address and pin are the one connection setting a new installer carries that the
+    /// update channel cannot deliver, because <c>nas-client.json</c> is not part of any
+    /// update package. A rotated server certificate that never reaches this file leaves
+    /// every installed client pinning the old one, with no way out but a reinstall.
     /// <see cref="ClientConfigurationMerge"/> decides which fields those are.
     /// </remarks>
     private static void SeedConfiguration(ClientConfiguration configuration, string? configOverridePath, bool forceConfig)
@@ -346,7 +347,7 @@ public sealed class InstallEngine
 
         if (!ClientConfigurationMerge.TryRefreshConnectionFields(
                 existing, configuration.ApiBaseUri.AbsoluteUri, configuration.CertificateSha256,
-                configuration.ShareRoot, out var updated))
+                out var updated))
         {
             return false;
         }
@@ -404,25 +405,14 @@ public sealed class InstallEngine
         if (dto is null || string.IsNullOrWhiteSpace(dto.ApiBaseUri) ||
             !Uri.TryCreate(dto.ApiBaseUri, UriKind.Absolute, out var api) ||
             api.Scheme != Uri.UriSchemeHttps ||
-            string.IsNullOrWhiteSpace(dto.CertificateSha256) ||
-            string.IsNullOrWhiteSpace(dto.ShareRoot))
+            string.IsNullOrWhiteSpace(dto.CertificateSha256))
         {
             throw new InvalidOperationException("客户端配置缺少必要的 NAS 参数。");
         }
 
-        // Mirrors NasClientSettings.Load's own check. Without it the installer happily
-        // seeds a configuration the client rejects at every start ("客户端尚未配置 NAS
-        // 服务"), and because that failure happens while building the main view model it
-        // also silently disables the update coordinator.
-        if (!dto.ShareRoot.StartsWith("\\\\", StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException(
-                "客户端配置的 ShareRoot 必须是 UNC 路径，例如 \\\\nas\\Assets。");
-        }
-
         // Validated here so a malformed pin cannot ship inside an installer.
         _ = CertificatePin.ParseSha256Pin(dto.CertificateSha256);
-        return new ClientConfiguration(api, dto.CertificateSha256, dto.ShareRoot,
+        return new ClientConfiguration(api, dto.CertificateSha256,
             string.IsNullOrWhiteSpace(dto.CredentialProfile) ? "default" : dto.CredentialProfile);
     }
 
@@ -575,11 +565,10 @@ public sealed class InstallEngine
     {
         public string? ApiBaseUri { get; init; }
         public string? CertificateSha256 { get; init; }
-        public string? ShareRoot { get; init; }
         public string? CredentialProfile { get; init; }
     }
 
     /// <summary>The validated configuration the installer downloads with and seeds.</summary>
     private sealed record ClientConfiguration(
-        Uri ApiBaseUri, string CertificateSha256, string ShareRoot, string CredentialProfile);
+        Uri ApiBaseUri, string CertificateSha256, string CredentialProfile);
 }

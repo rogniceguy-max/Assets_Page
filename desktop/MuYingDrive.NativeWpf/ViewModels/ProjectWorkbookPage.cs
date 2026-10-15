@@ -20,7 +20,8 @@ public sealed class ProjectWorkbookPage : IDisposable
     private readonly HttpClient _http;
     private readonly HttpProjectWorkbookService _service;
 
-    public ProjectWorkbookPage(V2ApiClient api, string sessionToken, long accountId)
+    public ProjectWorkbookPage(V2ApiClient api, string sessionToken, long accountId,
+        IProjectFileTransfer? imageTransfer = null, bool isReadOnly = false)
     {
         _http = api.CreateProjectWorkbookClient();
         _service = new HttpProjectWorkbookService(
@@ -30,8 +31,9 @@ public sealed class ProjectWorkbookPage : IDisposable
             new WorkbookTransportOptions { MaxUploadBytes = 64L * 1024 * 1024 },
             // Required even for reading: the library computes its operation scope from the
             // account id and refuses to construct a service without it.
-            () => accountId.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        ViewModel = new ProjectWorkbooksViewModel(_service);
+            () => accountId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            imageTransfer);
+        ViewModel = new ProjectWorkbooksViewModel(_service, isReadOnly);
     }
 
     public ProjectWorkbooksViewModel ViewModel { get; }
@@ -127,27 +129,6 @@ public sealed class ProjectWorkbookPage : IDisposable
             }
             await ViewModel.RefreshFilesAsync();
             ViewModel.Back();
-        });
-
-    /// <summary>
-    /// Opens a workbook by its filename within a project (used when double clicking a file in browser).
-    /// </summary>
-    public Task OpenWorkbookByNameAsync(string projectId, string fileName) =>
-        ViewModel.ExecuteAsync(async () =>
-        {
-            if (ViewModel.Projects.Count == 0) await ViewModel.InitializeAsync();
-
-            var project = ViewModel.Projects.FirstOrDefault(p => p.Id == projectId)
-                ?? throw new InvalidOperationException("找不到该项目，可能已被删除。");
-            if (!ReferenceEquals(project, ViewModel.SelectedProject))
-            {
-                ViewModel.SelectedProject = project;
-            }
-            await ViewModel.RefreshFilesAsync();
-
-            var file = ViewModel.Files.FirstOrDefault(f => string.Equals(f.Name, fileName, StringComparison.OrdinalIgnoreCase))
-                ?? throw new InvalidOperationException($"该项目里没有找到工作簿「{fileName}」。");
-            await ViewModel.OpenAsync(file);
         });
 
     public void Dispose()

@@ -56,42 +56,68 @@ public partial class MainWindow : Window
         if (_isPreparingClose)
             return;
         _isPreparingClose = true;
+        var shouldClose = false;
         try
         {
+            bool canClose;
             try
             {
-                await _viewModel.PrepareForShutdownAsync();
+                canClose = await _viewModel.PrepareForShutdownAsync();
             }
             catch
             {
+                canClose = false;
+            }
+
+            if (!canClose)
+            {
+                if (!string.IsNullOrWhiteSpace(_viewModel.UpdateCloseErrorMessage))
+                    MessageBox.Show(_viewModel.UpdateCloseErrorMessage, "暂时无法关闭", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
             }
 
             try
             {
                 await _viewModel.ShutdownAsync();
             }
+            catch (Exception exception) when (_viewModel.HasPreparedUpdateHandoff)
+            {
+                try { await _viewModel.AbortPreparedUpdateCloseAsync(); }
+                catch { }
+                MessageBox.Show(
+                    $"更新已取消，沐影盘仍保持打开。{Environment.NewLine}{exception.Message}",
+                    "无法安全关闭传输代理", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
             catch
             {
+                // A regular close may proceed if a non-update cleanup step failed. For an
+                // update handoff, the filtered catch above keeps the window open.
             }
 
+            if (!string.IsNullOrWhiteSpace(_viewModel.AgentShutdownWarning))
+                MessageBox.Show(
+                    $"沐影盘即将关闭，但传输代理未能确认完全停止。{Environment.NewLine}{_viewModel.AgentShutdownWarning}",
+                    "传输代理未完全关闭", MessageBoxButton.OK, MessageBoxImage.Warning);
+
             if (_viewModel.HasPreparedUpdateHandoff)
-            {
-                try
-                {
-                    _viewModel.LaunchPreparedUpdater();
-                }
-                catch
-                {
-                }
-            }
+                _viewModel.LaunchPreparedUpdater();
+            shouldClose = true;
         }
         catch
         {
         }
         finally
         {
-            _allowClose = true;
-            Close();
+            if (shouldClose)
+            {
+                _allowClose = true;
+                Close();
+            }
+            else
+            {
+                _isPreparingClose = false;
+            }
         }
     }
 

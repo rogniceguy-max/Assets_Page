@@ -1,7 +1,0 @@
-# Runtime dependencies of the project-workbook routes (backend/project_workbooks/).
-#
-# The service now reads real .xlsx workbooks, which the Python standard library cannot do.
-# Both are pinned: this is a deployment step, not an optional extra, and the NAS service will
-# fail to start its workbook routes without them.
-openpyxl==3.1.5
-defusedxml==0.7.1

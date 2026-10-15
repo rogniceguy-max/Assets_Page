@@ -22,6 +22,7 @@ public sealed class MainViewModel : ObservableObject
     private string? _preparedHandoffPath;
     private string? _preparedUpdaterPath;
     private string _updateCloseErrorMessage = string.Empty;
+    private string _agentShutdownWarning = string.Empty;
 
     public MainViewModel()
     {
@@ -38,10 +39,8 @@ public sealed class MainViewModel : ObservableObject
             _api = api;
             var profileSuffix = settings.CredentialProfile == "default" ? string.Empty : "." + settings.CredentialProfile;
             var vault = new WindowsCredentialVault(new WindowsCredentialVaultOptions(
-                "MuYingDrive.V2" + profileSuffix + ".ActiveSession",
-                "MuYingDrive.V2" + profileSuffix + ".ActiveSmbCredential"));
-            var smb = new WindowsSmbConnectionService(new WindowsSmbConnectionOptions(settings.ShareRoot), vault);
-            _sessionService = new V2SessionService(api, vault, smb);
+                "MuYingDrive.V2" + profileSuffix + ".ActiveSession"));
+            _sessionService = new V2SessionService(api, vault);
             if (!App.IsUpdateHealthCheck)
             {
                 _ = UpdateFailureReporter.SendPendingAsync(settings.ApiBaseUri, settings.CertificateSha256);
@@ -83,6 +82,11 @@ public sealed class MainViewModel : ObservableObject
         get => _updateCloseErrorMessage;
         private set => SetProperty(ref _updateCloseErrorMessage, value);
     }
+    public string AgentShutdownWarning
+    {
+        get => _agentShutdownWarning;
+        private set => SetProperty(ref _agentShutdownWarning, value);
+    }
     public event EventHandler? CloseRequested;
 
     public object CurrentPage
@@ -95,54 +99,48 @@ public sealed class MainViewModel : ObservableObject
 
     public void ShowRegister() => CurrentPage = new RegisterViewModel(this);
 
-    /// <summary>Enters the login-free tour. Logically a read-only account into the standard workspace shell.</summary>
+    /// <summary>Starts a short-lived read-only visitor account in the common workspace.</summary>
     public async Task EnterVisitorAsync()
     {
         if (_api is null)
         {
             if (CurrentPage is LoginViewModel unavailable)
-                unavailable.ErrorMessage = _configurationError ?? "客户端尚未配置 NAS 服务，请联系管理员。";
+                unavailable.ErrorMessage = _configurationError ?? "客户端尚未配置文件服务，请联系管理员。";
             return;
         }
 
         if (CurrentPage is LoginViewModel login)
             login.IsBusy = true;
 
+        VisitorSessionResponse? visitorSession = null;
         try
         {
-            var visitorSession = await _api.CreateVisitorSessionAsync();
+            visitorSession = await _api.CreateVisitorSessionAsync();
             var visitorUser = new V2UserSession
             {
                 Id = 0,
                 UserName = "访客",
                 Department = "只读访问",
-                GroupType = "film",
+                GroupType = "visitor",
                 Spaces = new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    ["film"] = "/film",
-                    ["writing"] = "/writing",
-                    ["public"] = "/public",
-                    ["personal"] = "/public"
-                }
             };
-            var driveSession = new DriveSession(visitorUser, visitorSession.SessionToken, new SmbConnectionResult(0));
+            var driveSession = new DriveSession(visitorUser, visitorSession.SessionToken);
             await EnterWorkspaceAsync(driveSession);
+            visitorSession = null;
         }
         catch (Exception ex)
         {
+            if (visitorSession is not null && _api is not null)
+            {
+                try { await _api.EndVisitorSessionAsync(visitorSession.SessionToken); }
+                catch { /* The short-lived visitor token will expire if the service is unavailable. */ }
+            }
             if (CurrentPage is LoginViewModel currentLogin)
             {
                 currentLogin.IsBusy = false;
                 currentLogin.ErrorMessage = ex.Message;
             }
         }
-    }
-
-    /// <summary>Leaves the tour, revoking the visitor session and clearing its cache.</summary>
-    public async Task ExitVisitorAsync(VisitorViewModel visitor)
-    {
-        await visitor.EndAsync();
-        ShowLogin();
     }
 
     public Task InitializeAsync() => _initializeTask ??= InitializeCoreAsync();
@@ -186,13 +184,24 @@ public sealed class MainViewModel : ObservableObject
 
     public async Task SignOutAsync(DriveSession session)
     {
+        string? agentWarning = null;
         try
         {
             var workspace = CurrentPage as WorkspaceViewModel;
             if (workspace?.Transfers is { } transfers)
-                await transfers.PauseAllAsync();
+            {
+                var paused = await transfers.PauseAllAsync();
+                var loggedOut = await transfers.LogoutAgentAsync();
+                try { await transfers.StopAgentAsync(); }
+                catch (Exception exception) when (exception is IOException or TimeoutException or InvalidOperationException)
+                { agentWarning = exception.Message; }
+                if (!paused || !loggedOut)
+                    agentWarning ??= string.IsNullOrWhiteSpace(transfers.OperationErrorMessage)
+                        ? "退出前未能确认所有传输任务已暂停。"
+                        : transfers.OperationErrorMessage;
+            }
 
-            if (session.User.Id == 0)
+            if (session.IsVisitor)
             {
                 if (_api is not null && !string.IsNullOrWhiteSpace(session.SessionToken))
                 {
@@ -207,6 +216,10 @@ public sealed class MainViewModel : ObservableObject
             if (workspace is not null)
                 await workspace.DisposeAsync();
             ShowLogin();
+            if (!string.IsNullOrWhiteSpace(agentWarning))
+                MessageBox.Show(
+                    $"已退出登录，但本地传输代理未能确认完全停止。当前服务器会话已注销。{Environment.NewLine}{agentWarning}",
+                    "传输代理未完全关闭", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         catch (V2ApiException exception)
         {
@@ -217,7 +230,7 @@ public sealed class MainViewModel : ObservableObject
     public async Task SignInAsync(string userName, string password)
     {
         if (_sessionService is null)
-            throw new V2ApiException(_configurationError ?? "客户端尚未配置 NAS 服务，请联系管理员。");
+            throw new V2ApiException(_configurationError ?? "客户端尚未配置文件服务，请联系管理员。");
         var session = await _sessionService.LoginAsync(userName, password);
         await EnterWorkspaceAsync(session);
     }
@@ -225,7 +238,7 @@ public sealed class MainViewModel : ObservableObject
     public async Task RegisterAsync(string userName, string password, string department)
     {
         if (_sessionService is null)
-            throw new V2ApiException(_configurationError ?? "客户端尚未配置 NAS 服务，请联系管理员。");
+            throw new V2ApiException(_configurationError ?? "客户端尚未配置文件服务，请联系管理员。");
         var groupType = department == "影视资源库" ? "film" : department == "文学创作库" ? "writing" : string.Empty;
         var session = await _sessionService.RegisterAsync(userName, password, groupType);
         await EnterWorkspaceAsync(session);
@@ -234,13 +247,44 @@ public sealed class MainViewModel : ObservableObject
     public async Task ShutdownAsync()
     {
         if (_shutdownComplete) return;
+        AgentShutdownWarning = string.Empty;
         if (_initializeTask is not null)
         {
             try { await _initializeTask; }
             catch { /* Startup errors are already surfaced on the login view. */ }
         }
         if (CurrentPage is WorkspaceViewModel workspace)
+        {
+            // The Rust executable lives under the install directory. During an update it
+            // must stop before the updater renames that directory; wait for that process
+            // exit before disposing the workspace or releasing the handoff to the updater.
+            if (workspace.Transfers is { } transfers)
+            {
+                if (_installUpdateOnExit)
+                {
+                    // The update handoff requires a confirmed stop before replacing the install tree.
+                    await transfers.StopAgentAsync();
+                }
+                else
+                {
+                    // Closing the WPF window also stops background watching and uploads. Persist
+                    // checkpoints and clear the in-memory API credentials before exiting.
+                    var paused = await transfers.PauseAllAsync();
+                    var loggedOut = await transfers.LogoutAgentAsync();
+                    try { await transfers.StopAgentAsync(); }
+                    catch (Exception exception) when (exception is IOException or TimeoutException or InvalidOperationException)
+                    { AgentShutdownWarning = exception.Message; }
+                    if (!paused || !loggedOut)
+                    {
+                        if (string.IsNullOrWhiteSpace(AgentShutdownWarning))
+                            AgentShutdownWarning = string.IsNullOrWhiteSpace(transfers.OperationErrorMessage)
+                                ? "关闭前未能确认所有传输任务已暂停。"
+                                : transfers.OperationErrorMessage;
+                    }
+                }
+            }
             await workspace.DisposeAsync();
+        }
         if (_updateCoordinator is not null)
         {
             _updateCoordinator.Changed -= HandleUpdateChanged;
@@ -282,6 +326,16 @@ public sealed class MainViewModel : ObservableObject
             };
             return true;
         }
+    }
+
+    public async Task AbortPreparedUpdateCloseAsync()
+    {
+        _installUpdateOnExit = false;
+        _preparedHandoffPath = null;
+        _preparedUpdaterPath = null;
+        if (CurrentPage is WorkspaceViewModel { Transfers: { } transfers })
+            await transfers.ResumeAfterFailedStopAsync();
+        InstallUpdateNowCommand.RaiseCanExecuteChanged();
     }
 
     public bool LaunchPreparedUpdater()
@@ -393,9 +447,26 @@ public sealed class MainViewModel : ObservableObject
     private async Task EnterWorkspaceAsync(DriveSession session)
     {
         if (_settings is null)
-            throw new V2ApiException("客户端尚未配置 NAS 服务，请联系管理员。");
-        var workspace = WorkspaceViewModel.ForEmployee(this, session, _settings);
+            throw new V2ApiException("客户端尚未配置文件服务，请联系管理员。");
+        var workspace = WorkspaceViewModel.ForSession(this, session, _settings);
+        try
+        {
+            await workspace.InitializeAsync();
+        }
+        catch
+        {
+            // Keep the login/register page active so its caller can present the failure. A
+            // partially started agent is best-effort logged out and stopped before its client
+            // objects are disposed.
+            if (workspace.Transfers is { } transfers)
+            {
+                try { await transfers.PauseAllAsync(); } catch { }
+                try { await transfers.LogoutAgentAsync(); } catch { }
+                try { await transfers.StopAgentAsync(); } catch { }
+            }
+            try { await workspace.DisposeAsync(); } catch { }
+            throw;
+        }
         CurrentPage = workspace;
-        await workspace.InitializeAsync();
     }
 }

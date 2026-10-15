@@ -1,4 +1,6 @@
-# 文件操作：上传（多文件 / 文件夹）、重命名、复制、删除
+# 历史文档：旧 SMB 文件操作方案（已被后续架构取代）
+
+> 本文记录 2026-10-14 的旧实现和隔离 SMB 测试，不代表当前产品行为。当前文件功能通过 SQLite 文件目录 API 管理逻辑路径、版本、软删除、恢复和变更；WPF 不直接访问 SMB，文件内容由 Rust 传输服务处理。请以 [`ARCHITECTURE.md`](../ARCHITECTURE.md) 和 [`docs/file-storage-v2.md`](file-storage-v2.md) 为准。
 
 日期：2026-10-14。分支：`codex/ugos-acl-visitor`。
 

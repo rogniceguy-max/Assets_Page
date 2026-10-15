@@ -7,11 +7,10 @@ namespace MuYingDrive.UpdateCore;
 /// Refreshes the connection fields of an existing <c>nas-client.json</c>.
 /// </summary>
 /// <remarks>
-/// The file carries a <c>CredentialProfile</c> naming which Credential Manager entries
-/// hold the session token and SMB password, so a reinstall must never replace it
-/// wholesale with whatever the installer was built with: that would point the client at a
-/// different profile and silently drop the user's stored login, forcing them to sign in
-/// again.
+/// The file carries a <c>CredentialProfile</c> naming which Credential Manager entry holds
+/// the app session token, so a reinstall must never replace it wholesale with whatever the
+/// installer was built with: that would point the client at a different profile and
+/// silently drop the user's stored login, forcing them to sign in again.
 ///
 /// The connection fields are the opposite case. They hold the NAS address and the TLS
 /// pin, and they are the one thing a new installer carries that the update channel cannot
@@ -25,8 +24,9 @@ public static class ClientConfigurationMerge
     private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
 
     /// <summary>
-    /// Rewrites the address, pin and share root of an existing configuration, leaving
-    /// every other field — <c>CredentialProfile</c> included — exactly as it was.
+    /// Rewrites the API address and certificate pin of an existing configuration, removes
+    /// the retired <c>ShareRoot</c> field, and leaves other fields — including
+    /// <c>CredentialProfile</c> — as they were.
     /// </summary>
     /// <param name="updatedJson">
     /// The text to write. Identical to <paramref name="existingJson"/> when nothing
@@ -38,8 +38,7 @@ public static class ClientConfigurationMerge
     /// and the client would reject it at every start.
     /// </returns>
     public static bool TryRefreshConnectionFields(
-        string existingJson, string apiBaseUri, string certificateSha256, string shareRoot,
-        out string updatedJson)
+        string existingJson, string apiBaseUri, string certificateSha256, out string updatedJson)
     {
         updatedJson = existingJson;
         if (string.IsNullOrWhiteSpace(existingJson)) return false;
@@ -59,9 +58,9 @@ public static class ClientConfigurationMerge
         // Deliberately not short-circuiting: every field is compared so a change to any of
         // them is noticed, and || would skip the later comparisons once one already differs.
         var changed =
+            document.Remove("ShareRoot") |
             SetField(document, "ApiBaseUri", apiBaseUri) |
-            SetField(document, "CertificateSha256", certificateSha256) |
-            SetField(document, "ShareRoot", shareRoot);
+            SetField(document, "CertificateSha256", certificateSha256);
 
         if (changed) updatedJson = document.ToJsonString(WriteOptions);
         return true;

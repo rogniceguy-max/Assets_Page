@@ -1,7 +1,7 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Windows;
-using System.ComponentModel;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -12,268 +12,101 @@ using MuYingDrive.NativeWpf.Views;
 
 namespace MuYingDrive.NativeWpf.ViewModels;
 
+/// <summary>Logical file browser. No item in this view contains or opens a NAS path.</summary>
 public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
 {
-    private sealed record UploadCandidate(string LocalPath, string DestinationDirectory, string Name);
-
-    private sealed record UploadCandidateBatch(
-        UploadCandidate[] Candidates,
-        (string Directory, string DesiredName)[] NameRequests);
-
-    private sealed record ResolvedUploadBatch(
-        (string LocalPath, string DestinationPath)[] Files,
-        string[] Rejected);
-
+    private readonly V2ApiClient _api;
+    private readonly DriveSession _session;
     private readonly TransferViewModel _transfers;
+    private readonly RustTransferAgentClient _agent;
+    private readonly string _clientId;
+    private readonly FileThumbnailProvider _thumbnailProvider;
     private readonly WindowsFilePickerService _filePicker = new();
-    private readonly SmbSpaceResolver _spaces;
-    private readonly SmbFileCatalog _catalog;
-    private readonly SmbFileMutations _mutations;
     private string _searchText = string.Empty;
     private bool _isGridView = true;
     private string _spaceTitle = string.Empty;
     private IReadOnlyList<DriveFileItem> _selection = [];
-    private string _currentRoot = string.Empty;
     private string _currentDirectory = string.Empty;
     private bool _isLoading;
     private string _errorMessage = string.Empty;
-    // What the browser is currently pointed at: a root and the rules that apply inside it.
-    // Assigned in the constructor before anything reads it.
-    private SpaceScope _scope = null!;
+    private string _truncationNotice = string.Empty;
+    private bool _isRecycleBin;
+    private string? _pendingRefreshLogicalPath;
+    private LogicalFileScope _scope = new("all", canWrite: false, mediaKind: "image", flatten: true);
     private int _loadRequestId;
-    private readonly bool _smbConnected;
-    private readonly string _smbConnectionError;
-    private readonly DriveSession _session;
+    private DispatcherTimer? _refreshTimer;
 
-    public FilesViewModel(DriveSession session, NasClientSettings settings, TransferViewModel transfers)
+    public FilesViewModel(V2ApiClient api, DriveSession session, TransferViewModel transfers,
+        RustTransferAgentClient agent, string clientId)
     {
-        ArgumentNullException.ThrowIfNull(session);
-        _session = session;
-        _transfers = transfers;
-        // One resolver for both halves: reads and writes must not disagree about what
-        // "inside the share" means, which is what happened when each carried its own copy.
-        _spaces = new SmbSpaceResolver(settings, session.User);
-        _catalog = new SmbFileCatalog(_spaces);
-        _mutations = new SmbFileMutations(_spaces);
+        _api = api ?? throw new ArgumentNullException(nameof(api));
+        _session = session ?? throw new ArgumentNullException(nameof(session));
+        _transfers = transfers ?? throw new ArgumentNullException(nameof(transfers));
+        _agent = agent ?? throw new ArgumentNullException(nameof(agent));
+        _clientId = clientId ?? throw new ArgumentNullException(nameof(clientId));
+        _thumbnailProvider = new FileThumbnailProvider(_api, _session, _transfers, _clientId);
         Files = [];
         ItemsView = CollectionViewSource.GetDefaultView(Files);
         ItemsView.Filter = FilterItem;
-        // Lands on the global 图片 view, which is the first entry in the sidebar. The
-        // workspace re-activates it on the way in, so this is the state a browser is in
-        // before anything has been clicked rather than a second source of truth.
         SpaceTitle = ProjectNavigation.ImageGroupName;
-        _scope = _spaces.ResolveProjectsScope(SpaceMediaKind.Images);
-        _currentRoot = _scope.Root;
-        _currentDirectory = _currentRoot;
-        _smbConnected = session.SmbConnection.Succeeded;
-        _smbConnectionError = session.SmbConnection.HasCredentialConflict
-            ? "Windows 已使用其他凭据连接此 NAS。请在资源管理器中关闭该连接，再重新登录。"
-            : "尚未建立 NAS 文件连接，请检查网络或账号凭据。";
-        if (!session.SmbConnection.Succeeded)
-            ErrorMessage = _smbConnectionError;
+        _transfers.UploadCompleted += HandleUploadCompleted;
 
         ToggleGridCommand = new RelayCommand(_ => SetViewMode(true));
         ToggleListCommand = new RelayCommand(_ => SetViewMode(false));
         SelectAllCommand = new RelayCommand(_ => SelectionRequested?.Invoke(SelectionRequest.SelectAll));
         ClearSelectionCommand = new RelayCommand(_ => SelectionRequested?.Invoke(SelectionRequest.Clear));
         OpenCommand = new RelayCommand<DriveFileItem>(OpenItem);
-        DownloadCommand = new RelayCommand<DriveFileItem>(DownloadItem);
+        DownloadCommand = new RelayCommand<DriveFileItem>(item => _ = DownloadItemAsync(item));
         DetailsCommand = new RelayCommand<DriveFileItem>(ShowDetails);
+        HistoryCommand = new RelayCommand<DriveFileItem>(item => _ = ShowHistoryAsync(item), item => item?.FileId is not null);
+        RestoreCommand = new AsyncRelayCommand(parameter => RestoreAsync(parameter as DriveFileItem), _ => CanRestore);
+        ToggleRecycleBinCommand = new RelayCommand(_ => ToggleRecycleBin(), _ => CanShowRecycleBin);
         UploadCommand = new RelayCommand(_ => PickUpload(), _ => CanUpload);
         NavigateUpCommand = new RelayCommand(_ => NavigateUp(), _ => CanNavigateUp);
         UploadFolderCommand = new AsyncRelayCommand(_ => UploadFolderAsync(), _ => CanUpload);
-        RenameCommand = new AsyncRelayCommand(
-            parameter => RenameAsync(parameter as DriveFileItem), _ => CanModify);
-        DuplicateCommand = new AsyncRelayCommand(
-            parameter => DuplicateAsync(parameter as DriveFileItem), _ => CanModify);
-        DeleteCommand = new AsyncRelayCommand(
-            parameter => DeleteAsync(parameter as DriveFileItem), _ => CanModify);
-        // 移动到 keeps its menu entry and keeps saying so. Moving needs a destination
-        // picker that browses the NAS, which is a separate piece of work; continuing to
-        // explain that is better than silently removing an entry the user has seen.
-        UnsupportedEditCommand = new RelayCommand<string>(ShowNotYetAvailable, _ => CanModify);
-
-        // So a finished upload shows up without the user navigating away and back.
-        _transfers.UploadCompleted += HandleUploadCompleted;
+        RenameCommand = new AsyncRelayCommand(parameter => RenameAsync(parameter as DriveFileItem), _ => CanModify);
+        MoveCommand = new AsyncRelayCommand(parameter => MoveAsync(parameter as DriveFileItem), _ => CanModify);
+        DeleteCommand = new AsyncRelayCommand(parameter => DeleteAsync(parameter as DriveFileItem), _ => CanModify);
     }
-
-    private DispatcherTimer? _refreshTimer;
-
-    /// <summary>
-    /// Reloads the listing when an upload finishes in the folder currently on screen.
-    /// </summary>
-    /// <remarks>
-    /// Coalesced through a short timer: a folder upload completes hundreds of files in
-    /// quick succession, and re-reading the directory once per file would spend the whole
-    /// transfer re-enumerating. Uploads into any other folder are ignored — the user is
-    /// not looking at them, and each refresh is a round trip to the NAS.
-    /// </remarks>
-    private void HandleUploadCompleted(string directory)
-    {
-        if (!string.Equals(
-                directory.TrimEnd(Path.DirectorySeparatorChar),
-                _currentDirectory.TrimEnd(Path.DirectorySeparatorChar),
-                StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        _refreshTimer ??= CreateRefreshTimer();
-        _refreshTimer.Stop();
-        _refreshTimer.Start();
-    }
-
-    private DispatcherTimer CreateRefreshTimer()
-    {
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
-        timer.Tick += (_, _) =>
-        {
-            timer.Stop();
-            _ = LoadCurrentDirectoryAsync(preserveSelection: true);
-        };
-        return timer;
-    }
-
-    /// <summary>
-    /// Detaches from the transfer queue.
-    /// </summary>
-    /// <remarks>
-    /// Without this the browser keeps being told about uploads after the workspace is torn
-    /// down, and reloads a directory nothing is showing any more.
-    /// </remarks>
-    public void Dispose()
-    {
-        _transfers.UploadCompleted -= HandleUploadCompleted;
-        _refreshTimer?.Stop();
-        _refreshTimer = null;
-    }
-
-    /// <summary>
-    /// Handles an .xlsx the user opened from the browser, returning false to decline it.
-    /// </summary>
-    /// <remarks>
-    /// Assigned by the workspace, because only it can turn a path into the ids the workbook
-    /// routes take: the project folder name comes from the path, and the file id comes from
-    /// the sidebar tree that was built from the backend. Re-deriving the id here would be a
-    /// second implementation of an encoding the server owns.
-    /// </remarks>
-    public Func<string, bool>? WorkbookOpener { get; set; }
 
     public event Action<SelectionRequest>? SelectionRequested;
-
     public ObservableCollection<DriveFileItem> Files { get; }
     public ICollectionView ItemsView { get; }
 
     public string SearchText
     {
         get => _searchText;
-        set
-        {
-            if (SetProperty(ref _searchText, value))
-            {
-                ItemsView.Refresh();
-                OnPropertyChanged(nameof(IsEmpty));
-                OnPropertyChanged(nameof(EmptyMessage));
-            }
-        }
+        set { if (SetProperty(ref _searchText, value)) { ItemsView.Refresh(); OnPropertyChanged(nameof(IsEmpty)); OnPropertyChanged(nameof(EmptyMessage)); } }
     }
-
     public bool IsGridView { get => _isGridView; set => SetProperty(ref _isGridView, value); }
     public string SpaceTitle
     {
         get => _spaceTitle;
-        private set
-        {
-            if (SetProperty(ref _spaceTitle, value))
-                OnPropertyChanged(nameof(CurrentPathLabel));
-        }
+        private set { if (SetProperty(ref _spaceTitle, value)) OnPropertyChanged(nameof(CurrentPathLabel)); }
     }
     public int SelectedCount => _selection.Count;
     public string SelectedLabel => SelectedCount == 1 ? "已选择 1 项" : $"已选择 {SelectedCount} 项";
     public bool HasSelection => SelectedCount > 0;
-    public bool IsReadOnly => !_scope.CanWrite || _session.User.Id == 0;
-
-    private string _truncationNotice = string.Empty;
-
-    /// <summary>
-    /// Set when the view is showing only part of what it found.
-    /// </summary>
-    /// <remarks>
-    /// Separate from <see cref="ErrorMessage"/> on purpose: nothing failed, but the list is
-    /// not the whole answer, and a user who cannot tell the difference will conclude that a
-    /// picture is missing from the archive rather than off the end of the list.
-    /// </remarks>
-    public string TruncationNotice
-    {
-        get => _truncationNotice;
-        private set => SetProperty(ref _truncationNotice, value);
-    }
-    public bool IsLoading
-    {
-        get => _isLoading;
-        private set
-        {
-            if (SetProperty(ref _isLoading, value))
-            {
-                RefreshWriteState();
-                OnPropertyChanged(nameof(IsEmpty));
-            }
-        }
-    }
-    public string ErrorMessage
-    {
-        get => _errorMessage;
-        private set
-        {
-            if (SetProperty(ref _errorMessage, value))
-            {
-                OnPropertyChanged(nameof(HasError));
-                OnPropertyChanged(nameof(IsEmpty));
-            }
-        }
-    }
+    public bool IsReadOnly => !_scope.CanWrite || _session.IsReadOnly || _isRecycleBin || _scope.ProjectId is not null;
+    public bool CanUpload => !IsReadOnly && !IsLoading;
+    // Generic project file operations cannot atomically update the workbook's video
+    // references. Keep project file trees read-only until the backend can make those
+    // changes together; project video uploads remain available through the workbook flow.
+    public bool CanModify => !IsReadOnly && !IsLoading;
+    public bool CanRestore => _isRecycleBin && !IsLoading && CanWriteOrRestoreProjectFiles;
+    private bool CanWriteOrRestoreProjectFiles => !_session.IsReadOnly && (_scope.CanWrite || _scope.ProjectId is not null);
+    public bool CanShowRecycleBin => !_session.IsReadOnly && !_scope.Flatten && _scope.ScopeId != "all";
+    public bool IsRecycleBin { get => _isRecycleBin; private set { if (SetProperty(ref _isRecycleBin, value)) { OnPropertyChanged(nameof(IsReadOnly)); OnPropertyChanged(nameof(CanUpload)); OnPropertyChanged(nameof(CanModify)); OnPropertyChanged(nameof(CanRestore)); OnPropertyChanged(nameof(RecycleBinButtonLabel)); RefreshCommandStates(); } } }
+    public string RecycleBinButtonLabel => IsRecycleBin ? "返回文件" : "回收站";
+    public string TruncationNotice { get => _truncationNotice; private set => SetProperty(ref _truncationNotice, value); }
+    public bool IsLoading { get => _isLoading; private set { if (SetProperty(ref _isLoading, value)) { OnPropertyChanged(nameof(IsEmpty)); RefreshCommandStates(); } } }
+    public string ErrorMessage { get => _errorMessage; private set { if (SetProperty(ref _errorMessage, value)) { OnPropertyChanged(nameof(HasError)); OnPropertyChanged(nameof(IsEmpty)); } } }
     public bool HasError => !string.IsNullOrWhiteSpace(ErrorMessage);
     public bool IsEmpty => !IsLoading && !HasError && ItemsView.IsEmpty;
-    public string EmptyMessage => string.IsNullOrWhiteSpace(SearchText) ? "此文件夹为空" : "没有匹配的文件";
-    /// <summary>
-    /// Whether this space accepts writes at all: connected, not the read-only other
-    /// department, and not mid-reload.
-    /// </summary>
-    /// <remarks>
-    /// Both write affordances come from this one condition. They used to disagree —
-    /// <see cref="CanModify"/> was the constant true, so the edit menu appeared while the
-    /// NAS was offline and inside the read-only space, and choosing an entry explained that
-    /// it was unimplemented rather than that it was not allowed here.
-    /// </remarks>
-    private bool CanWrite => _smbConnected && !IsReadOnly && !IsLoading;
-
-    public bool CanUpload => CanWrite;
-
-    /// <summary>
-    /// Whether rename, duplicate and delete are offered here. The shared view uses this to
-    /// omit those menu entries entirely, for the read-only space and for the tour.
-    /// </summary>
-    public bool CanModify => CanWrite;
-
-    public string LoadingMessage => "正在读取 NAS 文件…";
-    public bool CanNavigateUp => !string.Equals(_currentDirectory, _currentRoot, StringComparison.OrdinalIgnoreCase);
-    public string CurrentPathLabel
-    {
-        get
-        {
-            if (!CanNavigateUp)
-                return SpaceTitle;
-            try
-            {
-                var relative = Path.GetRelativePath(_currentRoot, _currentDirectory).Replace('\\', '/');
-                return relative == "." ? SpaceTitle : $"{SpaceTitle} / {relative}";
-            }
-            catch (ArgumentException)
-            {
-                return SpaceTitle;
-            }
-        }
-    }
+    public string EmptyMessage => IsRecycleBin ? "回收站为空" : string.IsNullOrWhiteSpace(SearchText) ? "此文件夹为空" : "没有匹配的文件";
+    public string LoadingMessage => "正在读取文件目录…";
+    public bool CanNavigateUp => !string.IsNullOrEmpty(_currentDirectory);
+    public string CurrentPathLabel => string.IsNullOrEmpty(_currentDirectory) ? SpaceTitle : $"{SpaceTitle} / {_currentDirectory}";
 
     public RelayCommand ToggleGridCommand { get; }
     public RelayCommand ToggleListCommand { get; }
@@ -282,20 +115,16 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
     public RelayCommand<DriveFileItem> OpenCommand { get; }
     public RelayCommand<DriveFileItem> DownloadCommand { get; }
     public RelayCommand<DriveFileItem> DetailsCommand { get; }
+    public RelayCommand<DriveFileItem> HistoryCommand { get; }
+    public AsyncRelayCommand RestoreCommand { get; }
+    public RelayCommand ToggleRecycleBinCommand { get; }
     public RelayCommand UploadCommand { get; }
     public RelayCommand NavigateUpCommand { get; }
-
-    // Async for the four write operations: a folder copy or a recursive delete can take
-    // minutes, and these disable themselves while running, which is the only progress
-    // indication a directory copy can honestly give.
     public AsyncRelayCommand UploadFolderCommand { get; }
     public AsyncRelayCommand RenameCommand { get; }
-    public AsyncRelayCommand DuplicateCommand { get; }
+    public AsyncRelayCommand MoveCommand { get; }
     public AsyncRelayCommand DeleteCommand { get; }
-    public RelayCommand<string> UnsupportedEditCommand { get; }
 
-    // Explicit interface implementations: the concrete command types stay available for
-    // RaiseCanExecuteChanged, while the shared view sees only ICommand.
     ICommand IFileBrowser.OpenCommand => OpenCommand;
     ICommand IFileBrowser.DownloadCommand => DownloadCommand;
     ICommand IFileBrowser.NavigateUpCommand => NavigateUpCommand;
@@ -304,713 +133,475 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
     ICommand IFileBrowser.UploadCommand => UploadCommand;
     ICommand IFileBrowser.UploadFolderCommand => UploadFolderCommand;
     ICommand IFileBrowser.RenameCommand => RenameCommand;
-    ICommand IFileBrowser.DuplicateCommand => DuplicateCommand;
+    ICommand IFileBrowser.MoveCommand => MoveCommand;
     ICommand IFileBrowser.DeleteCommand => DeleteCommand;
-    ICommand IFileBrowser.UnsupportedEditCommand => UnsupportedEditCommand;
+    ICommand IFileBrowser.HistoryCommand => HistoryCommand;
+    ICommand IFileBrowser.RestoreCommand => RestoreCommand;
+    ICommand IFileBrowser.ToggleRecycleBinCommand => ToggleRecycleBinCommand;
     ICommand IFileBrowser.DetailsCommand => DetailsCommand;
 
-    public async Task InitializeAsync() => await LoadCurrentDirectoryAsync();
+    public async Task InitializeAsync() => await LoadCurrentDirectoryAsync().ConfigureAwait(true);
 
-    /// <summary>
-    /// Points the browser at one of the global navigation entries.
-    /// </summary>
-    /// <remarks>
-    /// These entries are views rather than pages: each is this same browser pointed at a
-    /// different scope, which is why they are handled here instead of as separate pages.
-    /// Returns false for a key that is not one of them, so the caller can fall through to a
-    /// real page rather than showing an empty browser.
-    /// </remarks>
     public bool ActivateNavigation(string key)
     {
         switch (key)
         {
-            case "图片":
-                SetScope(_spaces.ResolveProjectsScope(SpaceMediaKind.Images), ProjectNavigation.ImageGroupName);
-                return true;
-            case "视频":
-                SetScope(_spaces.ResolveProjectsScope(SpaceMediaKind.Videos), ProjectNavigation.VideoGroupName);
-                return true;
-            case "个人空间":
-                SetScope(_spaces.ResolveScope(DriveSpaceKind.Personal), "个人空间");
-                return true;
-            default:
-                return false;
+            case "图片": SetScope(new LogicalFileScope("all", canWrite: false, mediaKind: "image", flatten: true), ProjectNavigation.ImageGroupName); return true;
+            case "视频": SetScope(new LogicalFileScope("all", canWrite: false, mediaKind: "video", flatten: true), ProjectNavigation.VideoGroupName); return true;
+            case "个人空间": SetScope(new LogicalFileScope($"personal:{_session.User.Id}"), "个人空间"); return true;
+            default: return false;
         }
     }
 
-    /// <summary>Opens one project's directory, where writing is allowed.</summary>
-    public void OpenProject(string projectName) =>
-        SetScope(_spaces.ResolveProjectScope(projectName), projectName);
+    public void OpenProject(string projectId, string projectName) =>
+        SetScope(new LogicalFileScope($"project:{projectId}", projectId), projectName);
 
-    /// <summary>Opens one project, showing only one kind of its media.</summary>
-    public void OpenProjectMedia(string projectName, SpaceMediaKind media) =>
-        SetScope(
-            _spaces.ResolveProjectScope(projectName, media),
-            media == SpaceMediaKind.Images ? ProjectNavigation.ImageGroupName : ProjectNavigation.VideoGroupName);
+    public void OpenProjectMedia(string projectId, string projectName, SpaceMediaKind media) =>
+        SetScope(new LogicalFileScope($"project:{projectId}", projectId, mediaKind: media == SpaceMediaKind.Images ? "image" : "video"),
+            $"{projectName} / {(media == SpaceMediaKind.Images ? ProjectNavigation.ImageGroupName : ProjectNavigation.VideoGroupName)}");
 
-    /// <summary>
-    /// Points the browser at a scope: a directory, what may be done in it, and which of its
-    /// files to list.
-    /// </summary>
-    public void SetScope(SpaceScope scope, string title)
+    private void SetScope(LogicalFileScope scope, string title)
     {
-        ArgumentNullException.ThrowIfNull(scope);
         _scope = scope;
         SpaceTitle = title;
-        _currentRoot = _scope.Root;
-        // Belongs to the listing that produced it, not to the browser: carrying it into the
-        // next scope would claim a limit that is no longer being applied.
+        _currentDirectory = scope.RootPath;
+        IsRecycleBin = false;
         TruncationNotice = string.Empty;
-        _currentDirectory = _currentRoot;
         OnPropertyChanged(nameof(CurrentPathLabel));
-        OnPropertyChanged(nameof(IsReadOnly));
         OnPropertyChanged(nameof(CanNavigateUp));
-        RefreshWriteState();
-        NavigateUpCommand.RaiseCanExecuteChanged();
+        OnPropertyChanged(nameof(IsReadOnly));
+        RefreshCommandStates();
         _ = LoadCurrentDirectoryAsync();
     }
 
-    /// <summary>
-    /// Records what the list has selected.
-    /// </summary>
-    /// <remarks>
-    /// The items, not a count: rename, duplicate and delete act on the selection, and the
-    /// count is only ever a display of it.
-    /// </remarks>
     public void UpdateSelection(IReadOnlyList<DriveFileItem> items)
     {
         _selection = items ?? [];
-        OnPropertyChanged(nameof(SelectedCount));
-        OnPropertyChanged(nameof(SelectedLabel));
-        OnPropertyChanged(nameof(HasSelection));
-        DeleteCommand.RaiseCanExecuteChanged();
-        DuplicateCommand.RaiseCanExecuteChanged();
-        RenameCommand.RaiseCanExecuteChanged();
+        OnPropertyChanged(nameof(SelectedCount)); OnPropertyChanged(nameof(SelectedLabel)); OnPropertyChanged(nameof(HasSelection));
+        DeleteCommand.RaiseCanExecuteChanged(); MoveCommand.RaiseCanExecuteChanged(); RenameCommand.RaiseCanExecuteChanged();
+        HistoryCommand.RaiseCanExecuteChanged(); RestoreCommand.RaiseCanExecuteChanged();
     }
 
-    /// <summary>
-    /// Re-announces everything that depends on being connected, writable and idle.
-    /// </summary>
-    /// <remarks>
-    /// Both the visibility of the edit entries and their enabled state hang off one
-    /// condition, so they are refreshed together. Announcing them from separate places is
-    /// how the menu ends up still offering rename after a switch to the read-only space.
-    /// </remarks>
-    private void RefreshWriteState()
+    private bool FilterItem(object item) => item is DriveFileItem file &&
+        (string.IsNullOrWhiteSpace(SearchText) || file.Name.Contains(SearchText.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    private void SetViewMode(bool grid)
     {
-        OnPropertyChanged(nameof(CanUpload));
-        OnPropertyChanged(nameof(CanModify));
-        UploadCommand.RaiseCanExecuteChanged();
-        UploadFolderCommand.RaiseCanExecuteChanged();
-        RenameCommand.RaiseCanExecuteChanged();
-        DuplicateCommand.RaiseCanExecuteChanged();
-        DeleteCommand.RaiseCanExecuteChanged();
-        UnsupportedEditCommand.RaiseCanExecuteChanged();
-    }
-
-    private void SetViewMode(bool showGrid)
-    {
-        if (IsGridView == showGrid)
-        {
-            return;
-        }
-
-        SelectionRequested?.Invoke(SelectionRequest.Clear);
-        UpdateSelection([]);
-        IsGridView = showGrid;
-    }
-
-    private bool FilterItem(object item)
-    {
-        if (item is not DriveFileItem file)
-        {
-            return false;
-        }
-
-        return string.IsNullOrWhiteSpace(SearchText) || file.Name.Contains(SearchText.Trim(), StringComparison.OrdinalIgnoreCase);
+        if (IsGridView == grid) return;
+        SelectionRequested?.Invoke(SelectionRequest.Clear); UpdateSelection([]); IsGridView = grid;
     }
 
     private void OpenItem(DriveFileItem? item)
     {
-        if (item is null)
-        {
-            return;
-        }
-
+        if (item is null) return;
         if (item.IsDirectory)
         {
-            var candidate = Path.GetFullPath(item.FullPath);
-            if (IsWithinCurrentRoot(candidate))
-            {
-                _currentDirectory = candidate;
-                OnPropertyChanged(nameof(CurrentPathLabel));
-                OnPropertyChanged(nameof(CanNavigateUp));
-                NavigateUpCommand.RaiseCanExecuteChanged();
-                _ = LoadCurrentDirectoryAsync();
-            }
+            if (_scope.Flatten) return;
+            _currentDirectory = LogicalFileScope.Normalize(item.LogicalPath);
+            OnPropertyChanged(nameof(CurrentPathLabel)); OnPropertyChanged(nameof(CanNavigateUp)); NavigateUpCommand.RaiseCanExecuteChanged();
+            _ = LoadCurrentDirectoryAsync();
             return;
         }
+        _ = OpenFileAsync(item);
+    }
 
-        if (!_smbConnected)
-        {
-            MessageBox.Show(_smbConnectionError, "NAS 未连接", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        // A workbook belongs to this application. Handing it to Windows opens Excel, which is
-        // both the wrong window and a second writer on a file the server tracks revisions
-        // for. The host decides whether it recognises the file; false means fall through and
-        // let the default application have it, which is right for everything else.
-        if (Path.GetExtension(item.FullPath).Equals(".xlsx", StringComparison.OrdinalIgnoreCase)
-            && WorkbookOpener is { } openWorkbook
-            && openWorkbook(item.FullPath))
-        {
-            return;
-        }
-
+    private async Task OpenFileAsync(DriveFileItem item)
+    {
+        if (string.IsNullOrWhiteSpace(item.FileId)) return;
         try
         {
-            Process.Start(new ProcessStartInfo(item.FullPath) { UseShellExecute = true });
+            var localPath = GetOpenCachePath(item);
+            if (File.Exists(localPath)) { StartLocalFile(localPath); return; }
+            var ticket = await _api.CreateFileDownloadTicketAsync(_session.SessionToken, item.FileId, _clientId, item.RevisionId);
+            var operation = await _transfers.QueueDownloadAsync(ticket, localPath, item.Name);
+            if (operation is null)
+            {
+                MessageBox.Show(_transfers.OperationErrorMessage, "无法打开文件", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            _ = OpenWhenDownloadedAsync(operation, localPath);
         }
-        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is V2ApiException or IOException or UnauthorizedAccessException)
         {
-            MessageBox.Show("无法通过 Windows 默认应用打开此文件。请检查文件权限或关联软件。", "无法打开文件", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(exception.Message, "无法打开文件", MessageBoxButton.OK, MessageBoxImage.Information);
         }
     }
 
-    private void PickUpload()
+    private async Task OpenWhenDownloadedAsync(string operationId, string localPath)
     {
-        var paths = _filePicker.PickFiles();
-        if (paths.Count == 0) return;
-        _ = UploadAsync(paths);
+        try
+        {
+            await _transfers.WaitForTransferAsync(operationId).ConfigureAwait(false);
+            var dispatcher = Application.Current?.Dispatcher;
+            if (dispatcher is null) return;
+            if (dispatcher.CheckAccess()) StartLocalFile(localPath);
+            else await dispatcher.InvokeAsync(() => StartLocalFile(localPath));
+        }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException or TimeoutException or OperationCanceledException)
+        {
+            // The transfer task itself remains visible in the transfer queue with its failure state.
+        }
+    }
+
+    private static void StartLocalFile(string path)
+    {
+        try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
+        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException)
+        { MessageBox.Show("无法通过 Windows 默认应用打开已下载文件。", "无法打开文件", MessageBoxButton.OK, MessageBoxImage.Information); }
+    }
+
+    private async Task DownloadItemAsync(DriveFileItem? item)
+    {
+        if (item is null || item.IsDirectory || string.IsNullOrWhiteSpace(item.FileId)) return;
+        var destination = _filePicker.PickDownloadDestination(item.Name);
+        if (string.IsNullOrWhiteSpace(destination)) return;
+        if (File.Exists(destination) || Directory.Exists(destination))
+        { MessageBox.Show("本机目标位置已有同名项目，下载不会覆盖。", "无法下载", MessageBoxButton.OK, MessageBoxImage.Information); return; }
+        try
+        {
+            var ticket = await _api.CreateFileDownloadTicketAsync(_session.SessionToken, item.FileId, _clientId, item.RevisionId);
+            if (!await _transfers.AddDownloadAsync(ticket, destination, item.Name))
+                MessageBox.Show(_transfers.OperationErrorMessage, "无法开始下载", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (V2ApiException exception) { MessageBox.Show(exception.Message, "无法下载", MessageBoxButton.OK, MessageBoxImage.Information); }
+    }
+
+    private string GetOpenCachePath(DriveFileItem item)
+    {
+        var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MuYingDrive", "OpenFiles");
+        Directory.CreateDirectory(root);
+        var safeName = string.Concat(item.Name.Select(character => Path.GetInvalidFileNameChars().Contains(character) ? '_' : character));
+        return Path.Combine(root, $"{item.FileId}-{item.RevisionId ?? item.Version.ToString()}-{safeName}");
     }
 
     private async Task UploadFolderAsync()
     {
         var folder = _filePicker.PickFolder();
         if (string.IsNullOrWhiteSpace(folder)) return;
-
-        // Keep the destination stable while the local walk and SMB preflight run in the
-        // background; the user may navigate to another folder while either one is pending.
-        var uploadScope = _scope;
-        var destinationRoot = _currentDirectory;
         LocalUploadPlan plan;
-        try
-        {
-            plan = await Task.Run(() => LocalUploadWalker.Enumerate(folder));
-        }
-        catch (Exception exception) when (IsMutationFailure(exception))
-        {
-            MessageBox.Show(exception.Message, "无法读取文件夹", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
+        try { plan = await Task.Run(() => LocalUploadWalker.Enumerate(folder)); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        { MessageBox.Show(exception.Message, "无法读取文件夹", MessageBoxButton.OK, MessageBoxImage.Information); return; }
         if (plan.Files.Count == 0 && plan.Directories.Count <= 1)
-        {
-            MessageBox.Show("所选文件夹是空的。", "无法上传", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
+        { MessageBox.Show("所选文件夹是空的。", "无法上传", MessageBoxButton.OK, MessageBoxImage.Information); return; }
 
-        try
-        {
-            // Created up front rather than left to each transfer's implicit parent creation:
-            // that would never produce an empty subfolder, and a permission problem would
-            // arrive as one failed transfer per file instead of one clear message.
-            var destinationDirectories = await Task.Run(() => plan.Directories
-                .Select(relative => Path.Combine(destinationRoot, relative))
-                .ToArray());
-            await _mutations.EnsureDirectoriesAsync(uploadScope, destinationDirectories);
-        }
-        catch (Exception exception) when (IsMutationFailure(exception))
-        {
-            MessageBox.Show(exception.Message, "无法创建文件夹", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        var folderName = Path.GetFileName(folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        if (string.IsNullOrWhiteSpace(folderName)) folderName = folder;
-
-        var batch = await Task.Run(() => PrepareUploadCandidates(destinationRoot,
-            plan.Files.Select(entry => (entry.LocalPath, entry.RelativePath))));
-
-        IReadOnlyList<FreeNameResolution> nameResolutions;
-        try
-        {
-            nameResolutions = await _mutations.ResolveFreeNamesAsync(uploadScope, batch.NameRequests);
-        }
-        catch (Exception exception) when (IsMutationFailure(exception))
-        {
-            MessageBox.Show(exception.Message, "无法检查目标文件名", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        var resolved = await Task.Run(() => ResolveUploadCandidates(batch.Candidates, nameResolutions));
-
-        if (resolved.Files.Length > 0 || (plan.Files.Count == 0 && plan.Directories.Count > 1))
-        {
-            var result = await _transfers.AddFolderUploadAsync(folderName, destinationRoot, resolved.Files);
-            if (result.QueuedCount > 0 || (resolved.Files.Length == 0 && result.ErrorMessage is null))
-            {
-                var summary = result.QueuedCount == resolved.Files.Length
-                    ? $"已将文件夹「{folderName}」（共 {result.QueuedCount} 项）加入传输列表。"
-                    : $"已将文件夹「{folderName}」中的 {result.QueuedCount}/{resolved.Files.Length} 项加入传输列表。";
-                MessageBox.Show(summary, "开始上传", MessageBoxButton.OK, MessageBoxImage.Information);
-            }
-            if (result.ErrorMessage is not null)
-                MessageBox.Show(result.ErrorMessage, "部分文件未能加入上传", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-        if (resolved.Rejected.Length > 0)
-        {
-            var shown = string.Join("\n", resolved.Rejected.Take(10));
-            var more = resolved.Rejected.Length > 10 ? $"\n…还有 {resolved.Rejected.Length - 10} 项" : string.Empty;
-            MessageBox.Show($"以下 {resolved.Rejected.Length} 项未能加入上传：\n\n{shown}{more}",
-                "部分文件未上传", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-
-        // So the new folders are visible while the transfers are still running.
-        await LoadCurrentDirectoryAsync();
+        var prefix = Path.GetFileName(folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        var destinationRoot = string.IsNullOrEmpty(_currentDirectory) ? prefix : LogicalFileScope.Combine(_currentDirectory, prefix);
+        var files = plan.Files.Select(entry => (entry.LocalPath, LogicalFileScope.Combine(destinationRoot, entry.RelativePath.Replace('\\', '/')))).ToArray();
+        var directories = plan.Directories.Where(relative => !string.IsNullOrEmpty(relative))
+            .Select(relative => LogicalFileScope.Combine(destinationRoot, relative.Replace('\\', '/'))).Prepend(destinationRoot).ToArray();
+        var groupId = Guid.NewGuid().ToString("D");
+        var result = await _transfers.AddFolderUploadAsync(prefix, groupId, _scope.ScopeId, _scope.ProjectId,
+            files, directories);
+        if (result.QueuedCount > 0)
+            MessageBox.Show($"已将文件夹「{prefix}」中的 {result.QueuedCount} 项加入传输队列。", "开始上传", MessageBoxButton.OK, MessageBoxImage.Information);
+        if (!string.IsNullOrWhiteSpace(result.ErrorMessage))
+            MessageBox.Show(result.ErrorMessage, "部分文件未进入队列", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
-    /// <summary>
-    /// Queues uploads after resolving their names in one background pass over each
-    /// destination directory.
-    /// </summary>
-    /// <remarks>
-    /// The engine refuses a destination that already exists, so names are resolved before
-    /// queuing. The batch resolver reads each destination directory once and reserves each
-    /// chosen name in a case-insensitive set, so duplicate names in one directory receive
-    /// suffixes without repeatedly probing the SMB share.
-    /// </remarks>
-    private async Task UploadAsync(IReadOnlyList<string> localPaths)
+    private void PickUpload()
     {
-        if (!CanUpload || localPaths.Count == 0) return;
-
-        var uploadScope = _scope;
-        var destinationRoot = _currentDirectory;
-        var batch = await Task.Run(() => PrepareUploadCandidates(destinationRoot,
-            localPaths.Select(path => (path, Path.GetFileName(path) ?? string.Empty))));
-
-        IReadOnlyList<FreeNameResolution> nameResolutions;
-        try
+        var paths = _filePicker.PickFiles();
+        foreach (var path in paths)
         {
-            nameResolutions = await _mutations.ResolveFreeNamesAsync(uploadScope, batch.NameRequests);
+            var name = Path.GetFileName(path);
+            var logicalPath = string.IsNullOrEmpty(_currentDirectory) ? name : LogicalFileScope.Combine(_currentDirectory, name);
+            _ = _transfers.AddUploadAsync(path, _scope.ScopeId, _scope.ProjectId, logicalPath, displayName: name);
         }
-        catch (Exception exception) when (IsMutationFailure(exception))
-        {
-            MessageBox.Show(exception.Message, "无法检查目标文件名", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        var resolved = await Task.Run(() => ResolveUploadCandidates(batch.Candidates, nameResolutions));
-        var queued = 0;
-        var failedStarts = 0;
-        foreach (var (localPath, destinationPath) in resolved.Files)
-        {
-            if (await _transfers.AddUploadAsync(localPath, destinationPath))
-                queued++;
-            else
-                failedStarts++;
-        }
-
-        if (resolved.Rejected.Length > 0)
-        {
-            var shown = string.Join("\n", resolved.Rejected.Take(10));
-            var more = resolved.Rejected.Length > 10 ? $"\n…还有 {resolved.Rejected.Length - 10} 项" : string.Empty;
-            MessageBox.Show($"以下 {resolved.Rejected.Length} 项未能加入上传：\n\n{shown}{more}",
-                "部分文件未上传", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-        else if (queued > 1)
-        {
-            MessageBox.Show($"已将 {queued} 项加入传输列表。文件名重复时会自动加序号，不会覆盖。",
-                "开始上传", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-        if (failedStarts > 0)
-        {
-            MessageBox.Show($"有 {failedStarts} 项在启动传输时未能加入列表，请检查传输页面的错误提示后重试。",
-                "部分文件未上传", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-    }
-
-    private static UploadCandidateBatch PrepareUploadCandidates(
-        string destinationRoot, IEnumerable<(string LocalPath, string RelativePath)> entries)
-    {
-        var candidates = new List<UploadCandidate>();
-        var nameRequests = new List<(string Directory, string DesiredName)>();
-        foreach (var (localPath, relativePath) in entries)
-        {
-            var destinationDirectory = Path.GetDirectoryName(Path.Combine(destinationRoot, relativePath));
-            var name = Path.GetFileName(relativePath);
-            if (string.IsNullOrEmpty(destinationDirectory) || string.IsNullOrEmpty(name)) continue;
-
-            candidates.Add(new UploadCandidate(localPath, destinationDirectory, name));
-            nameRequests.Add((destinationDirectory, name));
-        }
-
-        return new UploadCandidateBatch(candidates.ToArray(), nameRequests.ToArray());
-    }
-
-    private static ResolvedUploadBatch ResolveUploadCandidates(
-        IReadOnlyList<UploadCandidate> candidates, IReadOnlyList<FreeNameResolution> nameResolutions)
-    {
-        var files = new List<(string LocalPath, string DestinationPath)>(candidates.Count);
-        var rejected = new List<string>();
-        for (var index = 0; index < candidates.Count; index++)
-        {
-            var candidate = candidates[index];
-            var resolution = nameResolutions[index];
-            if (resolution.Name is null)
-            {
-                // One unusable name must not abandon the other items in the batch.
-                if (resolution.Error is not null)
-                    rejected.Add($"{candidate.Name}：{resolution.Error.Message}");
-                continue;
-            }
-
-            files.Add((candidate.LocalPath, Path.Combine(candidate.DestinationDirectory, resolution.Name)));
-        }
-
-        return new ResolvedUploadBatch(files.ToArray(), rejected.ToArray());
     }
 
     private async Task RenameAsync(DriveFileItem? item)
     {
-        if (item is null || !CanModify) return;
-
-        // Pre-select the name without its extension: renaming almost always keeps the
-        // extension, and this makes that a single typed word rather than a careful edit.
+        if (item is null) return;
         var extension = item.IsDirectory ? string.Empty : Path.GetExtension(item.Name);
-        var dialog = new TextInputWindow(
-            "重命名", $"为“{item.Name}”输入新名称。", item.Name, "重命名", item.Name.Length - extension.Length);
+        var dialog = new TextInputWindow("重命名", $"为“{item.Name}”输入新名称。", item.Name, "重命名", item.Name.Length - extension.Length);
         ShowOwned(dialog);
         if (dialog.ShowDialog() != true) return;
-
         var newName = dialog.Value.Trim();
-        if (string.Equals(newName, item.Name, StringComparison.Ordinal)) return;
-
-        await RunMutationAsync($"无法重命名“{item.Name}”",
-            () => _mutations.RenameAsync(_scope, item.FullPath, newName));
+        if (string.IsNullOrWhiteSpace(newName) || newName == item.Name) return;
+        if (!item.IsDirectory && string.IsNullOrEmpty(Path.GetExtension(newName))) newName += extension;
+        var target = LogicalFileScope.Combine(LogicalFileScope.Parent(item.LogicalPath), newName);
+        await MoveToAsync(item, target);
     }
 
-    private async Task DuplicateAsync(DriveFileItem? clicked)
+    private async Task MoveAsync(DriveFileItem? item)
     {
-        var targets = TargetsFor(clicked);
-        if (targets.Count == 0 || !CanModify) return;
+        if (item is null) return;
+        var dialog = new TextInputWindow("移动到", "输入目标逻辑路径（相对于当前项目或个人空间）。", item.LogicalPath, "移动");
+        ShowOwned(dialog);
+        if (dialog.ShowDialog() != true) return;
+        await MoveToAsync(item, dialog.Value.Trim());
+    }
 
-        var failures = new List<string>();
-        foreach (var target in targets)
+    private async Task MoveToAsync(DriveFileItem item, string targetPath)
+    {
+        try
         {
-            try
+            var target = LogicalFileScope.Normalize(targetPath);
+            if (item.IsDirectory)
             {
-                await _mutations.DuplicateInPlaceAsync(_scope, target.FullPath);
+                await _api.MutateDirectoryAsync(_session.SessionToken, item.DirectoryId!, new DirectoryOperationRequest
+                {
+                    OperationId = Guid.NewGuid().ToString("D"), ClientId = _clientId, Action = "move", ScopeId = item.ScopeId,
+                    ProjectId = item.ProjectId, ExpectedVersion = item.Version,
+                    TargetScopeId = _scope.ScopeId, TargetProjectId = _scope.ProjectId, TargetLogicalPath = target
+                });
             }
-            catch (Exception exception) when (IsMutationFailure(exception))
+            else
             {
-                failures.Add($"{target.Name}：{exception.Message}");
+                await _api.BeginFileOperationAsync(_session.SessionToken, new FileOperationRequest
+                {
+                    OperationId = Guid.NewGuid().ToString("D"), Action = "move", ClientId = _clientId,
+                    Source = "wpf", FileId = item.FileId, ExpectedVersion = item.Version,
+                    ScopeId = item.ScopeId, ProjectId = item.ProjectId,
+                    TargetScopeId = _scope.ScopeId, TargetProjectId = _scope.ProjectId, TargetLogicalPath = target
+                });
             }
+            await LoadCurrentDirectoryAsync();
         }
-
-        await FinishMutationAsync("部分项目未能复制", failures);
+        catch (V2ApiException exception) { MessageBox.Show(exception.Message, "无法移动", MessageBoxButton.OK, MessageBoxImage.Information); }
     }
 
     private async Task DeleteAsync(DriveFileItem? clicked)
     {
         var targets = TargetsFor(clicked);
-        if (targets.Count == 0 || !CanModify) return;
-
-        // Folders are counted for real before the question is asked. A dialog that promises
-        // "3 items" and then removes 900 is worse than giving no number at all.
-        var listing = new List<string>();
-        foreach (var target in targets)
-        {
-            if (!target.IsDirectory)
-            {
-                listing.Add(target.Name);
-                continue;
-            }
-
-            try
-            {
-                var contained = await _mutations.CountContainedAsync(_scope, target.FullPath);
-                listing.Add($"{target.Name}（文件夹，内含 {contained} 项）");
-            }
-            catch (Exception exception) when (IsMutationFailure(exception))
-            {
-                listing.Add($"{target.Name}（文件夹）");
-            }
-        }
-
-        var dialog = new ConfirmDialog(
-            targets.Count == 1 ? "确认删除" : $"确认删除这 {targets.Count} 项",
-            "删除后无法撤销。",
-            listing,
-            "删除");
+        if (targets.Count == 0) return;
+        var dialog = new ConfirmDialog(targets.Count == 1 ? "确认删除" : $"确认删除这 {targets.Count} 项",
+            "删除后会移入回收站，文件内容和历史版本仍可恢复。", targets.Select(item => item.Name).ToArray(), "删除");
         ShowOwned(dialog);
         if (dialog.ShowDialog() != true) return;
-
         var failures = new List<string>();
-        foreach (var target in targets)
+        foreach (var item in targets)
         {
             try
             {
-                await _mutations.DeleteAsync(_scope, target.FullPath);
+                if (item.IsDirectory)
+                    await _api.MutateDirectoryAsync(_session.SessionToken, item.DirectoryId!, new DirectoryOperationRequest
+                    {
+                        OperationId = Guid.NewGuid().ToString("D"), ClientId = _clientId, Action = "delete", ScopeId = item.ScopeId,
+                        ProjectId = item.ProjectId, ExpectedVersion = item.Version
+                    });
+                else
+                    await _api.BeginFileOperationAsync(_session.SessionToken, new FileOperationRequest
+                    {
+                        OperationId = Guid.NewGuid().ToString("D"), Action = "delete", ClientId = _clientId,
+                        Source = "wpf", ScopeId = item.ScopeId, ProjectId = item.ProjectId,
+                        FileId = item.FileId, ExpectedVersion = item.Version
+                    });
             }
-            catch (Exception exception) when (IsMutationFailure(exception))
-            {
-                failures.Add($"{target.Name}：{exception.Message}");
-            }
+            catch (V2ApiException exception) { failures.Add($"{item.Name}：{exception.Message}"); }
         }
-
-        await FinishMutationAsync("部分项目未能删除", failures);
-    }
-
-    /// <summary>
-    /// Runs one operation, reports its failure, and reloads so the list matches the share.
-    /// </summary>
-    /// <remarks>
-    /// The reload happens whether or not the operation succeeded: a recursive delete that
-    /// failed halfway has still changed the folder, and leaving a stale listing on screen
-    /// would invite the user to act on rows that no longer exist.
-    /// </remarks>
-    private async Task RunMutationAsync(string failureTitle, Func<Task> operation)
-    {
-        try
-        {
-            await operation();
-        }
-        catch (Exception exception) when (IsMutationFailure(exception))
-        {
-            MessageBox.Show(exception.Message, failureTitle, MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-        finally
-        {
-            await LoadCurrentDirectoryAsync();
-        }
-    }
-
-    private async Task FinishMutationAsync(string failureTitle, IReadOnlyList<string> failures)
-    {
-        if (failures.Count > 0)
-        {
-            var shown = string.Join("\n", failures.Take(10));
-            var more = failures.Count > 10 ? $"\n…还有 {failures.Count - 10} 项" : string.Empty;
-            MessageBox.Show($"{shown}{more}", failureTitle, MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-
+        if (failures.Count > 0) MessageBox.Show(string.Join("\n", failures.Take(10)), "部分项目未删除", MessageBoxButton.OK, MessageBoxImage.Information);
         await LoadCurrentDirectoryAsync();
     }
 
-    /// <summary>
-    /// What an action applies to: the whole selection when the clicked row is part of it,
-    /// otherwise just the clicked row.
-    /// </summary>
-    /// <remarks>
-    /// Right-clicking a row that is not selected selects it first (see the view's
-    /// right-button handler), so in practice the two agree; this covers the case where a
-    /// selection is made and a different row is acted on without the view having caught up.
-    /// </remarks>
-    private IReadOnlyList<DriveFileItem> TargetsFor(DriveFileItem? clicked)
+    private async Task RestoreAsync(DriveFileItem? item)
     {
-        if (clicked is not null) return _selection.Contains(clicked) ? _selection : [clicked];
-        return _selection;
-    }
-
-    private static bool IsMutationFailure(Exception exception) =>
-        exception is IOException or UnauthorizedAccessException or InvalidOperationException
-            or NotSupportedException or System.Security.SecurityException
-            or System.ComponentModel.Win32Exception;
-
-    /// <summary>Owns a dialog to the main window so it centres there rather than on the screen.</summary>
-    private static void ShowOwned(Window dialog)
-    {
-        if (Application.Current?.MainWindow is { IsLoaded: true } owner) dialog.Owner = owner;
-    }
-
-    /// <summary>
-    /// Says so, for the one menu entry that is still a placeholder.
-    /// </summary>
-    /// <remarks>
-    /// Rename, duplicate and delete are wired to the NAS now; 移动到 is not, because moving
-    /// needs a destination picker that browses the NAS. The entry stays visible and states
-    /// why rather than vanishing.
-    /// </remarks>
-    private static void ShowNotYetAvailable(string? operation)
-    {
-        MessageBox.Show($"“{operation}”尚未接入。重命名、复制和删除已经可以使用。",
-            "功能尚未开放", MessageBoxButton.OK, MessageBoxImage.Information);
-    }
-
-
-    private void DownloadItem(DriveFileItem? item)
-    {
-        if (item is null)
+        if (item is null) return;
+        try
         {
-            return;
+            if (item.IsDirectory)
+                await _api.MutateDirectoryAsync(_session.SessionToken, item.DirectoryId!, new DirectoryOperationRequest
+                {
+                    OperationId = Guid.NewGuid().ToString("D"), ClientId = _clientId, Action = "restore", ScopeId = item.ScopeId,
+                    ProjectId = item.ProjectId, ExpectedVersion = item.Version
+                });
+            else
+            {
+                var revisions = await _api.ListFileRevisionsAsync(_session.SessionToken, item.FileId!);
+                var revision = revisions.Items.OrderByDescending(candidate => candidate.RevisionNumber).FirstOrDefault();
+                if (revision is null) throw new InvalidOperationException("没有可恢复的文件版本。");
+                await _api.RestoreFileRevisionAsync(_session.SessionToken, item.FileId!, Guid.NewGuid().ToString("D"),
+                    revision.RevisionId, item.Version, _clientId);
+            }
+            await LoadCurrentDirectoryAsync();
         }
-
-        if (!_smbConnected)
-        {
-            MessageBox.Show(_smbConnectionError, "NAS 未连接", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        if (item.IsDirectory)
-        {
-            MessageBox.Show("当前阶段只支持单文件下载。", "无法下载文件夹", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        var destination = _filePicker.PickDownloadDestination(item.Name);
-        if (string.IsNullOrWhiteSpace(destination))
-            return;
-        if (File.Exists(destination) || Directory.Exists(destination))
-        {
-            MessageBox.Show("本机目标位置已有同名项目，下载不会覆盖。", "无法下载", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-        _ = _transfers.AddDownloadAsync(item, destination);
+        catch (Exception exception) when (exception is V2ApiException or InvalidOperationException)
+        { MessageBox.Show(exception.Message, "无法恢复", MessageBoxButton.OK, MessageBoxImage.Information); }
     }
 
-    private static void ShowDetails(DriveFileItem? item)
+    private async Task ShowHistoryAsync(DriveFileItem? item)
     {
-        if (item is null)
-            return;
-
-        MessageBox.Show($"名称：{item.Name}\n类型：{item.KindLabel}\n大小：{item.FileSize}\n修改时间：{item.ModifiedLabel}\n位置：{item.FullPath}\n权限：{(item.IsReadOnly ? "只读" : "可写（最终以 NAS ACL 为准）")}",
-            "文件信息", MessageBoxButton.OK, MessageBoxImage.Information);
+        if (item?.FileId is not { Length: > 0 } fileId) return;
+        try
+        {
+            var history = await _api.ListFileRevisionsAsync(_session.SessionToken, fileId);
+            var canRestoreRevision = CanWriteOrRestoreProjectFiles;
+            var window = new FileHistoryWindow(item.Name, history.Items, isReadOnly: !canRestoreRevision);
+            ShowOwned(window);
+            if (window.ShowDialog() == true && canRestoreRevision && window.SelectedRevision is { } revision)
+            {
+                await _api.RestoreFileRevisionAsync(_session.SessionToken, fileId, Guid.NewGuid().ToString("D"),
+                    revision.RevisionId, item.Version, _clientId);
+                await LoadCurrentDirectoryAsync();
+            }
+        }
+        catch (V2ApiException exception) { MessageBox.Show(exception.Message, "无法读取版本历史", MessageBoxButton.OK, MessageBoxImage.Information); }
     }
 
-    /// <param name="preserveSelection">
-    /// Keep whatever is selected. Set by the refresh that follows a finished upload, which
-    /// can fire many times in a row while a folder transfers.
-    /// </param>
+    private void ToggleRecycleBin()
+    {
+        if (!CanShowRecycleBin) return;
+        IsRecycleBin = !IsRecycleBin;
+        OnPropertyChanged(nameof(EmptyMessage));
+        _ = LoadCurrentDirectoryAsync();
+    }
+
     private async Task LoadCurrentDirectoryAsync(bool preserveSelection = false)
     {
         var requestId = Interlocked.Increment(ref _loadRequestId);
-        if (!_smbConnected)
-        {
-            ErrorMessage = _smbConnectionError;
-            Files.Clear();
-            IsLoading = false;
-            OnPropertyChanged(nameof(CanUpload));
-            UploadCommand.RaiseCanExecuteChanged();
-            return;
-        }
-        IsLoading = true;
-        ErrorMessage = string.Empty;
-        UploadCommand.RaiseCanExecuteChanged();
+        IsLoading = true; ErrorMessage = string.Empty; TruncationNotice = string.Empty;
         try
         {
-            // The global 图片 and 视频 entries list media from every project at once, with no
-            // folders to walk through; every other scope is one directory's children.
-            IReadOnlyList<DriveFileItem> items;
-            if (_scope.Flatten)
+            var items = new List<LogicalFileEntry>();
+            string? cursor = null;
+            var pageCount = 0;
+            do
             {
-                var listing = await _catalog.EnumerateFlattenedAsync(_scope);
-                items = listing.Items;
-                TruncationNotice = listing.Truncated
-                    ? $"内容较多，仅显示前 {SmbFileCatalog.FlattenedLimit} 项。"
-                    : string.Empty;
-            }
-            else
-            {
-                items = await _catalog.EnumerateDirectoryAsync(_scope, _currentDirectory);
-                TruncationNotice = string.Empty;
-            }
-
-            if (requestId != _loadRequestId)
-                return;
+                var page = await _api.ListFilesAsync(_session.SessionToken, _scope.ScopeId, _scope.ProjectId,
+                    _scope.Flatten ? string.Empty : _currentDirectory, _scope.MediaKind, IsRecycleBin,
+                    cursor, limit: 500);
+                items.AddRange(page.Items);
+                cursor = page.NextCursor;
+                pageCount++;
+            } while (!string.IsNullOrWhiteSpace(cursor) && pageCount < 40);
+            if (!string.IsNullOrWhiteSpace(cursor)) TruncationNotice = "项目较多，当前只显示前 20,000 项。";
+            if (requestId != _loadRequestId) return;
 
             Files.Clear();
-            foreach (var item in items)
-                Files.Add(item);
+            foreach (var entry in items)
+                Files.Add(ToDriveFileItem(entry));
             ItemsView.Refresh();
-            OnPropertyChanged(nameof(IsEmpty));
-            // A reload driven by a finished upload keeps the selection: the user may well be
-            // selecting something else while a long folder upload runs, and clearing it every
-            // few hundred milliseconds would make the list unusable until the upload ended.
-            if (!preserveSelection)
-            {
-                SelectionRequested?.Invoke(SelectionRequest.Clear);
-                UpdateSelection([]);
-            }
+            OnPropertyChanged(nameof(IsEmpty)); OnPropertyChanged(nameof(EmptyMessage));
+            if (!preserveSelection) { SelectionRequested?.Invoke(SelectionRequest.Clear); UpdateSelection([]); }
         }
-        catch (UnauthorizedAccessException)
+        catch (V2ApiException exception)
         {
             if (requestId != _loadRequestId) return;
-            ErrorMessage = "当前账号无权读取此 NAS 目录。";
-            Files.Clear();
-            OnPropertyChanged(nameof(IsEmpty));
+            ErrorMessage = exception.Message; Files.Clear(); OnPropertyChanged(nameof(IsEmpty));
         }
-        catch (DirectoryNotFoundException)
+        catch (Exception exception) when (exception is IOException or InvalidOperationException)
         {
             if (requestId != _loadRequestId) return;
-            ErrorMessage = "NAS 空间不存在或当前账号无权访问。";
-            Files.Clear();
-            OnPropertyChanged(nameof(IsEmpty));
-        }
-        catch (IOException)
-        {
-            if (requestId != _loadRequestId) return;
-            ErrorMessage = "NAS 文件服务暂时不可用，请检查网络后重试。";
-            Files.Clear();
-            OnPropertyChanged(nameof(IsEmpty));
-        }
-        catch (InvalidOperationException)
-        {
-            if (requestId != _loadRequestId) return;
-            ErrorMessage = "NAS 返回的空间路径无效，请联系管理员。";
-            Files.Clear();
-            OnPropertyChanged(nameof(IsEmpty));
+            ErrorMessage = "文件服务暂时不可用，请检查网络后重试。"; Files.Clear(); OnPropertyChanged(nameof(IsEmpty));
         }
         finally
         {
-            if (requestId == _loadRequestId)
-            {
-                IsLoading = false;
-                OnPropertyChanged(nameof(CanUpload));
-                UploadCommand.RaiseCanExecuteChanged();
-            }
+            if (requestId == _loadRequestId) IsLoading = false;
         }
     }
 
-    private bool IsWithinCurrentRoot(string path)
+    private DriveFileItem ToDriveFileItem(LogicalFileEntry entry)
     {
-        var full = Path.GetFullPath(path);
-        var prefix = _currentRoot.TrimEnd('\\') + "\\";
-        return full.Equals(_currentRoot, StringComparison.OrdinalIgnoreCase) ||
-            full.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+        var size = entry.Size ?? 0;
+        var updated = entry.UpdatedAt?.LocalDateTime ?? DateTime.MinValue;
+        var mediaType = entry.MediaType ?? string.Empty;
+        var canRequestThumbnail = !entry.IsDirectory && !entry.DeletedAt.HasValue &&
+            !string.IsNullOrWhiteSpace(entry.FileId) && !string.IsNullOrWhiteSpace(entry.CurrentRevisionId) &&
+            (string.Equals(entry.MediaKind, "image", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(entry.MediaKind, "video", StringComparison.OrdinalIgnoreCase) ||
+             mediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
+             mediaType.StartsWith("video/", StringComparison.OrdinalIgnoreCase));
+        var thumbnailPath = canRequestThumbnail
+            ? _thumbnailProvider.GetCachePath(entry.FileId!, entry.CurrentRevisionId!)
+            : string.Empty;
+        return new DriveFileItem
+        {
+            Id = entry.DirectoryId ?? entry.FileId ?? entry.LogicalPath,
+            Name = entry.Name,
+            FullPath = entry.LogicalPath,
+            LogicalPath = entry.LogicalPath,
+            ThumbnailPath = thumbnailPath,
+            HasThumbnail = false,
+            FileSize = entry.IsDirectory ? "文件夹" : FormatSize(size),
+            SizeBytes = size,
+            KindLabel = entry.IsDirectory ? "文件夹" : entry.MediaType ?? entry.MediaKind ?? "other",
+            ModifiedLabel = entry.DeletedAt.HasValue ? $"已删除 {entry.DeletedAt.Value.LocalDateTime:g}" : updated == DateTime.MinValue ? "" : updated.ToString("g"),
+            ModifiedTime = updated,
+            IsVideo = string.Equals(entry.MediaKind, "video", StringComparison.OrdinalIgnoreCase),
+            IsDirectory = entry.IsDirectory,
+            IsReadOnly = entry.DeletedAt.HasValue,
+            FileId = entry.FileId,
+            DirectoryId = entry.DirectoryId,
+            ScopeId = entry.ScopeId,
+            ProjectId = entry.ProjectId,
+            RevisionId = entry.CurrentRevisionId,
+            Version = entry.Version,
+            DeletedAt = entry.DeletedAt,
+            MediaType = entry.MediaType,
+            FileThumbnailProvider = canRequestThumbnail ? _thumbnailProvider : null
+        };
+    }
+
+    private async Task HandleUploadCompletedAsync(string logicalPath)
+    {
+        if (!string.Equals(LogicalFileScope.Parent(logicalPath), _currentDirectory, StringComparison.Ordinal)) return;
+        await LoadCurrentDirectoryAsync(preserveSelection: true).ConfigureAwait(true);
+    }
+
+    private void HandleUploadCompleted(string logicalPath)
+    {
+        _refreshTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
+        _refreshTimer.Tick -= RefreshTimerTick;
+        _refreshTimer.Tick += RefreshTimerTick;
+        _refreshTimer.Stop();
+        _pendingRefreshLogicalPath = logicalPath;
+        _refreshTimer.Start();
+    }
+
+    private void RefreshTimerTick(object? sender, EventArgs args)
+    {
+        if (_refreshTimer is null) return;
+        _refreshTimer.Stop();
+        if (_pendingRefreshLogicalPath is { } logicalPath) _ = HandleUploadCompletedAsync(logicalPath);
+        _pendingRefreshLogicalPath = null;
     }
 
     private void NavigateUp()
     {
-        if (!CanNavigateUp)
-            return;
-        var parent = Path.GetDirectoryName(_currentDirectory);
-        if (parent is null || !IsWithinCurrentRoot(parent))
-            return;
-        _currentDirectory = parent;
-        OnPropertyChanged(nameof(CurrentPathLabel));
-        OnPropertyChanged(nameof(CanNavigateUp));
-        NavigateUpCommand.RaiseCanExecuteChanged();
+        if (!CanNavigateUp) return;
+        _currentDirectory = LogicalFileScope.Parent(_currentDirectory);
+        OnPropertyChanged(nameof(CurrentPathLabel)); OnPropertyChanged(nameof(CanNavigateUp)); NavigateUpCommand.RaiseCanExecuteChanged();
         _ = LoadCurrentDirectoryAsync();
+    }
+
+    private IReadOnlyList<DriveFileItem> TargetsFor(DriveFileItem? clicked) => clicked is not null
+        ? _selection.Contains(clicked) ? _selection : [clicked]
+        : _selection;
+
+    private void ShowOwned(Window dialog)
+    {
+        if (Application.Current?.MainWindow is { IsLoaded: true } owner) dialog.Owner = owner;
+    }
+
+    private static void ShowDetails(DriveFileItem? item)
+    {
+        if (item is null) return;
+        MessageBox.Show($"名称：{item.Name}\n类型：{item.KindLabel}\n大小：{item.FileSize}\n修改时间：{item.ModifiedLabel}\n逻辑位置：{item.LogicalPath}\n版本：{item.Version}",
+            "文件信息", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private void RefreshCommandStates()
+    {
+        UploadCommand.RaiseCanExecuteChanged(); UploadFolderCommand.RaiseCanExecuteChanged();
+        RenameCommand.RaiseCanExecuteChanged(); MoveCommand.RaiseCanExecuteChanged();
+        DeleteCommand.RaiseCanExecuteChanged(); HistoryCommand.RaiseCanExecuteChanged(); RestoreCommand.RaiseCanExecuteChanged();
+        ToggleRecycleBinCommand.RaiseCanExecuteChanged(); NavigateUpCommand.RaiseCanExecuteChanged();
+        OnPropertyChanged(nameof(CanUpload)); OnPropertyChanged(nameof(CanModify)); OnPropertyChanged(nameof(CanRestore));
+        OnPropertyChanged(nameof(CanShowRecycleBin));
+    }
+
+    public void Dispose()
+    {
+        _transfers.UploadCompleted -= HandleUploadCompleted;
+        _refreshTimer?.Stop(); _refreshTimer = null;
     }
 
     private static string FormatSize(long bytes)
     {
         string[] units = ["B", "KB", "MB", "GB", "TB"];
-        double value = bytes;
-        var unit = 0;
-        while (value >= 1024 && unit < units.Length - 1)
-        {
-            value /= 1024;
-            unit++;
-        }
+        double value = bytes; var unit = 0;
+        while (value >= 1024 && unit < units.Length - 1) { value /= 1024; unit++; }
         return unit == 0 ? $"{bytes} B" : $"{value:0.#} {units[unit]}";
     }
-}
-
-public enum SelectionRequest
-{
-    SelectAll,
-    Clear
 }

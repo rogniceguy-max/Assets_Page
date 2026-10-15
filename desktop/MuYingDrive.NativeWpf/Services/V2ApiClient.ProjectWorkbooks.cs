@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 namespace MuYingDrive.NativeWpf.Services;
 
 /// <summary>
@@ -19,6 +20,38 @@ namespace MuYingDrive.NativeWpf.Services;
 /// </remarks>
 public sealed partial class V2ApiClient
 {
+    public async Task<IReadOnlyList<ProjectSpaceRecycleEntry>> ListProjectSpacesAsync(
+        string bearerToken, bool includeDeleted = false, CancellationToken cancellationToken = default)
+    {
+        var suffix = includeDeleted ? "?include_deleted=true" : string.Empty;
+        var response = await SendJsonAsync<ProjectSpaceListResponse>(
+            HttpMethod.Get, "api/v2/project-spaces" + suffix, null, bearerToken, cancellationToken).ConfigureAwait(false);
+        return response.Items ?? [];
+    }
+
+    public async Task<IReadOnlyList<ProjectWorkbookRecycleEntry>> ListProjectWorkbooksAsync(
+        string bearerToken, string projectId, bool includeDeleted = false, CancellationToken cancellationToken = default)
+    {
+        var query = $"?project_id={Uri.EscapeDataString(projectId)}" + (includeDeleted ? "&include_deleted=true" : string.Empty);
+        var response = await SendJsonAsync<ProjectWorkbookListResponse>(
+            HttpMethod.Get, "api/v2/project-workbooks" + query, null, bearerToken, cancellationToken).ConfigureAwait(false);
+        return response.Items ?? [];
+    }
+
+    public async Task RestoreProjectSpaceAsync(
+        string bearerToken, string projectId, CancellationToken cancellationToken = default)
+    {
+        _ = await SendJsonAsync<ProjectSpaceRecycleEntry>(
+            HttpMethod.Post, $"api/v2/project-spaces/{Uri.EscapeDataString(projectId)}/restore", null, bearerToken, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task RestoreProjectWorkbookAsync(
+        string bearerToken, string workbookId, CancellationToken cancellationToken = default)
+    {
+        _ = await SendJsonAsync<ProjectWorkbookRestoreResponse>(
+            HttpMethod.Post, $"api/v2/project-workbooks/{Uri.EscapeDataString(workbookId)}/restore", null, bearerToken, cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>
     /// A client for the workbook endpoints: the same certificate pinning, and no overall
     /// timeout.
@@ -133,4 +166,37 @@ public sealed partial class V2ApiClient
         }
         return null;
     }
+}
+
+public sealed class ProjectSpaceListResponse
+{
+    public List<ProjectSpaceRecycleEntry>? Items { get; init; }
+}
+
+public sealed class ProjectSpaceRecycleEntry
+{
+    public string Id { get; init; } = string.Empty;
+    public string Name { get; init; } = string.Empty;
+    [JsonPropertyName("deleted_at")]
+    public DateTimeOffset? DeletedAt { get; init; }
+}
+
+public sealed class ProjectWorkbookListResponse
+{
+    public List<ProjectWorkbookRecycleEntry>? Items { get; init; }
+}
+
+public sealed class ProjectWorkbookRecycleEntry
+{
+    public string Id { get; init; } = string.Empty;
+    public string Name { get; init; } = string.Empty;
+    [JsonPropertyName("deleted_at")]
+    public DateTimeOffset? DeletedAt { get; init; }
+}
+
+public sealed class ProjectWorkbookRestoreResponse
+{
+    public bool Ok { get; init; }
+    public string Id { get; init; } = string.Empty;
+    public DateTimeOffset? RestoredAt { get; init; }
 }

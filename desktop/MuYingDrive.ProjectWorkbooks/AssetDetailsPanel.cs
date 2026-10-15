@@ -69,7 +69,7 @@ public sealed class AssetDetailsPanel : UserControl
         // Embedded ReviewPanel for user comments and composer
         _review = new ReviewPanel
         {
-            DataContext = new ReviewViewModel(_model.Service, _fileId, _item.Row.Id, null, "asset-rows"),
+            DataContext = new ReviewViewModel(_model.Service, _fileId, _item.Row.Id, null, "asset-rows", _model.IsReadOnly),
         };
         Grid.SetRow(_review, 2);
         root.Children.Add(_review);

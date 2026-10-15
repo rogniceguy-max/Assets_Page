@@ -11,11 +11,7 @@ namespace MuYingDrive.NativeWpf.ViewModels;
 
 public sealed class SyncViewModel : ObservableObject, IDisposable
 {
-    private static readonly string ConfigPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "MuYingDrive",
-        "sync_config.json");
-
+    private readonly string _configPath;
     private readonly ProjectWorkbookPage? _workbooks;
     private readonly EpisodeSyncService? _syncService;
 
@@ -26,13 +22,17 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
     private bool _isLoadingWorkbooks;
     private bool _isLoadingEpisodes;
     private string _validationMessage = string.Empty;
+    private int _workbookLoadGeneration;
+    private int _episodeLoadGeneration;
 
-    public SyncViewModel(ProjectWorkbookPage? workbooks, string shareRoot)
+    public SyncViewModel(ProjectWorkbookPage? workbooks, TransferViewModel transfers, long accountId,
+        Uri apiBaseUri)
     {
+        _configPath = FileClientIdentity.GetEmployeeSyncConfigPath(apiBaseUri, accountId);
         _workbooks = workbooks;
-        if (workbooks != null)
+        _syncService = transfers is null ? null : new EpisodeSyncService(transfers);
+        if (workbooks != null && _syncService is not null)
         {
-            _syncService = new EpisodeSyncService(workbooks.ViewModel.Service, shareRoot);
             _syncService.PropertyChanged += (s, e) =>
             {
                 void Update()
@@ -42,12 +42,13 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
                     else if (e.PropertyName == nameof(EpisodeSyncService.IsSyncing))
                     {
                         OnPropertyChanged(nameof(IsSyncing));
-                        SyncNowCommand?.RaiseCanExecuteChanged();
+                        RaiseSyncCommandState();
                     }
                     else if (e.PropertyName == nameof(EpisodeSyncService.IsWatching))
                     {
                         OnPropertyChanged(nameof(IsWatching));
                         OnPropertyChanged(nameof(ToggleButtonLabel));
+                        RaiseSyncCommandState();
                     }
                 }
 
@@ -69,7 +70,7 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
         BrowseLocalDirectoryCommand = new RelayCommand(_ => BrowseLocalDirectory());
         SelectAllEpisodesCommand = new RelayCommand(_ => SelectAllEpisodes());
         DeselectAllEpisodesCommand = new RelayCommand(_ => DeselectAllEpisodes());
-        ToggleSyncCommand = new RelayCommand(_ => ToggleSync());
+        ToggleSyncCommand = new RelayCommand(_ => _ = ToggleSyncAsync(), _ => _syncService is not null);
         SyncNowCommand = new AsyncRelayCommand(_ => SyncNowAsync(), _ => CanSyncNow);
 
         LoadSavedConfig();
@@ -87,8 +88,10 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
         {
             if (SetProperty(ref _selectedProject, value))
             {
+                StopWatcherForConfigurationChange();
                 SaveConfig();
                 _ = LoadWorkbooksAsync(value?.Id);
+                RaiseSyncCommandState();
             }
         }
     }
@@ -100,8 +103,10 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
         {
             if (SetProperty(ref _selectedWorkbook, value))
             {
+                StopWatcherForConfigurationChange();
                 SaveConfig();
                 _ = LoadEpisodesAsync(value);
+                RaiseSyncCommandState();
             }
         }
     }
@@ -113,8 +118,10 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
         {
             if (SetProperty(ref _localDirectory, value))
             {
+                StopWatcherForConfigurationChange();
                 SaveConfig();
                 ClearValidation();
+                RaiseSyncCommandState();
             }
         }
     }
@@ -151,7 +158,9 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
 
     public string ToggleButtonLabel => IsWatching ? "停止同步" : "开启同步";
 
-    public bool CanSyncNow => !IsSyncing && SelectedProject != null && SelectedWorkbook != null && Episodes.Any(e => e.IsSelected) && !string.IsNullOrWhiteSpace(LocalDirectory);
+    public bool CanSyncNow => _syncService is not null && !IsSyncing && !IsLoadingWorkbooks && !IsLoadingEpisodes &&
+                              SelectedProject != null && SelectedWorkbook != null && Episodes.Any(e => e.IsSelected) &&
+                              !string.IsNullOrWhiteSpace(LocalDirectory);
 
     public ICommand BrowseLocalDirectoryCommand { get; }
     public ICommand SelectAllEpisodesCommand { get; }
@@ -193,22 +202,29 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
 
     public async Task LoadWorkbooksAsync(string? projectId)
     {
+        var generation = Interlocked.Increment(ref _workbookLoadGeneration);
         Workbooks.Clear();
         Episodes.Clear();
         SelectedWorkbook = null;
-        if (_workbooks == null || string.IsNullOrWhiteSpace(projectId)) return;
+        if (_workbooks == null || string.IsNullOrWhiteSpace(projectId))
+        {
+            IsLoadingWorkbooks = false;
+            RaiseSyncCommandState();
+            return;
+        }
 
         IsLoadingWorkbooks = true;
+        RaiseSyncCommandState();
         try
         {
             var files = await _workbooks.ListProjectFilesAsync(projectId);
+            if (generation != Volatile.Read(ref _workbookLoadGeneration) || SelectedProject?.Id != projectId) return;
             var beatFiles = files.Where(f =>
                 f.TemplateKind == "scene_beats" ||
                 f.TemplateKind == "scene_review" ||
                 f.Name.Contains("节拍", StringComparison.OrdinalIgnoreCase)).ToList();
 
-            var displayFiles = beatFiles.Count > 0 ? beatFiles : files.ToList();
-            foreach (var file in displayFiles)
+            foreach (var file in beatFiles)
             {
                 Workbooks.Add(file);
             }
@@ -228,29 +244,36 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
         }
         finally
         {
-            IsLoadingWorkbooks = false;
-            SyncNowCommand.RaiseCanExecuteChanged();
+            if (generation == Volatile.Read(ref _workbookLoadGeneration))
+                IsLoadingWorkbooks = false;
+            RaiseSyncCommandState();
         }
     }
 
     public async Task LoadEpisodesAsync(ProjectFile? workbook)
     {
+        var generation = Interlocked.Increment(ref _episodeLoadGeneration);
         Episodes.Clear();
-        if (_workbooks == null || workbook == null) return;
+        if (_workbooks == null || workbook == null)
+        {
+            IsLoadingEpisodes = false;
+            RaiseSyncCommandState();
+            return;
+        }
 
         IsLoadingEpisodes = true;
+        RaiseSyncCommandState();
         try
         {
             var doc = await _workbooks.ViewModel.Service.OpenAsync(workbook.Id);
+            if (generation != Volatile.Read(ref _episodeLoadGeneration) || SelectedWorkbook?.Id != workbook.Id) return;
             if (doc?.Sheets != null)
             {
                 var sceneSheets = doc.Sheets.Where(s =>
                     s.Kind == "scene_beats" ||
                     s.Kind == "scene_review" ||
                     s.SceneRows.Count > 0).ToList();
-                var sheets = sceneSheets.Count > 0 ? sceneSheets : doc.Sheets;
-
-                foreach (var sheet in sheets)
+                foreach (var sheet in sceneSheets)
                 {
                     var isSelected = _savedEpisodes.Contains(sheet.Name) || _savedEpisodes.Count == 0;
                     var item = new SyncEpisodeItem
@@ -264,23 +287,26 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
                     {
                         if (e.PropertyName == nameof(SyncEpisodeItem.IsSelected))
                         {
+                            StopWatcherForConfigurationChange();
                             SaveConfig();
                             ClearValidation();
-                            SyncNowCommand.RaiseCanExecuteChanged();
+                            RaiseSyncCommandState();
                         }
                     };
                     Episodes.Add(item);
                 }
             }
 
-            SyncNowCommand.RaiseCanExecuteChanged();
+            RaiseSyncCommandState();
         }
         catch
         {
         }
         finally
         {
-            IsLoadingEpisodes = false;
+            if (generation == Volatile.Read(ref _episodeLoadGeneration))
+                IsLoadingEpisodes = false;
+            RaiseSyncCommandState();
         }
     }
 
@@ -308,7 +334,7 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
         foreach (var ep in Episodes) ep.IsSelected = false;
     }
 
-    private void ToggleSync()
+    private async Task ToggleSyncAsync()
     {
         try
         {
@@ -316,7 +342,7 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
 
             if (_syncService.IsWatching)
             {
-                _syncService.Stop();
+                await _syncService.StopAsync();
                 ValidationMessage = string.Empty;
                 return;
             }
@@ -347,7 +373,16 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
             }
 
             ValidationMessage = string.Empty;
-            _syncService.Start(SelectedProject.Name, selectedEpisodes, LocalDirectory);
+            if (!_syncService.Configure(SelectedProject.Id, SelectedProject.Name, selectedEpisodes, LocalDirectory))
+            {
+                ValidationMessage = _syncService.StatusText;
+                return;
+            }
+            if (!await _syncService.StartAsync())
+            {
+                ValidationMessage = _syncService.StatusText;
+                return;
+            }
             SaveConfig();
         }
         catch (Exception ex)
@@ -362,25 +397,38 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
         {
             if (_syncService == null || SelectedProject == null || SelectedWorkbook == null) return;
             var selectedEpisodes = Episodes.Where(e => e.IsSelected).ToList();
-            if (selectedEpisodes.Count == 0 || string.IsNullOrWhiteSpace(LocalDirectory)) return;
+            if (selectedEpisodes.Count == 0 || string.IsNullOrWhiteSpace(LocalDirectory))
+            {
+                ValidationMessage = "请确认已选择集数和本地目录。";
+                return;
+            }
 
-            if (!_syncService.IsWatching)
+            if (!_syncService.Configure(SelectedProject.Id, SelectedProject.Name, selectedEpisodes, LocalDirectory))
             {
-                _syncService.Start(SelectedProject.Name, selectedEpisodes, LocalDirectory);
+                ValidationMessage = _syncService.StatusText;
+                return;
             }
-            else
-            {
-                await _syncService.SyncNowAsync();
-            }
+
+            ValidationMessage = string.Empty;
+            await _syncService.SyncNowAsync();
         }
         catch (Exception ex)
         {
             ValidationMessage = $"同步出错: {ex.Message}";
         }
-        finally
-        {
-            SyncNowCommand.RaiseCanExecuteChanged();
-        }
+    }
+
+    private void StopWatcherForConfigurationChange()
+    {
+        if (_syncService?.IsWatching == true)
+            _ = _syncService.StopAsync();
+    }
+
+    private void RaiseSyncCommandState()
+    {
+        OnPropertyChanged(nameof(CanSyncNow));
+        SyncNowCommand.RaiseCanExecuteChanged();
+        (ToggleSyncCommand as RelayCommand)?.RaiseCanExecuteChanged();
     }
 
     private void ClearValidation()
@@ -397,8 +445,8 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
     {
         try
         {
-            if (!File.Exists(ConfigPath)) return;
-            var json = File.ReadAllText(ConfigPath);
+            if (!File.Exists(_configPath)) return;
+            var json = File.ReadAllText(_configPath);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
             if (root.TryGetProperty("LocalDirectory", out var dirElem))
@@ -424,7 +472,7 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
     {
         try
         {
-            var dir = Path.GetDirectoryName(ConfigPath);
+            var dir = Path.GetDirectoryName(_configPath);
             if (!string.IsNullOrWhiteSpace(dir)) Directory.CreateDirectory(dir);
 
             var data = new
@@ -435,7 +483,7 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
                 Episodes = Episodes.Where(e => e.IsSelected).Select(e => e.Name).ToArray()
             };
 
-            File.WriteAllText(ConfigPath, JsonSerializer.Serialize(data));
+            File.WriteAllText(_configPath, JsonSerializer.Serialize(data));
         }
         catch
         {

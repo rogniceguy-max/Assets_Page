@@ -22,22 +22,9 @@ public enum ProjectNodeKind
 /// One row of the 项目 tree, at any depth.
 /// </summary>
 /// <remarks>
-/// Ported from the handoff package's <c>ProjectSpaceNavigationNode</c> (:110-126 there), with
-/// the parts that only made sense against endpoints that do not exist yet dropped — the
-/// image-folder parent links, the recycle bin, and the asset-row binding. One node type
-/// covers every level, so the view has a single template and the tree is data rather than a
-/// class hierarchy.
-///
-/// Two identities matter and they are not the same thing:
-/// <list type="bullet">
-/// <item><c>Id</c> — for a project, a stable catalog identifier; for a workbook, a stable SQLite
-/// workbook identifier. These do not change when display names change.</item>
-/// <item><c>ProjectName</c> — the display name, which the user may change. It is carried
-/// because the media views enumerate the project's directory over SMB, and a directory is
-/// found by name. <b>A rename therefore breaks the media half of the tree until it is
-/// reloaded.</b> That is a known limitation of this cut, not an oversight: the backend
-/// exposes no name-independent way to reach a project's directory yet.</item>
-/// </list>
+/// One node type covers each level, so the tree has a single template. <c>Id</c> is the
+/// stable project or workbook identifier. <c>ProjectName</c> is display text; API operations
+/// use <c>ProjectId</c> and logical paths, never a NAS directory derived from that name.
 /// </remarks>
 public sealed class ProjectNode : ObservableObject
 {

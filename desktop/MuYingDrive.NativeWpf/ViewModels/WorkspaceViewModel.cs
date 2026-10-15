@@ -11,11 +11,8 @@ namespace MuYingDrive.NativeWpf.ViewModels;
 /// The signed-in shell: sidebar, header and the current page.
 /// </summary>
 /// <remarks>
-/// The employee workspace and the login-free tour render this same shell. They differ
-/// only in <see cref="WorkspaceChrome"/> — which pages and spaces exist, what the
-/// account button says, and whether the update entry appears. The tour therefore looks
-/// and behaves like a read-only signed-in user, and its sidebar carries no feedback or
-/// transfer entry because those items are never in its list.
+/// Employees and visitors use the same shell and navigation. Read-only capability checks
+/// disable actions and pages the current session cannot use.
 /// </remarks>
 public sealed class WorkspaceViewModel : ObservableObject
 {
@@ -67,10 +64,8 @@ public sealed class WorkspaceViewModel : ObservableObject
         AccountLabel = chrome.AccountLabel;
         ExitLabel = chrome.ExitLabel;
 
-        // The first entry in the sidebar is where the workspace opens. Read from the chrome
-        // rather than hard-coded: the employee and the tour offer different first entries,
-        // and a hard-coded one would be a page the tour does not have.
-        var first = chrome.NavigationItems.FirstOrDefault();
+        // The first enabled entry in the common sidebar is where the workspace opens.
+        var first = chrome.NavigationItems.FirstOrDefault(item => item.IsEnabled);
         _selectedSpaceKey = first?.Key;
         _currentContent = ResolveOpeningContent(chrome, pages);
 
@@ -91,12 +86,12 @@ public sealed class WorkspaceViewModel : ObservableObject
             });
         RenameProjectNodeCommand = new AsyncRelayCommand(async parameter =>
         {
+            if (IsReadOnlySession) return;
             var node = parameter as ProjectNode ?? _selectedProjectNode;
             if (node is null || node.Kind != ProjectNodeKind.Workbook) return;
             if (_projectWorkbooksPage is null) return;
 
-            var stem = System.IO.Path.GetFileNameWithoutExtension(node.Name);
-            var dialog = new TextInputWindow("重命名工作簿", "请输入工作簿的新名称：", node.Name, "确定", stem.Length)
+            var dialog = new TextInputWindow("重命名工作簿", "请输入工作簿的新名称：", node.Name, "确定", node.Name.Length)
             {
                 Owner = System.Windows.Application.Current?.MainWindow
             };
@@ -105,9 +100,6 @@ public sealed class WorkspaceViewModel : ObservableObject
             var newName = dialog.Value.Trim();
             if (string.IsNullOrWhiteSpace(newName) || string.Equals(newName, node.Name, StringComparison.Ordinal))
                 return;
-            if (!newName.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
-                newName += ".xlsx";
-
             try
             {
                 var files = await _projectWorkbooksPage.ListProjectFilesAsync(node.ProjectId);
@@ -130,13 +122,14 @@ public sealed class WorkspaceViewModel : ObservableObject
         });
         DeleteWorkbookProjectNodeCommand = new AsyncRelayCommand(async parameter =>
         {
+            if (IsReadOnlySession) return;
             var node = parameter as ProjectNode ?? _selectedProjectNode;
             if (node is null || node.Kind != ProjectNodeKind.Workbook) return;
             if (_projectWorkbooksPage is null) return;
 
             var confirm = new ConfirmDialog(
                 "删除工作簿",
-                "确定要删除该工作簿吗？\n删除后工作簿将从项目中移除。",
+                "确定要删除该工作簿吗？\n工作簿会移入回收站，之后可以恢复。",
                 [node.Name],
                 "删除")
             {
@@ -162,13 +155,14 @@ public sealed class WorkspaceViewModel : ObservableObject
         });
         DeleteProjectNodeCommand = new AsyncRelayCommand(async parameter =>
         {
+            if (IsReadOnlySession) return;
             var node = parameter as ProjectNode ?? _selectedProjectNode;
             if (node is null || node.Kind != ProjectNodeKind.Project) return;
             if (Session is null || _main.ApiClient is null) return;
 
             var confirm = new ConfirmDialog(
                 "删除项目",
-                "确定要删除该项目吗？\n项目将被移至备份目录，项目中的工作簿将被移除。",
+                "确定要删除该项目吗？\n项目会移入回收站，之后可以恢复。项目与工作簿的关联会保留。",
                 [node.Name],
                 "删除")
             {
@@ -197,6 +191,9 @@ public sealed class WorkspaceViewModel : ObservableObject
                     System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
             }
         });
+        OpenProjectRecycleBinCommand = new AsyncRelayCommand(
+            _ => OpenProjectRecycleBinAsync(),
+            _ => Session is not null && !IsReadOnlySession && _main.ApiClient is not null);
         ThemeChangedCommand = new RelayCommand(parameter =>
             _main.ThemeService.SetPreference(parameter as string ?? "跟随系统"));
         ExitCommand = new AsyncRelayCommand(_ => exitAsync());
@@ -213,6 +210,7 @@ public sealed class WorkspaceViewModel : ObservableObject
     public AsyncRelayCommand RenameProjectNodeCommand { get; }
     public AsyncRelayCommand DeleteWorkbookProjectNodeCommand { get; }
     public AsyncRelayCommand DeleteProjectNodeCommand { get; }
+    public AsyncRelayCommand OpenProjectRecycleBinCommand { get; }
 
     /// <summary>
     /// Creating a project, or null when nothing can serve it yet.
@@ -259,76 +257,6 @@ public sealed class WorkspaceViewModel : ObservableObject
         OnPropertyChanged(nameof(PageTitle));
     }
 
-    /// <summary>
-    /// Opens an .xlsx the user opened from the file browser in the workbook reader, returning
-    /// false when this does not recognise it and the default application should have it.
-    /// </summary>
-    public bool TryOpenWorkbookFile(string fullPath)
-    {
-        var segments = fullPath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var rootIndex = Array.FindLastIndex(segments, segment =>
-            segment.Equals(SmbSpaceResolver.ProjectFolderName, StringComparison.OrdinalIgnoreCase));
-        if (rootIndex < 0 || rootIndex + 2 != segments.Length - 1) return false;
-
-        var projectName = segments[rootIndex + 1];
-        var fileName = segments[^1];
-        if (!fileName.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase)) return false;
-
-        var projectNode = Projects.FirstOrDefault(project =>
-            project.Kind == ProjectNodeKind.Project &&
-            string.Equals(project.ProjectName, projectName, StringComparison.OrdinalIgnoreCase));
-        if (projectNode is null) return false;
-
-        ShowPage(WorkbookPageKey);
-        if (_projectWorkbooksPage is not null)
-        {
-            var node = FindWorkbookNode(fullPath);
-            if (node is not null) SelectProjectNode(node);
-            _ = _projectWorkbooksPage.OpenWorkbookByNameAsync(projectNode.ProjectId, fileName);
-            _ = LoadProjectsAsync();
-        }
-        else
-        {
-            var node = FindWorkbookNode(fullPath);
-            if (node is not null) ProjectNodeActivator?.Invoke(node);
-        }
-        return true;
-    }
-
-    /// <summary>
-    /// The 工作簿 row for a file directly under a project folder, or null when there is none.
-    /// </summary>
-    /// <remarks>
-    /// The path is matched against the tree rather than turned into a file id here. That id
-    /// is the server's own encoding of the project id and the file name, and the tree already
-    /// holds one per workbook because the server returned it — recomputing it would be a
-    /// second implementation of the same rule, and the two would disagree the day it changed.
-    ///
-    /// Deliberately narrow: the file has to sit at exactly
-    /// <c>&lt;share&gt;\Project\&lt;project&gt;\&lt;name&gt;</c> and that project has to have
-    /// listed a workbook of that name. A file in a subfolder, or in a project that is not
-    /// loaded, is not something this can open — and declining is the honest answer, because
-    /// the alternative is handing it to Excel and calling that success.
-    /// </remarks>
-    private ProjectNode? FindWorkbookNode(string fullPath)
-    {
-        var segments = fullPath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var rootIndex = Array.FindLastIndex(segments, segment =>
-            segment.Equals(SmbSpaceResolver.ProjectFolderName, StringComparison.OrdinalIgnoreCase));
-        if (rootIndex < 0 || rootIndex + 2 != segments.Length - 1) return null;
-
-        var projectName = segments[rootIndex + 1];
-        var fileName = segments[^1];
-        return Projects
-            .Where(project => project.Kind == ProjectNodeKind.Project
-                              && string.Equals(project.ProjectName, projectName, StringComparison.Ordinal))
-            .SelectMany(project => project.Children)
-            .Where(group => group.Kind == ProjectNodeKind.WorkbookGroup)
-            .SelectMany(group => group.Children)
-            .FirstOrDefault(child => child.Kind == ProjectNodeKind.Workbook
-                                     && string.Equals(child.Name, fileName, StringComparison.OrdinalIgnoreCase));
-    }
-
     /// <summary>The page table key for the workbook reader, which has no sidebar entry.</summary>
     public const string WorkbookPageKey = "工作簿";
 
@@ -344,7 +272,7 @@ public sealed class WorkspaceViewModel : ObservableObject
     private static object ResolveOpeningContent(WorkspaceChrome chrome, Dictionary<string, object> pages)
     {
         foreach (var item in chrome.NavigationItems)
-            if (pages.TryGetValue(item.Key, out var page)) return page;
+            if (item.IsEnabled && pages.TryGetValue(item.Key, out var page)) return page;
         if (pages.Count > 0) return pages.Values.First();
         throw new InvalidOperationException("工作区没有任何可显示的页面。");
     }
@@ -381,43 +309,53 @@ public sealed class WorkspaceViewModel : ObservableObject
         _onPageActivated?.Invoke(key);
     }
 
-    /// <summary>The signed-in employee workspace: files, transfers and feedback.</summary>
+    /// <summary>Compatibility entry point for employee-only callers.</summary>
     public static WorkspaceViewModel ForEmployee(
+        MainViewModel main, DriveSession session, NasClientSettings settings) =>
+        ForSession(main, session, settings);
+
+    /// <summary>Builds the common workspace for any session; visitor sessions are read-only.</summary>
+    public static WorkspaceViewModel ForSession(
         MainViewModel main, DriveSession session, NasClientSettings settings)
     {
-        var transfers = new TransferViewModel(session.User.Id);
-        var feedback = new FeedbackViewModel(session, settings);
+        var api = main.ApiClient ?? throw new InvalidOperationException("文件服务不可用。");
+        var clientId = session.IsVisitor
+            ? Guid.NewGuid().ToString("D")
+            : FileClientIdentity.GetOrCreate(settings.ApiBaseUri, session.User.Id);
+        var agent = new RustTransferAgentClient(session.IsVisitor
+            ? FileClientIdentity.GetVisitorAgentNamespace(settings.ApiBaseUri, session.SessionToken)
+            : FileClientIdentity.GetEmployeeAgentNamespace(settings.ApiBaseUri, session.User.Id));
+        var transfers = new TransferViewModel(api, session, settings, agent, clientId);
+        FeedbackViewModel? feedback = session.IsReadOnly ? null : new FeedbackViewModel(session, settings);
+        var imageTransfer = new AgentProjectImageFileTransfer(api, session, transfers, clientId);
 
-        // Built per sign-in and disposed with the workspace: the workbook library scopes its
-        // retry records to a hash of the server origin and the account id, so a page that
-        // outlived a sign-out could resume one person's pending work as the next. Absent when
-        // the client configuration did not load, since there is then no pinned client to build
-        // it from — and the entry is simply not offered rather than offered and broken.
-        var projectWorkbooks = main.ApiClient is { } api
-            ? new ProjectWorkbookPage(api, session.SessionToken, session.User.Id)
-            : null;
-        if (projectWorkbooks is not null)
-        {
-            projectWorkbooks.ViewModel.ShareRoot = settings.ShareRoot;
-        }
-        var files = new FilesViewModel(session, settings, transfers);
-        var sync = new SyncViewModel(projectWorkbooks, settings.ShareRoot);
+        // The workbook page belongs to this signed-in session and is disposed with the
+        // workspace. Its shared view model receives the session's read-only capability.
+        var projectWorkbooks = new ProjectWorkbookPage(api, session.SessionToken, session.User.Id,
+            imageTransfer, isReadOnly: session.IsReadOnly);
+        var files = new FilesViewModel(api, session, transfers, agent, clientId);
+        SyncViewModel? sync = session.IsReadOnly
+            ? null
+            : new SyncViewModel(projectWorkbooks, transfers, session.User.Id, settings.ApiBaseUri);
 
         var chrome = new WorkspaceChrome(
             [
                 new WorkspaceNavItem("图片", "图片", "Image"),
                 new WorkspaceNavItem("视频", "视频", "Video"),
-                new WorkspaceNavItem("个人空间", "个人空间", "UserRound"),
-                new WorkspaceNavItem("同步", "同步", "RefreshCw"),
+                new WorkspaceNavItem("个人空间", "个人空间", "UserRound", isEnabled: !session.IsReadOnly,
+                    disabledReason: "此只读账户没有个人空间访问权限。"),
+                new WorkspaceNavItem("同步", "同步", "RefreshCw", isEnabled: !session.IsReadOnly,
+                    disabledReason: "只读账户不能配置同步。"),
                 new WorkspaceNavItem("传输", "传输", "Upload"),
-                new WorkspaceNavItem("反馈", "反馈", "CircleHelp"),
+                new WorkspaceNavItem("反馈", "反馈", "CircleHelp", isEnabled: !session.IsReadOnly,
+                    disabledReason: "只读账户不能提交或管理反馈。"),
             ],
             [],
             // Filled once the project list has been read. Empty until then, and empty is
             // shown as "loading or none" rather than as a project that is not there.
             [],
             session.User.UserName,
-            "退出登录",
+            session.IsVisitor ? "退出只读访问" : "退出登录",
             ShowUpdateEntry: true);
 
         var pages = new Dictionary<string, object>(StringComparer.Ordinal)
@@ -425,10 +363,10 @@ public sealed class WorkspaceViewModel : ObservableObject
             ["图片"] = files,
             ["视频"] = files,
             ["个人空间"] = files,
-            ["同步"] = sync,
-            ["传输"] = transfers,
-            ["反馈"] = feedback
+            ["传输"] = transfers
         };
+        if (sync is not null) pages["同步"] = sync;
+        if (feedback is not null) pages["反馈"] = feedback;
         // No sidebar entry of its own: the workbook page is reached from a project's
         // 工作簿 row, so it is a page without being a navigation destination.
         if (projectWorkbooks is not null) pages[WorkbookPageKey] = projectWorkbooks.ViewModel;
@@ -444,14 +382,14 @@ public sealed class WorkspaceViewModel : ObservableObject
             transfers, feedback,
             disposeExtra: () =>
             {
-                sync.Dispose();
+                sync?.Dispose();
                 projectWorkbooks?.Dispose();
                 return ValueTask.CompletedTask;
             },
             onPageActivated: key =>
             {
-                if (key == "反馈") _ = feedback.EnsureLoadedAsync();
-                else if (key == "同步") _ = sync.InitializeAsync();
+                if (key == "反馈" && feedback is not null) _ = feedback.EnsureLoadedAsync();
+                else if (key == "同步" && sync is not null) _ = sync.InitializeAsync();
             });
 
         workspace._projectWorkbooksPage = projectWorkbooks;
@@ -489,12 +427,13 @@ public sealed class WorkspaceViewModel : ObservableObject
                     break;
                 case ProjectNodeKind.MediaGroup:
                     files.OpenProjectMedia(
+                        node.ProjectId,
                         node.ProjectName,
                         node.Name == ProjectNavigation.ImageGroupName ? SpaceMediaKind.Images : SpaceMediaKind.Videos);
                     workspace.ShowBrowser(files);
                     break;
                 default:
-                    files.OpenProject(node.ProjectName);
+                    files.OpenProject(node.ProjectId, node.ProjectName);
                     workspace.ShowBrowser(files);
                     break;
             }
@@ -519,11 +458,11 @@ public sealed class WorkspaceViewModel : ObservableObject
                 }
                 return trees;
             };
-            // Not awaited: the sidebar fills in when it fills in, and the workspace is usable
-            // — 图片, 个人空间, 传输, 反馈 — while it does.
+            // Not awaited: the sidebar fills in when it fills in, while the common workspace
+            // remains usable during the request.
             _ = workspace.LoadProjectsAsync();
 
-            if (session.User.Id != 0)
+            if (!session.IsReadOnly)
             {
                 workspace.CreateProjectToolTip = "新建项目";
                 workspace.CreateProjectCommand = new AsyncRelayCommand(async _ =>
@@ -557,13 +496,10 @@ public sealed class WorkspaceViewModel : ObservableObject
             }
             else
             {
-                workspace.CreateProjectToolTip = "访客为只读模式";
+                workspace.CreateProjectToolTip = "只读账户不能创建项目";
                 workspace.CreateProjectCommand = null;
             }
         }
-
-        // Opening a workbook from the file browser goes to the reader rather than to Excel.
-        files.WorkbookOpener = workspace.TryOpenWorkbookFile;
 
         workspace.Session = session;
         workspace.Account = session.User;
@@ -571,49 +507,18 @@ public sealed class WorkspaceViewModel : ObservableObject
         return workspace;
     }
 
-    /// <summary>
-    /// The login-free tour: the same shell as an employee, with read-only spaces.
-    /// </summary>
-    /// <remarks>
-    /// The tour keeps the feedback page — it posts anonymously — but has no transfer
-    /// page and no update entry, so those are simply absent from the sidebar.
-    /// </remarks>
-    public static WorkspaceViewModel ForVisitor(
-        MainViewModel main,
-        IFileBrowser browser,
-        IReadOnlyList<WorkspaceNavItem> spaces,
-        IReadOnlyDictionary<string, object> pages,
-        Func<string, Task> selectSpaceAsync,
-        Func<Task> exitAsync,
-        FeedbackViewModel? feedback = null,
-        Func<ValueTask>? disposeExtra = null)
+    private DriveSession? _session;
+    public DriveSession? Session
     {
-        var chrome = new WorkspaceChrome(
-            [
-                new WorkspaceNavItem("文件", "文件", "Files"),
-                new WorkspaceNavItem("反馈", "反馈", "CircleHelp"),
-            ],
-            spaces,
-            // The tour has no projects. It is a read-only walk through a few shared spaces,
-            // not a workspace someone works in.
-            [],
-            "参观",
-            "退出游览",
-            ShowUpdateEntry: false);
-
-        var workspace = new WorkspaceViewModel(
-            main, chrome,
-            new Dictionary<string, object>(pages, StringComparer.Ordinal),
-            selectSpaceAsync,
-            exitAsync,
-            feedback: feedback,
-            disposeExtra: disposeExtra,
-            onPageActivated: key => { if (key == "反馈") _ = feedback?.EnsureLoadedAsync(); });
-        workspace.Browser = browser;
-        return workspace;
+        get => _session;
+        private set
+        {
+            if (!SetProperty(ref _session, value)) return;
+            OnPropertyChanged(nameof(IsReadOnlySession));
+            OpenProjectRecycleBinCommand.RaiseCanExecuteChanged();
+        }
     }
-
-    public DriveSession? Session { get; private set; }
+    public bool IsReadOnlySession => Session?.IsReadOnly == true;
     public V2UserSession? Account { get; private set; }
     public FilesViewModel? Files { get; private set; }
     public TransferViewModel? Transfers => _transfers;
@@ -658,11 +563,56 @@ public sealed class WorkspaceViewModel : ObservableObject
             var projects = await ProjectListLoader();
             Projects.Clear();
             foreach (var project in projects) Projects.Add(project);
-            ProjectListNotice = projects.Count == 0 ? "还没有项目。点击 + 新建。" : string.Empty;
+            ProjectListNotice = projects.Count == 0
+                ? IsReadOnlySession ? "没有可查看的项目。" : "还没有项目。点击 + 新建。"
+                : string.Empty;
         }
         catch (Exception)
         {
             ProjectListNotice = "项目列表暂时读不到，请稍后重试。";
+        }
+    }
+
+    private async Task OpenProjectRecycleBinAsync()
+    {
+        if (Session is null || IsReadOnlySession || _main.ApiClient is not { } api) return;
+        try
+        {
+            var projects = await api.ListProjectSpacesAsync(Session.SessionToken, includeDeleted: true);
+            var items = new List<RecycledProjectItem>();
+            foreach (var project in projects)
+            {
+                if (project.DeletedAt is { } deletedAt)
+                    items.Add(new RecycledProjectItem(RecycledProjectItemKind.Project, project.Id,
+                        project.Name, project.Id, project.Name, deletedAt));
+
+                var workbooks = await api.ListProjectWorkbooksAsync(
+                    Session.SessionToken, project.Id, includeDeleted: true);
+                foreach (var workbook in workbooks)
+                {
+                    if (workbook.DeletedAt is not { } workbookDeletedAt) continue;
+                    items.Add(new RecycledProjectItem(RecycledProjectItemKind.Workbook, workbook.Id,
+                        workbook.Name, project.Id, project.Name, workbookDeletedAt));
+                }
+            }
+
+            var dialog = new ProjectRecycleBinWindow(items)
+            {
+                Owner = System.Windows.Application.Current?.MainWindow
+            };
+            if (dialog.ShowDialog() != true || dialog.SelectedItem is not { } selected) return;
+            if (selected.Kind == RecycledProjectItemKind.Project)
+                await api.RestoreProjectSpaceAsync(Session.SessionToken, selected.Id);
+            else
+                await api.RestoreProjectWorkbookAsync(Session.SessionToken, selected.Id);
+
+            await LoadProjectsAsync();
+        }
+        catch (Exception ex)
+        {
+            System.Windows.MessageBox.Show(
+                ex.Message, "项目回收站操作失败",
+                System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
         }
     }
 
@@ -784,6 +734,7 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     private void Navigate(string destination)
     {
+        if (!NavigationItems.Any(item => item.Key == destination && item.IsEnabled)) return;
         if (!_pages.TryGetValue(destination, out var page)) return;
         var isSpace = SpaceKeys.Contains(destination);
         if (isSpace) _selectedSpaceKey = destination;
@@ -801,7 +752,7 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     private async Task SelectSpaceAsync(string? space)
     {
-        if (space is null || !SpaceItems.Any(item => item.Key == space)) return;
+        if (space is null || !SpaceItems.Any(item => item.Key == space && item.IsEnabled)) return;
 
         // 项目 sits in the space list for placement, but it is a page rather than a space:
         // choosing it navigates instead of re-filtering the file browser underneath.

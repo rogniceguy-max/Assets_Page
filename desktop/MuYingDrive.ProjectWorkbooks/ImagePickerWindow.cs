@@ -114,6 +114,8 @@ public sealed class ImagePickerWindow : Window
     private void OnProjectImageChanged(ImageAsset asset)
     {
         var item = _images.FirstOrDefault(image => image.Asset.Id == asset.Id);
-        item?.UpdateAsset(asset);
+        if (item is null) return;
+        item.UpdateAsset(asset);
+        _ = _model.EnsureThumbnailAsync(item);
     }
 }

@@ -88,7 +88,7 @@ public sealed class SceneDetailsPanel : UserControl
         // Section 2: 批注协作流 (使用与资产表完全一致的 ReviewPanel，带有发送人、时间戳与讨论流)
         _review = new ReviewPanel
         {
-            DataContext = new ReviewViewModel(_model.Service, _fileId, _item.Row.Id, null, "scene-rows"),
+            DataContext = new ReviewViewModel(_model.Service, _fileId, _item.Row.Id, null, "scene-rows", _model.IsReadOnly),
         };
         Grid.SetRow(_review, 2);
         root.Children.Add(_review);

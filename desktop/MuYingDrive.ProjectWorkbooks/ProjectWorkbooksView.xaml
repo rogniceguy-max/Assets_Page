@@ -49,11 +49,12 @@
            Background="{DynamicResource Brush.Surface.Panel}">
     <Border.ContextMenu>
      <ContextMenu>
-      <MenuItem Header="新增下一节拍行" Click="OnAddSceneRow"/>
+      <MenuItem Header="新增下一节拍行" Click="OnAddSceneRow"
+                Visibility="{Binding Row.CanEdit, Converter={StaticResource BoolVisibility}}"/>
       <MenuItem Header="打开侧边栏" Click="OnOpenSceneSidebar"/>
       <Separator/>
       <MenuItem Header="删除此节拍行" Click="OnDeleteSceneRow" Foreground="{DynamicResource Brush.Status.Danger}"
-                IsEnabled="{Binding Row.CanEdit}"/>
+                IsEnabled="{Binding Row.CanEdit}" Visibility="{Binding Row.CanEdit, Converter={StaticResource BoolVisibility}}"/>
      </ContextMenu>
     </Border.ContextMenu>
     <StackPanel>
@@ -104,7 +105,7 @@
         <ColumnDefinition Width="*"/>
        </Grid.ColumnDefinitions>
        <TextBlock Text="制作难度" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Secondary}" FontSize="12" Margin="0,0,8,0"/>
-       <ComboBox Grid.Column="1" ItemsSource="{Binding DataContext.LevelFilters, RelativeSource={RelativeSource AncestorType=UserControl}}"
+       <ComboBox Grid.Column="1" ItemsSource="{Binding DataContext.LabelLevelOptions, RelativeSource={RelativeSource AncestorType=UserControl}}"
                  SelectedItem="{Binding LabelLevelDraft}"
                  SelectionChanged="OnSceneLevelSelectionChanged"
                  HorizontalAlignment="Stretch" Padding="6,3"
@@ -182,10 +183,12 @@
       <Border Style="{StaticResource Cell}" AllowDrop="True" DragOver="OnVideoDragOver" Drop="OnVideoDrop" Background="Transparent">
        <Border.ContextMenu>
         <ContextMenu>
-         <MenuItem Header="选择关联视频文件..." Click="OnPickVideo" IsEnabled="{Binding Row.CanEdit}"/>
+         <MenuItem Header="选择关联视频文件..." Click="OnPickVideo" IsEnabled="{Binding Row.CanEdit}"
+                   Visibility="{Binding Row.CanEdit, Converter={StaticResource BoolVisibility}}"/>
          <MenuItem Header="{Binding DiscardedCount, StringFormat=查看废片库 ({0})}" Click="OnOpenDiscardedVideos"/>
          <Separator/>
-         <MenuItem Header="删除此节拍行" Click="OnDeleteSceneRow" Foreground="{DynamicResource Brush.Status.Danger}" IsEnabled="{Binding Row.CanEdit}"/>
+         <MenuItem Header="删除此节拍行" Click="OnDeleteSceneRow" Foreground="{DynamicResource Brush.Status.Danger}" IsEnabled="{Binding Row.CanEdit}"
+                   Visibility="{Binding Row.CanEdit, Converter={StaticResource BoolVisibility}}"/>
         </ContextMenu>
        </Border.ContextMenu>
        <StackPanel VerticalAlignment="Top">
@@ -193,8 +196,12 @@
         <!-- 空状态：极简轻量，支持拖入 -->
         <Border Visibility="{Binding HasVideos, Converter={StaticResource InverseBoolVisibility}}"
                 Background="Transparent" Padding="4,8" Cursor="Hand" MouseLeftButtonUp="OnPickVideo"
+                IsHitTestVisible="{Binding Row.CanEdit}"
                 ToolTip="点击选择或拖入视频文件 (.mp4, .mov, .mkv 等)">
-         <TextBlock Text="可拖入或点击关联视频..." FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}" Opacity="0.5"/>
+         <TextBlock Text="可拖入或点击关联视频..." FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}" Opacity="0.5"
+                    Visibility="{Binding Row.CanEdit, Converter={StaticResource BoolVisibility}}"/>
+         <TextBlock Text="暂无关联视频" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}" Opacity="0.5"
+                    Visibility="{Binding Row.CanEdit, Converter={StaticResource InverseBoolVisibility}}"/>
         </Border>
         <!-- 已关联视频列表 (支持单beat多视频，点击默认程序播放，右键上下文操作) -->
         <ItemsControl ItemsSource="{Binding VideoItems}" Visibility="{Binding HasVideos, Converter={StaticResource BoolVisibility}}">
@@ -202,15 +209,18 @@
           <DataTemplate>
            <Border Margin="0,0,0,4" Background="{DynamicResource Brush.Surface.Panel}"
                    BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
-                   CornerRadius="4" Padding="6,4" ToolTip="{Binding Name}">
+                   CornerRadius="4" Padding="6,4" ToolTip="{Binding Name}"
+                   Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=ItemsControl}}">
             <Border.ContextMenu>
              <ContextMenu>
               <MenuItem Header="播放 (系统默认程序)" Click="OnPlayVideoDirectly"/>
               <Separator/>
-              <MenuItem Header="移入废片" Click="OnDiscardVideoItem" IsEnabled="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}}"/>
+              <MenuItem Header="移入废片" Click="OnDiscardVideoItem" IsEnabled="{Binding PlacementTarget.Tag.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                        Visibility="{Binding PlacementTarget.Tag.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolVisibility}}"/>
               <MenuItem Header="{Binding DataContext.DiscardedCount, RelativeSource={RelativeSource AncestorType=ItemsControl}, StringFormat=查看废片库 ({0})}" Click="OnOpenDiscardedVideos"/>
               <Separator/>
-              <MenuItem Header="删除此节拍行" Click="OnDeleteSceneRow" Foreground="{DynamicResource Brush.Status.Danger}" IsEnabled="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}}"/>
+              <MenuItem Header="删除此节拍行" Click="OnDeleteSceneRow" Foreground="{DynamicResource Brush.Status.Danger}" IsEnabled="{Binding PlacementTarget.Tag.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                        Visibility="{Binding PlacementTarget.Tag.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolVisibility}}"/>
              </ContextMenu>
             </Border.ContextMenu>
             <Grid Cursor="Hand" MouseLeftButtonUp="OnPlayVideoDirectly">
@@ -241,7 +251,7 @@
     <Border.ContextMenu>
      <ContextMenu>
       <MenuItem Header="删除此资产行" Click="OnDeleteAssetRow" Foreground="{DynamicResource Brush.Status.Danger}"
-                IsEnabled="{Binding Row.CanEdit}"/>
+                IsEnabled="{Binding Row.CanEdit}" Visibility="{Binding Row.CanEdit, Converter={StaticResource BoolVisibility}}"/>
      </ContextMenu>
     </Border.ContextMenu>
     <local:ResponsiveColumnsPanel Weights="0.8,1.2,0.8,160px,2.2,2.4" Breakpoint="760">
@@ -280,28 +290,36 @@
        <Grid Height="120" Background="{DynamicResource Brush.Surface.Canvas}">
         <Border Visibility="{Binding HasNoSelected, Converter={StaticResource BoolVisibility}}"
                 BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
-                Cursor="Hand" Tag="selected" MouseLeftButtonUp="OnPickSelectedCandidate" ToolTip="点击从本行备选选择或拖入图片">
+                Cursor="Hand" Tag="selected" MouseLeftButtonUp="OnPickSelectedCandidate" ToolTip="点击从本行备选选择或拖入图片"
+                IsHitTestVisible="{Binding Row.CanEdit}">
          <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
           <Path Data="M5 12h14 M12 5v14" Width="14" Height="14" Stretch="Uniform"
                 Stroke="{DynamicResource Brush.Text.Secondary}" StrokeThickness="2"
                 StrokeStartLineCap="Round" StrokeEndLineCap="Round" HorizontalAlignment="Center" Margin="0,0,0,6"/>
-          <TextBlock Text="点击选择图片" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}"/>
+          <TextBlock Text="点击选择图片" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}"
+                     Visibility="{Binding Row.CanEdit, Converter={StaticResource BoolVisibility}}"/>
+          <TextBlock Text="暂无选定图片" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}"
+                     Visibility="{Binding Row.CanEdit, Converter={StaticResource InverseBoolVisibility}}"/>
          </StackPanel>
         </Border>
         <Grid Visibility="{Binding HasSelected, Converter={StaticResource BoolVisibility}}"
               ToolTip="{Binding Selected.Name}">
          <Grid.ContextMenu>
           <ContextMenu>
-           <MenuItem Header="更换图片" Tag="selected" Click="OnPickSelectedCandidate" IsEnabled="{Binding Row.CanEdit}"/>
+           <MenuItem Header="更换图片" Tag="selected" Click="OnPickSelectedCandidate" IsEnabled="{Binding Row.CanEdit}"
+                     Visibility="{Binding Row.CanEdit, Converter={StaticResource BoolVisibility}}"/>
            <MenuItem Header="查看大图与评价" Click="OnPreviewSelected"/>
            <Separator/>
-           <MenuItem Header="从选定清空" Click="OnClearSelected" IsEnabled="{Binding Row.CanEdit}"/>
+           <MenuItem Header="从选定清空" Click="OnClearSelected" IsEnabled="{Binding Row.CanEdit}"
+                     Visibility="{Binding Row.CanEdit, Converter={StaticResource BoolVisibility}}"/>
            <Separator/>
-           <MenuItem Header="删除此资产行" Click="OnDeleteAssetRow" Foreground="{DynamicResource Brush.Status.Danger}" IsEnabled="{Binding Row.CanEdit}"/>
+           <MenuItem Header="删除此资产行" Click="OnDeleteAssetRow" Foreground="{DynamicResource Brush.Status.Danger}" IsEnabled="{Binding Row.CanEdit}"
+                     Visibility="{Binding Row.CanEdit, Converter={StaticResource BoolVisibility}}"/>
           </ContextMenu>
          </Grid.ContextMenu>
          <Image Source="{Binding Selected.Preview}" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-         <Border Background="#88000000" Cursor="Hand" Tag="selected" MouseLeftButtonUp="OnPickSelectedCandidate" ToolTip="点击更换图片">
+         <Border Background="#88000000" Cursor="Hand" Tag="selected" MouseLeftButtonUp="OnPickSelectedCandidate" ToolTip="点击更换图片"
+                 Visibility="{Binding Row.CanEdit, Converter={StaticResource BoolVisibility}}">
           <Border.Style>
            <Style TargetType="Border">
             <Setter Property="Opacity" Value="0"/>
@@ -328,9 +346,13 @@
         <Border Visibility="{Binding HasNoCandidates, Converter={StaticResource BoolVisibility}}"
                 BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
                 CornerRadius="4" Padding="8,14" Background="Transparent"
-                Cursor="Hand" MouseLeftButtonUp="OnPickCandidateFiles" ToolTip="点击选择或拖入图片到此处作为备选">
+                Cursor="Hand" MouseLeftButtonUp="OnPickCandidateFiles" ToolTip="点击选择或拖入图片到此处作为备选"
+                IsHitTestVisible="{Binding Row.CanEdit}">
          <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-          <TextBlock Text="拖入图片添加备选" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}" Opacity="0.7"/>
+          <TextBlock Text="拖入图片添加备选" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}" Opacity="0.7"
+                     Visibility="{Binding Row.CanEdit, Converter={StaticResource BoolVisibility}}"/>
+          <TextBlock Text="暂无备选图片" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}" Opacity="0.7"
+                     Visibility="{Binding Row.CanEdit, Converter={StaticResource InverseBoolVisibility}}"/>
          </StackPanel>
         </Border>
         <ItemsControl ItemsSource="{Binding Candidates}" Visibility="{Binding HasCandidates, Converter={StaticResource BoolVisibility}}">
@@ -341,16 +363,21 @@
         </ItemsControl.ItemsPanel>
         <ItemsControl.ItemTemplate>
          <DataTemplate>
-          <Border Margin="0,0,6,6" Background="{DynamicResource Brush.Surface.Canvas}" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" CornerRadius="4" Padding="2" ToolTip="{Binding Name}">
+          <Border Margin="0,0,6,6" Background="{DynamicResource Brush.Surface.Canvas}" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" CornerRadius="4" Padding="2" ToolTip="{Binding Name}"
+                  Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=ItemsControl}}">
            <Border.ContextMenu>
             <ContextMenu>
-             <MenuItem Header="设为选定图片" Click="OnUseCandidate"/>
+             <MenuItem Header="设为选定图片" Click="OnUseCandidate"
+                       Visibility="{Binding PlacementTarget.Tag.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolVisibility}}"/>
              <MenuItem Header="使用系统默认程序打开" Click="OnPreviewCandidate"/>
              <MenuItem Header="查看大图与评价" Click="OnOpenCandidateReview"/>
              <Separator/>
-             <MenuItem Header="从备选移除" Click="OnRemoveCandidate"/>
+             <MenuItem Header="从备选移除" Click="OnRemoveCandidate"
+                       Visibility="{Binding PlacementTarget.Tag.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolVisibility}}"/>
              <Separator/>
-             <MenuItem Header="删除此资产行" Click="OnDeleteAssetRow" Foreground="{DynamicResource Brush.Status.Danger}" IsEnabled="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}}"/>
+             <MenuItem Header="删除此资产行" Click="OnDeleteAssetRow" Foreground="{DynamicResource Brush.Status.Danger}"
+                       IsEnabled="{Binding PlacementTarget.Tag.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                       Visibility="{Binding PlacementTarget.Tag.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolVisibility}}"/>
             </ContextMenu>
            </Border.ContextMenu>
            <Grid Width="64" Height="64">
@@ -358,7 +385,8 @@
              <Image Source="{Binding Preview}" Stretch="Uniform"/>
             </Button>
             <Button Content="✕" Click="OnRemoveCandidate" HorizontalAlignment="Right" VerticalAlignment="Top" Width="16" Height="16" Padding="0" FontSize="9"
-                    Opacity="0.8" ToolTip="移除备选" IsEnabled="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}}"/>
+                    Opacity="0.8" ToolTip="移除备选" IsEnabled="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                    Visibility="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}, Converter={StaticResource BoolVisibility}}"/>
            </Grid>
           </Border>
          </DataTemplate>
@@ -385,6 +413,11 @@
  <Grid Margin="24,20,24,22">
   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
   <StackPanel Grid.Row="0">
+   <Border Background="{DynamicResource Brush.Surface.Panel}" BorderBrush="{DynamicResource Brush.Border.Subtle}"
+           BorderThickness="1" Padding="8" Margin="0,0,0,8"
+           Visibility="{Binding IsReadOnly, Converter={StaticResource BoolVisibility}}">
+    <TextBlock Text="访客只读模式" Foreground="{DynamicResource Brush.Text.Secondary}"/>
+   </Border>
    <ProgressBar Height="3" IsIndeterminate="True" Margin="0,0,0,8" Visibility="Collapsed"
                 local:DelayedVisibility.IsBusy="{Binding Busy}"/>
    <TextBlock Text="{Binding Error}" Foreground="{DynamicResource Brush.Status.Danger}" Margin="0,0,0,8"
@@ -401,7 +434,7 @@
     <!-- The gap below the button row: without it the first file card sat right against the
          buttons, which reads as one cramped block rather than "actions, then what they act
          on". -->
-    <StackPanel><WrapPanel Margin="0,0,0,14">
+     <StackPanel><WrapPanel Margin="0,0,0,14" Visibility="{Binding IsReadOnly, Converter={StaticResource InverseBoolVisibility}}">
      <Button Content="新建节拍表" Tag="scene_beats" Click="OnCreate" Style="{DynamicResource Button.Primary}"/>
      <Button Content="新建资产表" Tag="asset_review" Click="OnCreate"/>
     </WrapPanel></StackPanel>
@@ -413,13 +446,16 @@
                BorderBrush="{DynamicResource Brush.Border.Subtle}"
                BorderThickness="1" CornerRadius="8" Padding="12"
                Cursor="Hand" MouseLeftButtonUp="OnCardClick"
-               Focusable="True" KeyDown="OnCardKeyDown">
+               Focusable="True" KeyDown="OnCardKeyDown"
+               Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=UserControl}}">
         <Border.ContextMenu>
          <ContextMenu>
           <MenuItem Header="打开工作簿" Click="OnOpenFile"/>
-          <MenuItem Header="重命名 (F2)" Click="OnStartRenameFile"/>
+          <MenuItem Header="重命名 (F2)" Click="OnStartRenameFile"
+                    Visibility="{Binding PlacementTarget.Tag.IsReadOnly, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource InverseBoolVisibility}}"/>
           <Separator/>
-          <MenuItem Header="删除工作簿" Click="OnDeleteWorkbookFromMenu" Foreground="{DynamicResource Brush.Status.Danger}"/>
+          <MenuItem Header="删除工作簿" Click="OnDeleteWorkbookFromMenu" Foreground="{DynamicResource Brush.Status.Danger}"
+                    Visibility="{Binding PlacementTarget.Tag.IsReadOnly, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource InverseBoolVisibility}}"/>
          </ContextMenu>
         </Border.ContextMenu>
         <Grid>
@@ -457,11 +493,22 @@
        </ComboBox.ItemTemplate>
       </ComboBox>
       <Button Content="+ 新增集数" Click="OnAddEpisode" Margin="0,0,12,0" Padding="8,4"
-              Visibility="{Binding SelectedSheet.IsScene, Converter={StaticResource BoolVisibility}}"
-              ToolTip="为当前节拍表新增一集"/>
+              ToolTip="为当前节拍表新增一集">
+       <Button.Style><Style TargetType="Button"><Setter Property="Visibility" Value="Visible"/>
+        <Style.Triggers>
+         <DataTrigger Binding="{Binding IsReadOnly}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+         <DataTrigger Binding="{Binding SelectedSheet.IsScene}" Value="False"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+        </Style.Triggers>
+       </Style></Button.Style>
+      </Button>
       <Button Click="OnAddSceneRow" Margin="0,0,12,0" Padding="10,5"
-              Visibility="{Binding SelectedSheet.IsScene, Converter={StaticResource BoolVisibility}}"
               ToolTip="为当前节拍表新增一行节拍">
+       <Button.Style><Style TargetType="Button"><Setter Property="Visibility" Value="Visible"/>
+        <Style.Triggers>
+         <DataTrigger Binding="{Binding IsReadOnly}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+         <DataTrigger Binding="{Binding SelectedSheet.IsScene}" Value="False"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+        </Style.Triggers>
+       </Style></Button.Style>
        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
         <Path Data="M5 12h14 M12 5v14"
               Width="13" Height="13" Stretch="Uniform"
@@ -472,8 +519,13 @@
        </StackPanel>
       </Button>
       <Button Click="OnAddAssetRow" Margin="0,0,12,0" Padding="10,5"
-              Visibility="{Binding SelectedSheet.IsAsset, Converter={StaticResource BoolVisibility}}"
               ToolTip="为当前资产表新增一行资产">
+       <Button.Style><Style TargetType="Button"><Setter Property="Visibility" Value="Visible"/>
+        <Style.Triggers>
+         <DataTrigger Binding="{Binding IsReadOnly}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+         <DataTrigger Binding="{Binding SelectedSheet.IsAsset}" Value="False"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+        </Style.Triggers>
+       </Style></Button.Style>
        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
         <Path Data="M5 12h14 M12 5v14"
               Width="13" Height="13" Stretch="Uniform"
@@ -503,11 +555,6 @@
      <StackPanel DataContext="{Binding SelectedSheet}">
       <ItemsControl ItemsSource="{Binding DataContext.VisibleAssets, RelativeSource={RelativeSource AncestorType=UserControl}}" ItemTemplate="{StaticResource AssetRowTemplate}" Visibility="{Binding IsAsset, Converter={StaticResource BoolVisibility}}"/>
       <ItemsControl ItemsSource="{Binding DataContext.VisibleScenes, RelativeSource={RelativeSource AncestorType=UserControl}}" ItemTemplate="{StaticResource SceneRowTemplate}" Visibility="{Binding IsScene, Converter={StaticResource BoolVisibility}}"/>
-      <ItemsControl ItemsSource="{Binding GenericRows}" Visibility="{Binding IsGeneric, Converter={StaticResource BoolVisibility}}">
-       <ItemsControl.ItemTemplate><DataTemplate><Border BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" Padding="12" Margin="0,0,0,8">
-        <ItemsControl ItemsSource="{Binding Cells}"><ItemsControl.ItemTemplate><DataTemplate><StackPanel Margin="0,0,0,12"><TextBlock Text="{Binding Label}" Style="{DynamicResource Typography.Caption}"/><TextBlock Text="{Binding Value}"/></StackPanel></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
-       </Border></DataTemplate></ItemsControl.ItemTemplate>
-      </ItemsControl>
      </StackPanel>
     </ScrollViewer>
     <!-- Full Overlay Drawer for Scene and Asset details (does NOT squeeze or move the table) -->

@@ -1,79 +1,59 @@
-# 沐影盘 (MuYing Drive) 代码架构指引
+# 沐影盘代码架构
 
-> 本文档为仓库核心导航，明确标出真实前后端入口，避免历史遗留与跨模块误导。
+本文记录当前仓库里实际运行的客户端与后端入口，避免把已移除的旧版网页或文件工作簿服务当成现行实现。
 
----
-
-## 一、核心工程布局
+## 核心目录
 
 ```text
 Assets_Page/
 ├── backend/
-│   └── v2/                         # 【唯一生产后端】Python 3.10+ / HTTPS / NAS 原生系统
-│       ├── server.py               # 后端 HTTPS 入口与主路由器
-│       ├── project_workbooks/      # 节拍表、资产表、批注、制作难度核心服务
-│       │   ├── projector.py        # 工作簿投影与表头动态分类（无硬编码）
-│       │   ├── projects_api.py     # 工作簿 RESTful 接口
-│       │   ├── nas_adapter.py      # NAS 本地文件与模板读写适配器
-│       │   └── workflow_services.py# 批注与审阅服务
-│       ├── project_spaces.py       # 空间与媒体文件递归检索过滤（图片/视频）
-│       ├── project_helper.py       # 项目模板与工作区辅助类
-│       ├── database.py             # SQLite 凭据与审计数据库
-│       ├── deploy/                 # systemd 守护进程单元与配置模板
-│       └── tests/                  # 后端单元测试集 (128+ tests)
-│
-├── desktop/                        # 【生产 Windows 客户端】C# / .NET 8 / WPF 原生
-│   ├── MuYingDrive.NativeWpf/      # 客户端主程序（外壳、导航、文件树、更新检查、登录）
-│   │   ├── Views/WorkspaceView.xaml# 主工作区与左侧目录树视图
-│   │   ├── Views/FilesView.xaml    # 资源库文件浏览器视图
-│   │   └── ViewModels/             # 主视图模型与业务协调器
-│   ├── MuYingDrive.ProjectWorkbooks/ # 【内嵌工作簿引擎】（节拍表/资产表/批注/难度）
-│   │   ├── ProjectWorkbooksView.xaml # 工作簿主界面与主页卡片
-│   │   ├── ReviewPanel.xaml        # 批注侧边栏
-│   │   └── ViewModels/             # 工作簿数据绑定与单元格映射
-│   ├── MuYingDrive.UpdateCore/     # 离线 ECDSA 数字签名校验与更新信任锚点
-│   ├── MuYingDrive.Updater/        # 独立安全替换更新进程（单文件无损热更）
-│   └── MuYingDrive.Bootstrap/      # 首次安装引导打包器（Setup.exe）
-│
-├── scripts/
-│   └── deploy.py                   # 一键自动化极速部署工具（方案 3 & 4）
-├── deploy.ps1                      # 极速部署快捷包装脚本
-├── services/media_worker/          # Mac mini M4 媒体工作站处理服务
-└── docs/                           # 需求与技术规范文档
+│   ├── server.py                       # 唯一 HTTPS 服务入口
+│   ├── project_workbooks/              # SQLite 项目与工作簿 API、存储
+│   │   ├── projects_api.py             # 工作簿 HTTP 路由、校验与 SSE
+│   │   ├── sqlite_store.py             # 项目、工作簿、文件目录元数据
+│   │   ├── workflow_services.py        # 工作簿 API 服务接口
+│   │   └── host_adapters.py            # 会话认证与评论服务
+│   ├── project_spaces.py               # SQLite 项目列表、创建、软删除与恢复
+│   ├── file_storage.py                 # 文件目录、历史、操作和同步变更 API
+│   └── tests/                          # 后端测试
+├── desktop/
+│   ├── MuYingDrive.NativeWpf/          # 原生 WPF 主程序、导航与文件工作区
+│   ├── MuYingDrive.ProjectWorkbooks/   # WPF 节拍表与资产表界面组件
+│   ├── MuYingDrive.UpdateCore/         # 更新协议与信任校验
+│   ├── MuYingDrive.Updater/            # 更新替换进程
+│   └── MuYingDrive.Bootstrap/          # 安装包引导程序
+├── scripts/deploy.py                   # 后端部署工具
+├── services/media_worker/              # 媒体处理服务
+└── docs/                               # 需求、验收和运维文档
 ```
 
----
+## 工作簿数据路径
 
-## 二、关键业务模块映射
+WPF 的 `ProjectWorkbooksView` 通过 `IProjectWorkbookService` 调用 `/api/v2/project-workbooks`。后端由 `SqliteProjectWorkbookStore` 提供项目和工作簿读写；`file_storage.py` 提供统一文件目录、历史和同步变更 API。逻辑目录与路径以 SQLite 为准，新项目在 SQLite 中创建节拍表和资产表。
 
-### 1. 节拍表 / 资产表与工作簿
-- **前端页面**：`desktop/MuYingDrive.ProjectWorkbooks/ProjectWorkbooksView.xaml`
-- **批注侧边栏**：`desktop/MuYingDrive.ProjectWorkbooks/ReviewPanel.xaml`
-- **数据结构与视图模型**：`desktop/MuYingDrive.ProjectWorkbooks/ProjectWorkbooksViewModel.cs`
-- **后端动态分类（按表头内容，不靠写死文件名）**：`backend/v2/project_workbooks/projector.py`
-- **后端模板与文件持久化**：`backend/v2/project_workbooks/nas_adapter.py`
+工作簿功能不读取、导入、归档或导出 `.xlsx` 文件。WPF/API 只处理 SQLite 中的节拍表和资产表，也没有来源关联、选图历史或评论解决功能。
 
-### 2. 左侧导航树与文件浏览
-- **项目节点导航分发**：`desktop/MuYingDrive.NativeWpf/ViewModels/WorkspaceViewModel.cs`
-- **媒体过滤（仅图片 / 仅视频）**：`desktop/MuYingDrive.NativeWpf/Services/SmbSpaceResolver.cs`
-- **文件列表与内嵌双击打开工作簿**：`desktop/MuYingDrive.NativeWpf/ViewModels/FilesViewModel.cs`
+图片、视频和普通文件都使用同一 file catalog 与 Rust 传输服务。Python API 保存逻辑路径、版本、软删除状态和变更事件；NAS 只保存不可变文件对象。重命名、移动、删除、恢复和 beat 改号只更新 SQLite，不通过 SMB 或项目 helper 操作 NAS 文件。
 
----
+访客使用短期只读会话，复用员工的同一 WPF 工作区与导航；个人空间、同步和反馈等不适用入口按只读能力禁用。访客可读公共区、两个部门区和所有项目数据，不可读个人空间，也不能写入文件、工作簿或批注。旧的 visitor NAS reader/socket 已从源码路径移除。
 
-## 三、部署与更新常用命令
+Mac M4 媒体工人通过单独服务令牌领取文件版本任务，用传输票据读取原文件，通过 Rust 传输服务提交 640px WebP 缩略图。缩略图按 `file_id + revision_id + generator_version` 记录，WPF 以相同键缓存和读取；工人不挂载 SMB。
 
-已集成 30 秒自动化极速流水线：
+首次启用采用空的素材目录与文件目录；旧 NAS 素材、旧工作簿内容不迁移。本轮只更新源代码和文档，不清理或改写现有生产数据。
+
+## 主要界面映射
+
+- 工作簿页面：`desktop/MuYingDrive.ProjectWorkbooks/ProjectWorkbooksView.xaml`
+- 讨论和图片评价：`desktop/MuYingDrive.ProjectWorkbooks/ReviewPanel.xaml`
+- 工作簿视图模型：`desktop/MuYingDrive.ProjectWorkbooks/ProjectWorkbooksViewModel.cs`
+- 主工作区与项目导航：`desktop/MuYingDrive.NativeWpf/ViewModels/WorkspaceViewModel.cs`
+- 文件浏览：`desktop/MuYingDrive.NativeWpf/ViewModels/FilesViewModel.cs`
+
+## 部署入口
 
 ```powershell
-# 仅更新后端（秒级热更生效）：
 .\deploy.ps1 -Backend
-
-# 日常客户端更新（~30秒全自动打包、签名、直传 NAS）：
 .\deploy.ps1 -Client
-
-# 全量发布（前后端）：
 .\deploy.ps1 -All
-
-# 制作全新机器安装包：
 .\deploy.ps1 -Client -Installer
 ```

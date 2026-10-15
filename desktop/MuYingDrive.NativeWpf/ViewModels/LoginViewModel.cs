@@ -16,7 +16,7 @@ public sealed class LoginViewModel : ObservableObject
         _main = main;
         LoginCommand = new AsyncRelayCommand(LoginAsync, _ => !IsBusy);
         RegisterCommand = new RelayCommand(_ => _main.ShowRegister(), _ => !IsBusy);
-        EnterTourCommand = new AsyncRelayCommand(_ => _main.EnterVisitorAsync(), _ => !IsBusy);
+        EnterVisitorCommand = new AsyncRelayCommand(_ => _main.EnterVisitorAsync(), _ => !IsBusy);
     }
 
     public string UserName { get => _userName; set => SetProperty(ref _userName, value); }
@@ -39,7 +39,7 @@ public sealed class LoginViewModel : ObservableObject
 
     public AsyncRelayCommand LoginCommand { get; }
     public RelayCommand RegisterCommand { get; }
-    public AsyncRelayCommand EnterTourCommand { get; }
+    public AsyncRelayCommand EnterVisitorCommand { get; }
 
     private async Task LoginAsync(object? _)
     {

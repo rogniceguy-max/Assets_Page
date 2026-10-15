@@ -1,8 +1,7 @@
 [Unit]
-Description=MuYing Drive V2 identity API
-After=network-online.target smbd.service muying-v2-account.socket
+Description=MuYing Drive V2 application and file control API
+After=network-online.target
 Wants=network-online.target
-Requires=muying-v2-account.socket
 
 [Service]
 Type=simple

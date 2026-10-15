@@ -13,6 +13,14 @@
     <SelfContained>true</SelfContained>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <TransferAgentRoot>$(MSBuildProjectDirectory)\..\..\transfer</TransferAgentRoot>
+    <TransferAgentManifest>$(TransferAgentRoot)\Cargo.toml</TransferAgentManifest>
+    <TransferAgentCargoTarget>x86_64-pc-windows-msvc</TransferAgentCargoTarget>
+    <TransferAgentBinary>$(TransferAgentRoot)\target\$(TransferAgentCargoTarget)\release\MuYingDrive.TransferAgent.exe</TransferAgentBinary>
+    <BuildTransferAgent Condition="'$(BuildTransferAgent)' == ''">true</BuildTransferAgent>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\MuYingDrive.UpdateCore\MuYingDrive.UpdateCore.csproj" />
     <ProjectReference Include="..\MuYingDrive.ProjectWorkbooks\MuYingDrive.ProjectWorkbooks.csproj" />
@@ -20,6 +28,22 @@
     <None Update="Assets\Demo\*.mp4" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Assets\Demo\README.md" CopyToOutputDirectory="PreserveNewest" />
     <None Update="nas-client.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TransferAgentBinary)" Link="transfer\MuYingDrive.TransferAgent.exe"
+          CopyToPublishDirectory="PreserveNewest" Condition="'$(BuildTransferAgent)' == 'true'" />
   </ItemGroup>
 
+  <Target Name="BuildRustTransferAgent" BeforeTargets="PrepareForBuild" Condition="'$(BuildTransferAgent)' == 'true'">
+    <Error Condition="!Exists('$(TransferAgentManifest)')" Text="Rust transfer agent sources are missing: $(TransferAgentManifest)" />
+    <Exec Command="cargo build --locked --manifest-path &quot;$(TransferAgentManifest)&quot; --package muying-transfer-agent --bin MuYingDrive.TransferAgent --target $(TransferAgentCargoTarget) --release"
+          WorkingDirectory="$(TransferAgentRoot)" />
+  </Target>
+  <Target Name="StageRustTransferAgent" AfterTargets="Build" Condition="'$(BuildTransferAgent)' == 'true'">
+    <Error Condition="!Exists('$(TransferAgentBinary)')" Text="Rust transfer agent build did not produce $(TransferAgentBinary)." />
+    <MakeDir Directories="$(OutDir)transfer" />
+    <Copy SourceFiles="$(TransferAgentBinary)" DestinationFiles="$(OutDir)transfer\MuYingDrive.TransferAgent.exe" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="VerifyPublishedRustTransferAgent" AfterTargets="Publish" Condition="'$(BuildTransferAgent)' == 'true'">
+    <Error Condition="!Exists('$(PublishDir)transfer\MuYingDrive.TransferAgent.exe')"
+           Text="The published client is missing transfer\MuYingDrive.TransferAgent.exe." />
+  </Target>
 </Project>

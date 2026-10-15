@@ -9,17 +9,17 @@ namespace MuYingDrive.NativeWpf.ViewModels;
 /// What the shared file browser view needs from whatever is driving it.
 /// </summary>
 /// <remarks>
-/// The employee file page and the visitor tour render the same view. They differ only
+/// Employees and read-only visitors render the same browser. They differ only
 /// in the data source and in whether write affordances exist: <see cref="CanUpload"/>
 /// and <see cref="CanModify"/> let the view omit them entirely rather than showing
-/// disabled buttons. The tour's view model returns false for both.
+/// disabled buttons. A read-only session returns false for both.
 ///
 /// WPF binds against the runtime type rather than this interface, so every member here
 /// must exist on both implementations or the shared view raises a binding error — the
 /// render harness fails the build for exactly that reason. Adding a command to this
-/// interface is therefore what forces the tour to give an answer for it, rather than
-/// letting one be forgotten and discovered at runtime. The tour's answer is a no-op whose
-/// CanExecute is false; the real boundary is the NAS ACL behind the SMB session.
+/// interface is therefore what forces every browser to give an answer for it, rather
+/// than letting one be forgotten and discovered at runtime. A read-only browser's answer is a no-op whose
+/// CanExecute is false; the file API remains the authorization boundary.
 /// </remarks>
 public interface IFileBrowser
 {
@@ -39,8 +39,10 @@ public interface IFileBrowser
     /// <summary>True when upload is offered here at all.</summary>
     bool CanUpload { get; }
 
-    /// <summary>True when rename / duplicate / delete are offered here at all.</summary>
+    /// <summary>True when file mutations are offered here at all.</summary>
     bool CanModify { get; }
+    bool CanShowRecycleBin { get; }
+    string RecycleBinButtonLabel { get; }
 
     bool CanNavigateUp { get; }
     int SelectedCount { get; }
@@ -59,15 +61,11 @@ public interface IFileBrowser
     ICommand UploadCommand { get; }
     ICommand UploadFolderCommand { get; }
     ICommand RenameCommand { get; }
-    ICommand DuplicateCommand { get; }
+    ICommand MoveCommand { get; }
     ICommand DeleteCommand { get; }
-    /// <summary>
-    /// The entry that is a placeholder rather than a feature: 移动到, which needs a folder
-    /// picker that browses the NAS and is not built yet. It is carried in the contract so
-    /// its menu item keeps resolving — a binding to a member one view model lacks is a
-    /// runtime error in the shared view, not a hidden row.
-    /// </summary>
-    ICommand UnsupportedEditCommand { get; }
+    ICommand HistoryCommand { get; }
+    ICommand RestoreCommand { get; }
+    ICommand ToggleRecycleBinCommand { get; }
     ICommand DetailsCommand { get; }
 
     event Action<SelectionRequest>? SelectionRequested;

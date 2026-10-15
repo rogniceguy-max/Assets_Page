@@ -1,10 +1,16 @@
 # 交接说明 —— 当前分支 `feat/mac-m4-media-worker`
 
-> 写于 2026-10-14。给**下一个接手的人工智能或人**。
+> 初稿写于 2026-10-14。2026-10-16 更新：下文 NAS/project-helper 状态是当日历史快照；本轮只更新仓库源代码和文档，没有连接或修改生产 NAS、systemd 服务、ACL、项目文件或账号。
 >
 > 这份文件存在的原因：接手的人只能读到仓库。而仓库里 `README.md` 和 `AGENTS.md` 写的是另外两条
 > 工作线（`codex/software-updater` / `codex/feedback-center`）的规则，**都不覆盖当前分支**，其中几行
 > 还是**已经作废的**。照那几行做，会把已经删掉的东西加回来。
+
+> **2026-10-16 架构更新：** 本文第 3–8 节记录的是更早的阶段，不能当作当前文件存储方案。当前方案以
+> [`ARCHITECTURE.md`](../ARCHITECTURE.md) 和 [`docs/file-storage-v2.md`](file-storage-v2.md) 为准：
+> 文件及工作簿元数据在 SQLite；内容通过 Rust Windows 传输代理和 NAS 传输服务；逻辑移动/删除/恢复不搬动或删除 NAS 对象。
+> WPF 不直接访问 SMB；访客只读公共区、两个部门空间和项目数据，不访问个人空间。Mac M4 媒体工人经服务生成版本绑定的 WebP 缩略图。
+> 访客及账号 helper 的旧实现已移除。生产 NAS、服务、ACL 和文件都没有在本轮修改。
 
 ---
 
@@ -16,7 +22,7 @@
 | `main` | 只有一个初始提交（旧 WebView2/React 原型），**是空的，不要往上合** |
 | 其他分支 | `codex/project-workbooks`、`codex/software-updater` 等是历史工作线，各有自己的 worktree |
 | 客户端 | `desktop/MuYingDrive.NativeWpf/`（.NET 8 / net8.0-windows / 原生 WPF / XAML / MVVM） |
-| 后端 | `backend/v2/`（Python，跑在 NAS 上，systemd） |
+| 后端 | `backend/`（Python + SQLite API；文件内容由独立 Rust NAS 传输服务处理） |
 
 **技术栈是锁定的**，`AGENTS.md` 第 1 节说的那些（禁 WebView2 / React / Electron / Tauri，不许自行升
 .NET 10）在这一分支**同样有效**。那部分没作废。
@@ -41,13 +47,10 @@
 「文件」这个入口没有了；「图片」「视频」「个人空间」是**同一个文件浏览器指向三个不同作用域**
 （`SpaceScope`），不是三个页面。「项目」下面每个项目是一棵树：工作簿 / 图片 / 视频。
 
-**部门的"删除"只发生在客户端 UI 层。** `database.py` 的 `group_type`、`service._user_payload` 的
-空间载荷、`account_helper.py` 的 `group_film`/`group_writing`、`SmbSpaceResolver` 的部门分支、
-以及 NAS 上的 ACL —— **全部原样保留，一行没动**。目录还在，权限模型没碰，所以这是可逆的：
-把入口列表加回去就恢复。
-
-真正删部门是**另一条工作线、后端先行**（`group_type` 改可空、只 provision 一个 `group_employees`、
-删两个组的 ACE、重写 `service._user_payload`），那是动 ACL 的改动，**不能和导航改动同一个 PR**。
+**当前员工账号不创建 NAS 用户。** 注册只在 SQLite 保存用户名、密码 hash、部门和应用 session；
+个人空间由 `personal:{user_id}` 逻辑 scope 定位，文件读写经认证 API 与 Rust 传输服务。仓库已移除
+per-user OS/Samba account helper、provisioning token 与对应 systemd unit/socket。部门字段仍是应用账号
+和部门逻辑空间的元数据；本轮没有修改生产 Samba 用户、组、配置或 ACL。
 
 ---
 
@@ -67,18 +70,17 @@
 | `5dfca3d` | 建项目走**特权辅助进程**，而不是放宽服务单元的写权限 |
 | `aa47ee9` | 项目侧栏，部门入口移除 |
 | `30cbd57` | 把 `DriveSpaceKind` 换成 `SpaceScope` |
-| `0b02b42` | 项目 id = inode；读不到的根返回 503 |
+| `0b02b42` | 曾用 inode 作为项目 id；当前改为 SQLite 稳定 id 与目录身份关联 |
 | `9dfacf0` | media-worker 凭据改读**环境变量**，不再读文件 |
 | `6b5f0f1` | 可选依赖（openpyxl）不再能拖垮整个服务 |
 
 ### 几个关键判断，以及为什么
 
-**`+` 走特权辅助进程，不是放宽 systemd 权限。** V2 服务单元有 `ProtectSystem=strict` +
-`ReadWritePaths=/var/lib/muying-v2`，它**写不了 `/volume1`**。备选是给那个单元加
-`ReadWritePaths=/volume1/Assets/Project` —— 被否掉了：那是把整个后端服务的写权限放开到一个共享业务
-目录上，而真正需要的只是"建一个项目文件夹"这一个动作。现在是一个 socket-activated 的 root 辅助
-进程（`muying-v2-project.socket` / `@.service`），一个请求一个进程，`SO_PEERCRED` 校验，只认
-`create_project` 一件事。
+**项目和普通文件统一走逻辑目录。** 项目、工作簿、文件路径、修订、删除标记和变更事件都进入 SQLite；
+文件字节由独立 Rust 传输服务处理。仓库已移除 `project_helper.py`、账户 helper 及两个特权 helper 的
+unit/socket 模板，也移除了对应注入配置。身份 schema 在遇到旧 helper 字段时会重建员工账号/session 表；
+用户已允许丢弃这些应用账号和会话数据。此次源码变更没有运行 schema migration、卸载或停止 NAS 服务、
+删除 OS/Samba 用户、改 ACL 或迁移/删除 NAS 文件；旧部署状态需要单独安排。
 
 **不采用交接包里的 `ProjectSpaceShell`。** 有实据，别改回去：它从未编译过（`README.md` 自己写了）；
 它会丢四样宿主已有的东西（主题切换、更新红点、账号菜单、侧栏折叠）；它依赖的路由全仓库不存在
@@ -91,8 +93,8 @@
 批注由写它的人签名 —— 评论本来就带 `UserName`。原来那六列导入的「成员批注」**完全去掉**，
 因为它们指向这个 app 无法识别的人，替登录人选一列就是把猜测当事实显示。
 
-**`SceneRow.LegacyNotes` 仍然在契约里**（后端还在发），只是界面不再显示。删掉它等于声明
-"服务端不再发"，那是 schema 改动，不是界面改动。**别顺手删。**
+**历史说明：** `SceneRow.LegacyNotes` 和 XLSX 一次性导入曾短暂保留；按后续决定，WPF 与后端现在都已
+移除这组兼容字段和导入路径，项目工作簿只保存在 SQLite 中。
 
 **离开守卫在 ViewModel 上，不在按钮上。** `ProjectWorkbooksViewModel.ConfirmLeaving`。
 因为宿主的项目树通过 `OpenWorkbookAsync` 换工作簿，**根本不问 View** —— 只守页内按钮的话，
@@ -144,15 +146,15 @@
 
 ## 5. NAS 上的现状
 
-后端装在 NAS 上，是 systemd 管的。**要动生产必须先拿到用户的明确同意。**
+下面是 2026-10-14 记录的生产状态快照，不是本轮实时检查结果。**本轮没有操作生产；之后要更新或停止生产服务仍需单独安排。**
 
 | | |
 |---|---|
 | 后端版本 | `/opt/muying-v2/current` → release `20261014-03`，服务 active |
-| 新单元 | `muying-v2-project.socket` / `muying-v2-project@.service`（已装并 enable） |
-| socket | `/run/muying-v2/project.sock`（0600，属主 `muying-v2`） |
-| 环境变量 | `/etc/muying-v2/server.env`：`MUYING_V2_PROJECT_DOCS_ROOT`、`MUYING_V2_PROJECT_SOCKET`；<br>`/etc/muying-v2/helper.env`：`MUYING_V2_PROJECT_DOCS_ROOT` |
-| 项目根 | `/volume1/Assets/Project`（新建项目 = 这里多一个文件夹） |
+| 旧 helper 单元 | 当日记录了项目 helper；账户 helper 也曾由旧 API 调用。仓库模板现已移除，生产状态未检查、未改变 |
+| 旧 helper socket | 项目 socket 当日记为 `/run/muying-v2/project.sock`（0600）；账户 socket 当日路径未在此记录。均未检查、未改变 |
+| 旧环境变量 | 当日记录包含项目 root/socket；旧版本还使用 account provisioner socket。当前仓库不再读取这些配置 |
+| 项目根 | 当日记录为 `/volume1/Assets/Project`；当前源码不扫描、不创建、不删除该目录或其中内容 |
 | ACL 快照 | `/root/assets-acl-before-project-root-20261014-1333.txt`（改 ACL 之前拍的） |
 | ACL 回滚 | `ugacltool del_one /volume1/Assets/Project <索引>`，**从最高索引删起** |
 

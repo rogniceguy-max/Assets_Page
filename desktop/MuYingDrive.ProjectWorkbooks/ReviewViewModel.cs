@@ -25,7 +25,8 @@ public static class ReviewText
 }
 
 // Target is immutable for this window. Row-general discussion never follows the selected image.
-public sealed class ReviewViewModel(IProjectWorkbookService service, string fileId, string rowId, ImageItem? image, string rowKind = "asset-rows") : ObservableModel
+public sealed class ReviewViewModel(IProjectWorkbookService service, string fileId, string rowId, ImageItem? image,
+    string rowKind = "asset-rows", bool isReadOnly = false) : ObservableModel
 {
     public string FileId { get; } = fileId;
     public string RowId { get; } = rowId;
@@ -33,6 +34,7 @@ public sealed class ReviewViewModel(IProjectWorkbookService service, string file
     public string? ImageId { get; } = image?.Asset.Id;
     public string Title => image?.Name ?? (RowKind == "scene-rows" ? "批注" : "资产批注");
     public bool IsImage => ImageId != null;
+    public bool IsReadOnly { get; } = isReadOnly;
     public ObservableCollection<ReviewComment> Comments { get; } = [];
     private bool _busy;
     public bool Busy { get => _busy; private set { _busy = value; Changed(); Changed(nameof(Ready)); } }
@@ -60,9 +62,7 @@ public sealed class ReviewViewModel(IProjectWorkbookService service, string file
     private bool _loadedThread;
     private string _refreshNotice = "";
     public string RefreshNotice { get => _refreshNotice; private set { _refreshNotice = value; Changed(); } }
-    private readonly Dictionary<string, string> _resolutionDrafts = new(StringComparer.Ordinal);
-    public bool HasDraft => !string.IsNullOrWhiteSpace(Draft) || _resolutionDrafts.Count > 0;
-    public string ResolutionDraft(ReviewComment comment) => _resolutionDrafts.GetValueOrDefault(comment.Id) ?? comment.ResolutionNote ?? "";
+    public bool HasDraft => !string.IsNullOrWhiteSpace(Draft);
 
     public async Task ExecuteAsync(Func<Task> action)
     {
@@ -82,7 +82,11 @@ public sealed class ReviewViewModel(IProjectWorkbookService service, string file
     {
         if (thread.ImageId != ImageId) throw new InvalidDataException("接口返回了不同的讨论目标，已拒绝显示。");
         _thread = thread; Comments.Clear();
-        foreach (var comment in thread.Comments.OrderBy(c => c.CreatedAt).ThenBy(c => c.Id, StringComparer.Ordinal)) Comments.Add(comment);
+        foreach (var source in thread.Comments.OrderBy(c => c.CreatedAt).ThenBy(c => c.Id, StringComparer.Ordinal))
+        {
+            var comment = IsReadOnly ? source with { CanEdit = false, CanDelete = false } : source;
+            Comments.Add(comment);
+        }
         Changed(nameof(SummaryText)); Changed(nameof(MyVerdictText)); Changed(nameof(HasNoComments));
     }
     public async Task RefreshAsync()
@@ -112,12 +116,14 @@ public sealed class ReviewViewModel(IProjectWorkbookService service, string file
     }
     public async Task VoteAsync(string? verdict)
     {
+        if (IsReadOnly) throw new InvalidDataException("访客只能查看项目讨论。");
         EnsureFresh();
         if (ImageId == null || RowKind != "asset-rows") throw new InvalidDataException("整条记录和节拍讨论不提供图片评价。");
         Apply(await service.VoteAsync(FileId, RowId, new ReviewVoteRequest(ImageId, verdict)));
     }
     public void BeginEdit(ReviewComment comment)
     {
+        if (IsReadOnly) return;
         if (!comment.CanEdit || Busy) return;
         var sameTarget = _editing?.Id == comment.Id;
         _editing = comment;
@@ -132,6 +138,7 @@ public sealed class ReviewViewModel(IProjectWorkbookService service, string file
     private void ComposerChanged() { Changed(nameof(IsEditing)); Changed(nameof(ComposerTitle)); Changed(nameof(SendLabel)); }
     public async Task SendAsync()
     {
+        if (IsReadOnly) throw new InvalidDataException("访客只能查看项目讨论。");
         EnsureFresh(); var text = ReviewText.Validate(Draft);
         ReviewThread updated;
         if (_editing is { } comment)
@@ -145,16 +152,9 @@ public sealed class ReviewViewModel(IProjectWorkbookService service, string file
     }
     public async Task DeleteAsync(ReviewComment comment)
     {
+        if (IsReadOnly) throw new InvalidDataException("访客只能查看项目讨论。");
         EnsureFresh(); if (!comment.CanDelete) throw new InvalidDataException("只能删除自己的评论。");
         Apply(await service.DeleteCommentForRowAsync(FileId, RowId, RowKind, comment.Id, comment.Version));
         if (_editing?.Id == comment.Id) CancelEdit();
-    }
-    public async Task ResolveAsync(ReviewComment comment, bool resolved, string? note)
-    {
-        if (resolved && note != null) _resolutionDrafts[comment.Id] = note;
-        EnsureFresh(); if (!comment.CanResolve) throw new InvalidDataException("当前账号没有处理此意见的权限。");
-        if (resolved) note = ReviewText.Validate(note ?? "");
-        Apply(await service.ResolveCommentAsync(FileId, RowId, RowKind, comment.Id, new ResolveCommentRequest(comment.Version, resolved, note)));
-        _resolutionDrafts.Remove(comment.Id);
     }
 }

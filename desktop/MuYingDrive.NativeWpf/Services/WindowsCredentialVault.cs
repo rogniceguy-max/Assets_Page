@@ -10,35 +10,7 @@ namespace MuYingDrive.NativeWpf.Services;
 /// Supply these values from application configuration; do not put passwords or tokens in them.
 /// </summary>
 /// <param name="V2SessionTokenTarget">Credential Manager target for the V2 session token.</param>
-/// <param name="NasPasswordTarget">Credential Manager target for the account's SMB password.</param>
-public sealed record WindowsCredentialVaultOptions(
-    string V2SessionTokenTarget,
-    string NasPasswordTarget);
-
-/// <summary>
-/// A username and password read from a Windows Generic Credential entry.
-/// The password is sensitive and must never be written to logs or diagnostics.
-/// </summary>
-/// <param name="UserName">The SMB username stored with the credential.</param>
-/// <param name="Password">The SMB password stored in the credential blob.</param>
-public sealed class NasPasswordCredential
-{
-    /// <summary>The SMB username stored with the credential.</summary>
-    public string UserName { get; }
-
-    /// <summary>The sensitive SMB password stored in the credential blob.</summary>
-    public string Password { get; }
-
-    /// <summary>Creates a credential value. Do not log either property.</summary>
-    public NasPasswordCredential(string userName, string password)
-    {
-        UserName = userName;
-        Password = password;
-    }
-
-    /// <summary>Returns a redacted representation to prevent accidental secret disclosure.</summary>
-    public override string ToString() => "NasPasswordCredential { UserName = [redacted], Password = [redacted] }";
-}
+public sealed record WindowsCredentialVaultOptions(string V2SessionTokenTarget);
 
 /// <summary>A V2 session token and its verified account identity.</summary>
 public sealed class V2SessionCredential
@@ -56,8 +28,8 @@ public sealed class V2SessionCredential
 }
 
 /// <summary>
-/// Stores the V2 session token and SMB password in the current Windows user's
-/// Credential Manager as Generic Credentials. Secrets are never logged by this class.
+/// Stores the V2 session token in the current Windows user's Credential Manager.
+/// Secrets are never logged by this class.
 /// </summary>
 public sealed class WindowsCredentialVault
 {
@@ -75,7 +47,6 @@ public sealed class WindowsCredentialVault
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         ValidateTargetName(_options.V2SessionTokenTarget, nameof(options.V2SessionTokenTarget));
-        ValidateTargetName(_options.NasPasswordTarget, nameof(options.NasPasswordTarget));
     }
 
     /// <summary>
@@ -112,42 +83,6 @@ public sealed class WindowsCredentialVault
     public void DeleteV2SessionToken()
     {
         DeleteSecret(_options.V2SessionTokenTarget);
-    }
-
-    /// <summary>
-    /// Saves or replaces the configured SMB password entry and its associated SMB username.
-    /// The password is stored as a UTF-8 Generic Credential blob; the username is credential metadata.
-    /// </summary>
-    public void SaveNasPassword(string smbUserName, string password)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(smbUserName);
-        SaveSecret(_options.NasPasswordTarget, smbUserName, password);
-    }
-
-    /// <summary>
-    /// Reads the configured SMB username and password. Returns <see langword="false"/>
-    /// when no entry exists. The returned password is sensitive and must never be logged.
-    /// </summary>
-    public bool TryReadNasPassword(out NasPasswordCredential? credential)
-    {
-        if (TryReadSecret(_options.NasPasswordTarget, out var userName, out var password)
-            && !string.IsNullOrWhiteSpace(userName)
-            && password is not null)
-        {
-            credential = new NasPasswordCredential(userName, password);
-            return true;
-        }
-
-        credential = null;
-        return false;
-    }
-
-    /// <summary>
-    /// Deletes the configured SMB password entry. Missing entries are ignored.
-    /// </summary>
-    public void DeleteNasPassword()
-    {
-        DeleteSecret(_options.NasPasswordTarget);
     }
 
     private static void SaveSecret(string targetName, string? userName, string secret)

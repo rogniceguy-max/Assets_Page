@@ -7,16 +7,24 @@ public sealed class WorkspaceNavItem : ObservableObject
 {
     private bool _isSelected;
 
-    public WorkspaceNavItem(string key, string label, string icon)
+    public WorkspaceNavItem(string key, string label, string icon, bool isEnabled = true,
+        string? disabledReason = null)
     {
         Key = key;
         Label = label;
         Icon = icon;
+        IsEnabled = isEnabled;
+        DisabledReason = disabledReason;
     }
 
     public string Key { get; }
     public string Label { get; }
     public string Icon { get; }
+    public bool IsEnabled { get; }
+    public string? DisabledReason { get; }
+    public string ToolTip => IsEnabled || string.IsNullOrWhiteSpace(DisabledReason)
+        ? Label
+        : $"{Label}：{DisabledReason}";
 
     /// <summary>Highlighted in the sidebar. Driven by the workspace, not by bindings.</summary>
     public bool IsSelected
@@ -27,18 +35,17 @@ public sealed class WorkspaceNavItem : ObservableObject
 }
 
 /// <summary>
-/// Everything that differs between the employee workspace and the read-only tour.
+/// Data for the common workspace shell. Session capabilities enable or disable entries.
 /// </summary>
 /// <remarks>
-/// The two render the same shell; only this differs. The tour supplies a single
-/// navigation entry and three read-only spaces, so the transfer and feedback pages are
-/// absent from the sidebar rather than merely unreachable.
+/// Employees and visitors render the same navigation structure. Items unavailable to a
+/// read-only session remain visible with an explanation.
 /// </remarks>
 /// <param name="NavigationItems">Pages shown at the top of the sidebar.</param>
 /// <param name="SpaceItems">Spaces listed under the "空间" heading.</param>
 /// <param name="Projects">
 /// The 项目 group. Empty is a real state — a workspace whose projects have not loaded, or a
-/// tour, which has none — and the sidebar says so rather than showing an empty box.
+/// until the list has loaded, and the sidebar says so rather than showing an empty box.
 /// </param>
 /// <param name="AccountLabel">Text shown in the account button.</param>
 /// <param name="ExitLabel">Label for the account menu action.</param>

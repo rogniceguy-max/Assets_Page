@@ -21,14 +21,25 @@ public sealed class ImageItem(ImageAsset asset, ImageSource? preview, string? er
     private ImageSource? _preview = preview;
     public ImageSource? Preview { get => _preview; private set { _preview = value; Changed(); } }
     public string Name => Asset.Name;
-    public string Details => string.Join(" · ", new[] { Asset.Category, Asset.Variant, Asset.RevisionLabel }.Where(s => !string.IsNullOrWhiteSpace(s)));
+    public string Details => string.Join(" · ", new[]
+    {
+        Asset.Category,
+        Asset.Variant,
+        Asset.Version > 1 ? $"版本 {Asset.Version}" : null
+    }.Where(s => !string.IsNullOrWhiteSpace(s)));
     private string? _error = error;
     public string? Error { get => _error; private set { _error = value; Changed(); } }
     internal bool Loading { get; set; }
     public void SetPreview(ImageSource? source, string? error = null) { Preview = source; Error = error; }
     public void UpdateAsset(ImageAsset asset)
     {
+        var revisionChanged = !string.Equals(Asset.CurrentRevisionId, asset.CurrentRevisionId, StringComparison.Ordinal);
         Asset = asset;
+        if (revisionChanged)
+        {
+            Preview = null;
+            Error = null;
+        }
         Changed(nameof(Asset)); Changed(nameof(Name)); Changed(nameof(Details));
     }
     private ReviewSummary? _summary;
@@ -198,14 +209,11 @@ public sealed class SceneRowItem(SceneRow row) : ObservableModel
             Changed(nameof(Videos));
             Changed(nameof(VideoItems));
             Changed(nameof(HasVideos));
-            Changed(nameof(FinalVideo));
             Changed(nameof(DiscardedVideos));
             Changed(nameof(HasVideo));
-            Changed(nameof(IsFinal));
             Changed(nameof(DiscardedCount));
             Changed(nameof(HasDiscarded));
             Changed(nameof(VideoDisplayName));
-            Changed(nameof(FinalBadgeText));
         }
     }
 
@@ -237,7 +245,19 @@ public sealed class SceneRowItem(SceneRow row) : ObservableModel
     public bool HasNote => !string.IsNullOrWhiteSpace(NoteDraft);
 
     private string _labelLevelDraft = row.LabelLevel ?? "未标注";
-    public string LabelLevelDraft { get => _labelLevelDraft; set { _labelLevelDraft = value; Changed(); } }
+    public string LabelLevelDraft
+    {
+        get => _labelLevelDraft;
+        set
+        {
+            // An older workbook may contain a value outside the editor's allowed choices.
+            // WPF reports no matching SelectedItem as null; keep that legacy value untouched
+            // until the user explicitly chooses one of the valid options.
+            if (value is null) return;
+            _labelLevelDraft = value;
+            Changed();
+        }
+    }
 
     public VideoItem? Video => Row.Video;
     public IReadOnlyList<VideoItem> Videos =>
@@ -253,17 +273,13 @@ public sealed class SceneRowItem(SceneRow row) : ObservableModel
     }
 
     public bool HasVideos => VideoItems.Count > 0;
-    public VideoItem? FinalVideo => Row.FinalVideo;
     public IReadOnlyList<VideoItem> DiscardedVideos => Row.DiscardedVideos;
 
     public bool HasVideo => Video != null;
-    public bool IsFinal => FinalVideo != null && Video != null &&
-        (FinalVideo.Id == Video.Id || FinalVideo.Name == Video.Name);
     public int DiscardedCount => Row.DiscardedVideos.Count;
     public bool HasDiscarded => DiscardedCount > 0;
 
     public string VideoDisplayName => Video?.Name ?? "未关联视频";
-    public string FinalBadgeText => IsFinal ? "成片" : "素材";
 
     private bool _isSaving;
     public bool IsSaving { get => _isSaving; internal set { _isSaving = value; Changed(); } }
@@ -295,14 +311,11 @@ public sealed class SceneRowItem(SceneRow row) : ObservableModel
         Changed(nameof(Videos));
         Changed(nameof(VideoItems));
         Changed(nameof(HasVideos));
-        Changed(nameof(FinalVideo));
         Changed(nameof(DiscardedVideos));
         Changed(nameof(HasVideo));
-        Changed(nameof(IsFinal));
         Changed(nameof(DiscardedCount));
         Changed(nameof(HasDiscarded));
         Changed(nameof(VideoDisplayName));
-        Changed(nameof(FinalBadgeText));
     }
 
     private string _discussionText = "讨论 ?";
@@ -349,8 +362,6 @@ public sealed class SceneRowItem(SceneRow row) : ObservableModel
         LinkedAssets.Clear();
     }
 }
-public sealed record GenericCellItem(string Label, string? Value);
-public sealed record GenericRowItem(IReadOnlyList<GenericCellItem> Cells);
 public sealed class SheetItem(WorkbookSheet sheet)
 {
     public WorkbookSheet Sheet { get; } = sheet;
@@ -358,16 +369,14 @@ public sealed class SheetItem(WorkbookSheet sheet)
     public override string ToString() => Name;
     public bool IsAsset => Sheet.Kind == "asset_review";
     public bool IsScene => Sheet.Kind == "scene_beats";
-    public bool IsGeneric => Sheet.Kind == "generic";
     public ObservableCollection<AssetRowItem> Assets { get; } = [];
     public ObservableCollection<SceneRowItem> Scenes { get; } = new(sheet.SceneRows.Select(row => new SceneRowItem(row)));
-    public IReadOnlyList<GenericRowItem> GenericRows { get; } = sheet.GenericRows.Select(row =>
-        new GenericRowItem(sheet.Columns.Select(col => new GenericCellItem(col.Label, row.Cells.GetValueOrDefault(col.Key))).ToList())).ToList();
 }
 
-public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) : ObservableModel
+public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service, bool isReadOnly = false) : ObservableModel
 {
     public IProjectWorkbookService Service { get; } = service;
+    public bool IsReadOnly { get; } = isReadOnly;
     public ObservableCollection<ProjectFileItem> Files { get; } = [];
     public ObservableCollection<ProjectInfo> Projects { get; } = [];
     private ProjectInfo? _selectedProject;
@@ -378,10 +387,6 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         {
             if (ReferenceEquals(_selectedProject, value)) return;
             _selectedProject = value; Changed();
-            ProjectAssets.Clear();
-            Document = null;
-            SelectedSheet = null;
-            Sheets.Clear();
             if (value != null) _ = EnsureLiveUpdatesAsync(value.Id);
         }
     }
@@ -393,11 +398,9 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
     public string? Error { get => _error; private set { _error = value; Changed(); Changed(nameof(CanReload)); } }
     public bool CanReload => !string.IsNullOrEmpty(Error);
     private WorkbookDocument? _document;
-    public WorkbookDocument? Document { get => _document; private set { _document = value; Changed(); Changed(nameof(IsHome)); Changed(nameof(IsOpen)); Changed(nameof(Notice)); } }
+    public WorkbookDocument? Document { get => _document; private set { _document = value; Changed(); Changed(nameof(IsHome)); Changed(nameof(IsOpen)); } }
     public bool IsHome => Document == null;
     public bool IsOpen => Document != null;
-    public string Notice => Document == null ? "" : string.Join("\n", (Document.Fidelity == "values_only"
-        ? new[] { "当前显示全部单元格内容；原 Excel 样式与公式重算不在此视图中提供，可下载原文件。" } : Array.Empty<string>()).Concat(Document.Notices).Distinct());
     private SheetItem? _selectedSheet;
     public SheetItem? SelectedSheet { get => _selectedSheet; set { _selectedSheet = value; Changed(); Changed(nameof(VisibleScenes)); Changed(nameof(VisibleAssets)); } }
     private string _search = "";
@@ -405,6 +408,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
     private string _levelFilter = "全部等级";
     public string LevelFilter { get => _levelFilter; set { _levelFilter = value; Changed(); Changed(nameof(VisibleScenes)); } }
     public IReadOnlyList<string> LevelFilters { get; } = ["全部等级", "红", "黄", "绿", "未标注"];
+    public IReadOnlyList<string> LabelLevelOptions { get; } = ["红", "黄", "绿", "未标注"];
     public IEnumerable<SceneRowItem> VisibleScenes => (SelectedSheet?.Scenes.AsEnumerable() ?? []).Where(item =>
         (LevelFilter == "全部等级" || (LevelFilter == "未标注" ? string.IsNullOrWhiteSpace(item.Row.LabelLevel) : item.Row.LabelLevel == LevelFilter)) &&
         (string.IsNullOrWhiteSpace(Search) || string.Join(" ", item.Row.SceneNumber, item.Row.BeatNumber, item.Row.StoryContent,
@@ -486,12 +490,12 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         if (ConfirmLeaving?.Invoke() == false) return;
         if (!string.IsNullOrWhiteSpace(file.ProjectId)) await EnsureLiveUpdatesAsync(file.ProjectId);
         var sequenceBeforeLoad = _lastEventSequence;
-        var document = await Service.OpenAsync(file.Id);
+        var document = AsReadOnly(await Service.OpenAsync(file.Id));
         var sheets = new List<SheetItem>();
         foreach (var source in document.Sheets)
         {
-            if (source.Kind is not ("asset_review" or "scene_beats" or "generic"))
-                throw new InvalidDataException("存在尚不支持的工作表类型，请下载原文件查看。");
+            if (source.Kind is not ("asset_review" or "scene_beats"))
+                throw new InvalidDataException("存在尚不支持的工作表类型，请联系管理员检查数据库记录。");
             var sheet = new SheetItem(source);
             foreach (var row in source.AssetRows) sheet.Assets.Add(MakeRow(row));
             sheets.Add(sheet);
@@ -584,7 +588,12 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         await RefreshProjectFilesFromEventAsync(projectId, ct);
         if (change.EntityKind == "image")
         {
-            try { ProjectImageChanged?.Invoke(await Service.GetProjectImageAsync(change.EntityId, ct)); }
+            try
+            {
+                var image = await Service.GetProjectImageAsync(change.EntityId, ct);
+                InvalidateOlderThumbnailRevisions(image);
+                ProjectImageChanged?.Invoke(image);
+            }
             catch { /* A stale or removed image must not break the project change feed. */ }
             if (Document?.File.ProjectId == projectId)
             {
@@ -620,7 +629,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
     private async Task RefreshCurrentDocumentAsync(CancellationToken ct)
     {
         if (Document is not { } current) return;
-        var document = await Service.OpenAsync(current.File.Id, ct);
+        var document = AsReadOnly(await Service.OpenAsync(current.File.Id, ct));
         var sceneItems = Sheets.SelectMany(sheet => sheet.Scenes).ToDictionary(item => item.Row.Id, StringComparer.Ordinal);
         var assetItems = Sheets.SelectMany(sheet => sheet.Assets).ToDictionary(item => item.Row.Id, StringComparer.Ordinal);
         var selectedSheetId = SelectedSheet?.Sheet.Id;
@@ -679,7 +688,6 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
     }
 
     public ObservableCollection<AssetRowItem> ProjectAssets { get; } = [];
-    public string? ShareRoot { get; set; }
 
     public async Task LoadProjectAssetsAsync(CancellationToken ct = default)
     {
@@ -688,7 +696,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         if (assetFile == null) return;
         try
         {
-            var doc = await Service.OpenAsync(assetFile.Id, ct);
+            var doc = AsReadOnly(await Service.OpenAsync(assetFile.Id, ct));
             var assetRows = new List<AssetRowItem>();
             foreach (var sheet in doc.Sheets)
             {
@@ -715,6 +723,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
 
     public async Task AddEpisodeAsync(string sheetName)
     {
+        if (IsReadOnly) return;
         if (Document == null) return;
         await Service.AddSheetAsync(Document.File.Id, sheetName);
         await OpenAsync(Document.File);
@@ -724,6 +733,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
 
     public async Task AddSceneRowAsync()
     {
+        if (IsReadOnly) return;
         var sheet = SelectedSheet;
         if (Document == null || sheet == null || !sheet.IsScene) return;
         var row = await Service.CreateSceneRowAsync(Document.File.Id, sheet.Sheet.Id);
@@ -735,6 +745,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
 
     public async Task AddAssetRowAsync()
     {
+        if (IsReadOnly) return;
         var sheet = SelectedSheet;
         if (Document == null || sheet == null || !sheet.IsAsset) return;
         var row = await Service.CreateAssetRowAsync(Document.File.Id, sheet.Sheet.Id);
@@ -749,6 +760,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
 
     public async Task DeleteSceneRowAsync(SceneRowItem item)
     {
+        if (IsReadOnly) return;
         if (Document == null || !item.Row.CanEdit) return;
         await Service.DeleteRowAsync(Document.File.Id, item.Row.Id, "scene-rows", item.Row.Version);
         foreach (var sheet in Sheets) sheet.Scenes.Remove(item);
@@ -757,6 +769,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
 
     public async Task DeleteAssetRowAsync(AssetRowItem item)
     {
+        if (IsReadOnly) return;
         if (Document == null || !item.Row.CanEdit) return;
         await Service.DeleteRowAsync(Document.File.Id, item.Row.Id, "asset-rows", item.Row.Version);
         foreach (var sheet in Sheets) sheet.Assets.Remove(item);
@@ -768,41 +781,14 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         AssetChanged();
     }
 
-    public void OpenAssetFolder(AssetRowItem item)
+    public void Back() => TryBack();
+
+    public bool TryBack()
     {
-        if (SelectedProject == null) return;
-        var shareRoot = ShareRoot ?? "\\\\192.168.1.153\\Assets";
-        var relative = item.Row.AssetFolderPath;
-        if (string.IsNullOrWhiteSpace(relative))
-        {
-            var category = string.IsNullOrWhiteSpace(item.Row.Category) ? "角色" : item.Row.Category;
-            var name = string.IsNullOrWhiteSpace(item.Row.Name) ? "未命名" : item.Row.Name;
-            relative = Path.Combine(category, name);
-        }
-        var folderPath = Path.Combine(shareRoot, "Project", SelectedProject.Name, relative);
-        try
-        {
-            if (!Directory.Exists(folderPath))
-            {
-                Error = "素材目录尚未创建。请先填写并保存资产类别和名称。";
-                return;
-            }
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = folderPath,
-                UseShellExecute = true
-            });
-        }
-        catch (Exception ex)
-        {
-            Error = $"打开资产文件夹失败：{ex.Message}";
-        }
-    }
-    public void Back()
-    {
-        if (ConfirmLeaving?.Invoke() == false) return;
+        if (ConfirmLeaving?.Invoke() == false) return false;
         StopLiveUpdates();
         Document = null; SelectedSheet = null; Sheets.Clear();
+        return true;
     }
     public async Task<ImageItem> MakeImageAsync(ImageAsset image)
     {
@@ -816,11 +802,12 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         try
         {
             await _thumbnailGate.WaitAsync(ct); entered = true;
-            if (!_thumbnailCache.TryGetValue(image.Asset.Id, out var preview))
+            var cacheKey = ThumbnailCacheKey(image.Asset);
+            if (!_thumbnailCache.TryGetValue(cacheKey, out var preview))
             {
                 preview = Decode(await Service.GetImageContentAsync(image.Asset.Id, true, ct), thumbnail: true);
                 if (_thumbnailCache.Count >= 128) _thumbnailCache.Remove(_thumbnailCache.Keys.First());
-                _thumbnailCache[image.Asset.Id] = preview;
+                _thumbnailCache[cacheKey] = preview;
             }
             ct.ThrowIfCancellationRequested(); image.SetPreview(preview);
         }
@@ -828,6 +815,20 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         catch { image.SetPreview(null, "缩略图暂不可用；点击图片仍可重试大图。"); }
         finally { image.Loading = false; if (entered) _thumbnailGate.Release(); }
     }
+
+    private static string ThumbnailCacheKey(ImageAsset asset) =>
+        asset.Id + "\0" + (asset.CurrentRevisionId ?? "current");
+
+    private void InvalidateOlderThumbnailRevisions(ImageAsset asset)
+    {
+        var prefix = asset.Id + "\0";
+        var currentKey = ThumbnailCacheKey(asset);
+        foreach (var staleKey in _thumbnailCache.Keys
+                     .Where(key => key.StartsWith(prefix, StringComparison.Ordinal) && key != currentKey)
+                     .ToArray())
+            _thumbnailCache.Remove(staleKey);
+    }
+
     public static BitmapSource Decode(byte[] bytes, bool thumbnail = false)
     {
         using var stream = new MemoryStream(bytes, writable: false);
@@ -840,10 +841,23 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         return new AssetRowItem(row, row.SelectedImage == null ? null : new ImageItem(row.SelectedImage, null),
             row.CandidateImages.Select(asset => new ImageItem(asset, null)).ToList());
     }
+
+    private WorkbookDocument AsReadOnly(WorkbookDocument document)
+    {
+        if (!IsReadOnly) return document;
+        return document with
+        {
+            Sheets = document.Sheets.Select(sheet => sheet with
+            {
+                SceneRows = sheet.SceneRows.Select(row => row with { CanEdit = false }).ToList(),
+                AssetRows = sheet.AssetRows.Select(row => row with { CanEdit = false }).ToList()
+            }).ToList()
+        };
+    }
     public async Task RefreshReviewSummariesAsync(string fileId, AssetRowItem item)
     {
         if (item.SummaryLoading) return; item.SummaryLoading = true;
-        try { item.SetSummaries(await Service.GetReviewSummariesAsync(fileId, item.Row.Id)); item.SummaryLoaded = true; }
+        try { item.SetSummaries(await Service.GetReviewSummariesForRowAsync(fileId, item.Row.Id, "asset-rows")); item.SummaryLoaded = true; }
         catch { item.SetSummaries(null); } // Unknown is explicitly displayed as ?, never as zero.
         finally { item.SummaryLoading = false; }
     }
@@ -859,15 +873,16 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
     }
     public void SceneChanged() => Changed(nameof(VisibleScenes));
     public void AssetChanged() => Changed(nameof(VisibleAssets));
-    public async Task UpdateImagesAsync(AssetRowItem item, string? selectedId, IEnumerable<string> candidateIds, string? reason = null)
+    public async Task UpdateImagesAsync(AssetRowItem item, string? selectedId, IEnumerable<string> candidateIds)
     {
+        if (IsReadOnly) throw new InvalidDataException("访客只能查看项目工作簿。");
         if (Document == null || SelectedSheet == null) return;
         if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行图片的权限。");
         var ids = candidateIds.Distinct(StringComparer.Ordinal).ToList();
         if (ids.Count > 100) throw new InvalidDataException("每行最多保留 100 张备选图片。");
         var sheet = SelectedSheet;
         var updated = await Service.UpdateImagesAsync(Document.File.Id, item.Row.Id,
-            new UpdateImagesRequest(item.Row.FieldVersions.GetValueOrDefault("image_selection", 1), selectedId, ids, reason));
+            new UpdateImagesRequest(item.Row.FieldVersions.GetValueOrDefault("image_selection", 1), selectedId, ids));
         // Replace only after server success. A conflict never mutates local references and never retries.
         var index = sheet.Assets.IndexOf(item);
         if (index >= 0) sheet.Assets[index] = MakeRow(updated);
@@ -875,6 +890,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
     }
     public async Task UpdateStoryContentAsync(SceneRowItem item)
     {
+        if (IsReadOnly) throw new InvalidDataException("访客只能查看项目工作簿。");
         if (Document == null) return;
         if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行的权限。");
         if (item.IsSaving || string.Equals(item.StoryContentDraft, item.Row.StoryContent, StringComparison.Ordinal)) return;
@@ -891,6 +907,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
     }
     public async Task UpdateAssetFieldsAsync(AssetRowItem item)
     {
+        if (IsReadOnly) throw new InvalidDataException("访客只能查看项目工作簿。");
         if (Document == null) return;
         if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行的权限。");
         if (item.IsSaving || (string.Equals(item.CategoryDraft, item.Row.Category, StringComparison.Ordinal)
@@ -920,6 +937,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
 
     public async Task RenameWorkbookAsync(ProjectFileItem item, string newName)
     {
+        if (IsReadOnly) throw new InvalidDataException("访客只能查看项目工作簿。");
         var trimmed = newName?.Trim() ?? "";
         if (string.IsNullOrWhiteSpace(trimmed) || string.Equals(trimmed, item.Name, StringComparison.Ordinal))
         {
@@ -940,6 +958,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
 
     public async Task DeleteWorkbookAsync(ProjectFileItem item)
     {
+        if (IsReadOnly) throw new InvalidDataException("访客只能查看项目工作簿。");
         await ExecuteAsync(async () =>
         {
             await Service.DeleteWorkbookAsync(item.Id);
@@ -953,6 +972,7 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
 
     public async Task UpdateSceneFieldsAsync(SceneRowItem item)
     {
+        if (IsReadOnly) throw new InvalidDataException("访客只能查看项目工作簿。");
         if (Document == null) return;
         if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行的权限。");
         var sceneChanged = !string.Equals(item.SceneNumberDraft, item.Row.SceneNumber, StringComparison.Ordinal);
@@ -962,6 +982,9 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
         var noteChanged = !string.Equals(item.NoteDraft, item.Row.Note, StringComparison.Ordinal);
         var level = item.LabelLevelDraft == "未标注" ? null : item.LabelLevelDraft;
         var levelChanged = !string.Equals(level, item.Row.LabelLevel, StringComparison.Ordinal);
+
+        if (levelChanged && item.LabelLevelDraft is not ("红" or "黄" or "绿" or "未标注"))
+            throw new InvalidDataException("制作难度仅允许红、黄、绿或未标注。");
 
         if (!sceneChanged && !beatChanged && !storyChanged && !planChanged && !noteChanged && !levelChanged)
             return;
@@ -977,7 +1000,8 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
                 StoryContent: item.StoryContentDraft,
                 BreakdownPlan: item.BreakdownPlanDraft,
                 Note: item.NoteDraft,
-                LabelLevel: level
+                LabelLevel: levelChanged ? level : null,
+                ClearLabelLevel: levelChanged && level == null
             );
             var updated = await Service.UpdateSceneRowAsync(Document.File.Id, item.Row.Id, req);
             item.ApplyRemote(updated);
@@ -992,77 +1016,147 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service) :
 
     public async Task UpdateSceneVideoAsync(SceneRowItem item, string action, VideoItem? video = null, string? videoId = null, string? videoName = null)
     {
-        if (Document == null) return;
+        if (IsReadOnly) throw new InvalidDataException("访客只能查看项目工作簿。");
+        var document = Document;
+        if (document == null) return;
         if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行的权限。");
-        await ExecuteAsync(async () =>
-        {
-            var req = new UpdateSceneRowRequest(
-                ExpectedVersion: item.Row.Version,
-                VideoAction: action,
-                Video: video,
-                VideoId: videoId,
-                VideoName: videoName
-            );
-            var updated = await Service.UpdateSceneRowAsync(Document.File.Id, item.Row.Id, req);
-            item.ApplyRemote(updated);
-            SceneChanged();
-        });
+        await ExecuteAsync(() => UpdateSceneVideoCoreAsync(document.File.Id, item, action, video, videoId, videoName));
+    }
+
+    private async Task UpdateSceneVideoCoreAsync(string fileId, SceneRowItem item, string action,
+        VideoItem? video = null, string? videoId = null, string? videoName = null)
+    {
+        var req = new UpdateSceneRowRequest(
+            ExpectedVersion: item.Row.Version,
+            VideoAction: action,
+            Video: video,
+            VideoId: videoId,
+            VideoName: videoName
+        );
+        var updated = await Service.UpdateSceneRowAsync(fileId, item.Row.Id, req);
+        item.ApplyRemote(updated);
+        SceneChanged();
     }
 
     public async Task AttachVideoFileAsync(SceneRowItem item, string sourceLocalPath)
     {
-        if (Document == null) return;
+        if (IsReadOnly) throw new InvalidDataException("访客只能查看项目工作簿。");
+        var document = Document ?? throw new InvalidOperationException("请先打开节拍表。");
         if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行的权限。");
+        if (Busy) throw new InvalidOperationException("当前有其他操作正在进行，请完成后再关联视频。");
+
+        var project = SelectedProject ?? throw new InvalidOperationException("请先选择项目。");
+        var workbookId = document.File.Id;
+        var sheet = Sheets.FirstOrDefault(candidate => candidate.Scenes.Contains(item))
+            ?? throw new InvalidOperationException("找不到该节拍行所属的工作表，请重新打开工作簿后重试。");
 
         var fileName = Path.GetFileName(sourceLocalPath);
-        var targetPath = sourceLocalPath;
+        if (string.IsNullOrWhiteSpace(fileName)) throw new InvalidDataException("视频文件名无效。");
+        RequirePathSegment(fileName, "视频文件名");
+        var episode = RequirePathSegment(sheet.Name, "工作表名称");
+        var rawBeatNumber = item.Row.BeatNumber;
+        if (string.IsNullOrWhiteSpace(rawBeatNumber) || !rawBeatNumber.Any(char.IsDigit))
+            throw new InvalidDataException("请先为节拍行填写有效编号，再关联视频。");
+        var beatNumber = NormalizeBeatNumber(rawBeatNumber);
+        var beatFolder = $"第{beatNumber}beat";
+        var rowsInBeatFolder = sheet.Scenes.Where(candidate =>
+            NormalizeBeatNumber(candidate.Row.BeatNumber) == beatNumber).ToArray();
+        if (rowsInBeatFolder.Length != 1)
+            throw new InvalidDataException($"节拍 {beatNumber} 必须恰好对应一行；当前找到 {rowsInBeatFolder.Length} 行，请先整理节拍表。");
+        var activeVideos = rowsInBeatFolder.SelectMany(candidate => ActiveVideos(candidate.Row)).ToArray();
+        if (activeVideos.Any(video => video.Name.Equals(fileName, StringComparison.OrdinalIgnoreCase)))
+            throw new IOException("该节拍目录已关联同名视频，未覆盖现有内容。请先处理现有关联或重命名新文件。");
+        if (rowsInBeatFolder.SelectMany(candidate => candidate.Row.DiscardedVideos)
+            .Any(video => video.Name.Equals(fileName, StringComparison.OrdinalIgnoreCase)))
+            throw new IOException("同名视频已在废片库中，未覆盖或重新关联。请先恢复原视频或重命名新文件。");
 
-        if (!string.IsNullOrWhiteSpace(ShareRoot) && SelectedProject is { } project)
+        var logicalPath = $"{episode}/{beatFolder}/{fileName}";
+
+        Busy = true;
+        Error = null;
+        ProjectFileTransferResult? uploaded = null;
+        try
         {
-            try
+            var sourcePath = Path.GetFullPath(sourceLocalPath);
+            if (!File.Exists(sourcePath)) throw new FileNotFoundException("找不到所选视频文件。", sourcePath);
+            var mediaType = Path.GetExtension(fileName).ToLowerInvariant() switch
             {
-                string episode;
-                if (!string.IsNullOrWhiteSpace(SelectedSheet?.Name))
-                {
-                    episode = SelectedSheet.Name.Trim();
-                }
-                else
-                {
-                    var rawEpisode = Document.File.Name ?? "第1集";
-                    var parsed = rawEpisode.Replace("_节拍表", "", StringComparison.OrdinalIgnoreCase)
-                                           .Replace(".xlsx", "", StringComparison.OrdinalIgnoreCase)
-                                           .Trim();
-                    episode = (string.IsNullOrEmpty(parsed) || parsed.Equals("节拍表", StringComparison.OrdinalIgnoreCase))
-                        ? "第1集"
-                        : parsed;
-                }
+                ".mov" => "video/quicktime",
+                ".mkv" => "video/x-matroska",
+                ".webm" => "video/webm",
+                ".avi" => "video/x-msvideo",
+                _ => "video/mp4"
+            };
+            uploaded = await Service.UploadProjectFileAsync(project.Id, fileName, mediaType, sourcePath, logicalPath);
 
-                var beatNum = !string.IsNullOrWhiteSpace(item.BeatNumberDraft) ? item.BeatNumberDraft : item.SceneNumberDraft;
-                if (string.IsNullOrWhiteSpace(beatNum)) beatNum = "1";
-                var beatFolder = $"第{beatNum}beat";
+            if (Document?.File.Id != workbookId || SelectedProject?.Id != project.Id)
+                throw new InvalidOperationException("项目或工作簿在上传期间发生变化；文件已进入项目文件库，但尚未关联，请重新加载核对。");
 
-                var targetDir = Path.Combine(ShareRoot, "项目", project.Name, episode, beatFolder);
-                Directory.CreateDirectory(targetDir);
-                var destPath = Path.Combine(targetDir, fileName);
-                if (!string.Equals(Path.GetFullPath(sourceLocalPath), Path.GetFullPath(destPath), StringComparison.OrdinalIgnoreCase))
-                {
-                    File.Copy(sourceLocalPath, destPath, overwrite: true);
-                }
-                targetPath = destPath;
-            }
-            catch (Exception)
+            var videoItem = new VideoItem(uploaded.FileId, fileName, uploaded.LogicalPath)
             {
-                targetPath = sourceLocalPath;
-            }
+                FileId = uploaded.FileId
+            };
+            await UpdateSceneVideoCoreAsync(workbookId, item, "add", videoItem);
         }
+        catch (Exception ex)
+        {
+            var serverRejected = ex is WorkbookApiException api && api.StatusCode == 409;
+            Error = serverRejected
+                ? "节拍表内容已被其他人修改，本次未关联。请重新加载并核对。"
+                : ex is WorkbookApiException or InvalidDataException or InvalidOperationException or IOException
+                    ? ex.Message
+                    : "视频关联未完成，请检查连接后重试。";
+            if (uploaded is not null)
+            {
+                if (serverRejected)
+                {
+                    try { await Service.DeleteProjectFileAsync(uploaded.FileId, uploaded.Version); }
+                    catch { /* Keep the committed file if cleanup cannot be confirmed. */ }
+                }
+                throw new IOException($"视频已上传为项目文件，但节拍关联未完成。请重新加载并核对；文件 ID：{uploaded.FileId}{Environment.NewLine}{ex.Message}", ex);
+            }
+            throw;
+        }
+        finally
+        {
+            Busy = false;
+        }
+    }
 
-        var videoItem = new VideoItem(
-            Id: Guid.NewGuid().ToString("D"),
-            Name: fileName,
-            Path: targetPath
-        );
+    public Task<string> DownloadVideoAsync(VideoItem video, CancellationToken cancellationToken = default)
+    {
+        var fileId = video.FileId;
+        if (string.IsNullOrWhiteSpace(fileId) || string.IsNullOrWhiteSpace(video.Path))
+            throw new InvalidOperationException("此视频尚未关联版本化文件 ID，无法从文件服务打开。");
+        return Service.DownloadProjectFileAsync(fileId, null, video.Name, cancellationToken);
+    }
 
-        await UpdateSceneVideoAsync(item, "add", videoItem);
+    private static string RequirePathSegment(string value, string description)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value is "." or ".."
+            || value.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+            || value.Any(char.IsControl))
+            throw new InvalidDataException($"{description}不能作为项目目录名使用。");
+        return value;
+    }
+
+    private static IEnumerable<VideoItem> ActiveVideos(SceneRow row)
+    {
+        var videos = row.Videos.ToList();
+        if (row.Video is { } current && !videos.Any(video =>
+                (!string.IsNullOrWhiteSpace(current.Id) && video.Id == current.Id)
+                || video.Name.Equals(current.Name, StringComparison.OrdinalIgnoreCase)))
+            videos.Insert(0, current);
+        return videos;
+    }
+
+    private static string NormalizeBeatNumber(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return string.Empty;
+        var cleaned = System.Text.RegularExpressions.Regex.Replace(input, @"[^\d]", "").Trim();
+        if (string.IsNullOrEmpty(cleaned)) return string.Empty;
+        var normalized = cleaned.TrimStart('0');
+        return normalized.Length == 0 ? "0" : normalized;
     }
 }
 

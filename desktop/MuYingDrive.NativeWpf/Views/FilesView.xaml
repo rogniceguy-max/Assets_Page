@@ -61,14 +61,7 @@
             <MenuItem Header="重命名" Command="{Binding PlacementTarget.Tag.RenameCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                       CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                       Visibility="{Binding PlacementTarget.Tag.CanModify, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVisibility}}" />
-            <!-- Still a placeholder: moving needs a picker that browses the NAS for a
-                 destination. It keeps saying so rather than quietly disappearing. -->
-            <MenuItem Header="移动到" Command="{Binding PlacementTarget.Tag.UnsupportedEditCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                      CommandParameter="{Binding RelativeSource={RelativeSource Self}, Path=Header}"
-                      Visibility="{Binding PlacementTarget.Tag.CanModify, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVisibility}}" />
-            <!-- Duplicate applies to the whole selection, so it is handed the row that was
-                 clicked and decides for itself whether that row is part of one. -->
-            <MenuItem Header="复制" Command="{Binding PlacementTarget.Tag.DuplicateCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+            <MenuItem Header="移动到" Command="{Binding PlacementTarget.Tag.MoveCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                       CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                       Visibility="{Binding PlacementTarget.Tag.CanModify, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVisibility}}" />
             <Separator Visibility="{Binding PlacementTarget.Tag.CanModify, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVisibility}}" />
@@ -77,6 +70,11 @@
             <MenuItem Header="删除" Command="{Binding PlacementTarget.Tag.DeleteCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                       CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                       Visibility="{Binding PlacementTarget.Tag.CanModify, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVisibility}}" />
+            <MenuItem Header="版本历史" Command="{Binding PlacementTarget.Tag.HistoryCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+            <MenuItem Header="恢复" Command="{Binding PlacementTarget.Tag.RestoreCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      Visibility="{Binding PlacementTarget.Tag.CanRestore, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVisibility}}" />
             <Separator />
             <MenuItem Header="文件信息" Command="{Binding PlacementTarget.Tag.DetailsCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                       CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
@@ -87,7 +85,7 @@
                                          Background="{DynamicResource Brush.Surface.Subtle}"
                                          ClipToBounds="True">
                 <Grid Background="{DynamicResource Brush.Surface.Subtle}">
-                    <controls:AsyncThumbnail SourcePath="{Binding ThumbnailPath}" Stretch="UniformToFill"
+                    <controls:AsyncThumbnail SourcePath="{Binding ThumbnailPath}" FileThumbnailProvider="{Binding FileThumbnailProvider}" Stretch="UniformToFill"
                                              RenderOptions.BitmapScalingMode="HighQuality" />
                     <controls:LucideIcon x:Name="FilePlaceholder" Icon="File" Width="28" Height="28" Stroke="{DynamicResource Brush.Text.Secondary}"
                                          HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" />
@@ -121,7 +119,7 @@
             </controls:RoundedClipBorder>
             <DataTemplate.Triggers>
                 <DataTrigger Binding="{Binding IsVideo}" Value="True"><Setter TargetName="VideoBadge" Property="Visibility" Value="Visible" /></DataTrigger>
-                <DataTrigger Binding="{Binding ThumbnailPath}" Value=""><Setter TargetName="FilePlaceholder" Property="Visibility" Value="Visible" /><Setter TargetName="FilenameBand" Property="Opacity" Value="1" /></DataTrigger>
+                <DataTrigger Binding="{Binding HasThumbnail}" Value="False"><Setter TargetName="FilePlaceholder" Property="Visibility" Value="Visible" /><Setter TargetName="FilenameBand" Property="Opacity" Value="1" /></DataTrigger>
                 <DataTrigger Binding="{Binding IsDirectory}" Value="True"><Setter TargetName="FilePlaceholder" Property="Visibility" Value="Collapsed" /><Setter TargetName="FolderPlaceholder" Property="Visibility" Value="Visible" /><Setter TargetName="FilenameBand" Property="Opacity" Value="1" /></DataTrigger>
                 <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=ListBoxItem}, Path=IsMouseOver}" Value="True">
                     <Setter TargetName="FilenameBand" Property="Opacity" Value="1" />
@@ -190,6 +188,7 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <Grid Grid.Column="0">
                 <TextBox Style="{StaticResource TextBox.Search}" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
@@ -213,9 +212,11 @@
             <Button Grid.Column="3" Style="{StaticResource ListToggleButton}" Command="{Binding ToggleListCommand}" ToolTip="列表视图" AutomationProperties.Name="列表视图" Margin="0,0,12,0">
                 <controls:LucideIcon Icon="List" Width="16" Height="16" Stroke="{DynamicResource Brush.Text.Secondary}" />
             </Button>
-            <Button Grid.Column="4" Style="{StaticResource Button.Secondary}" Command="{Binding UploadFolderCommand}" Content="上传文件夹" Margin="0,0,6,0"
+            <Button Grid.Column="4" Style="{StaticResource Button.Secondary}" Command="{Binding ToggleRecycleBinCommand}" Content="{Binding RecycleBinButtonLabel}" Margin="0,0,6,0"
+                    Visibility="{Binding CanShowRecycleBin, Converter={StaticResource BoolToVisibility}}" />
+            <Button Grid.Column="5" Style="{StaticResource Button.Secondary}" Command="{Binding UploadFolderCommand}" Content="上传文件夹" Margin="0,0,6,0"
                     Visibility="{Binding CanUpload, Converter={StaticResource BoolToVisibility}}" />
-            <Button Grid.Column="5" Style="{StaticResource Button.Primary}" Command="{Binding UploadCommand}" Content="上传" MinWidth="84"
+            <Button Grid.Column="6" Style="{StaticResource Button.Primary}" Command="{Binding UploadCommand}" Content="上传" MinWidth="84"
                     Visibility="{Binding CanUpload, Converter={StaticResource BoolToVisibility}}" />
         </Grid>
 
@@ -247,7 +248,7 @@
                                 <controls:RoundedClipBorder Width="32" Height="32" CornerRadius="{StaticResource CornerRadius.Small}"
                                                              Background="{DynamicResource Brush.Surface.Subtle}" Margin="0,0,12,0">
                                     <Grid>
-                                        <controls:AsyncThumbnail SourcePath="{Binding ThumbnailPath}" Stretch="UniformToFill" />
+                                        <controls:AsyncThumbnail SourcePath="{Binding ThumbnailPath}" FileThumbnailProvider="{Binding FileThumbnailProvider}" Stretch="UniformToFill" />
                                         <controls:LucideIcon Icon="Folder" Width="16" Height="16" Stroke="{DynamicResource Brush.Text.Secondary}"
                                                              HorizontalAlignment="Center" VerticalAlignment="Center">
                                             <controls:LucideIcon.Style>
@@ -263,7 +264,7 @@
                                                 <Style TargetType="controls:LucideIcon">
                                                     <Setter Property="Visibility" Value="Collapsed" />
                                                     <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding ThumbnailPath}" Value=""><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                                        <DataTrigger Binding="{Binding HasThumbnail}" Value="False"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
                                                         <DataTrigger Binding="{Binding IsDirectory}" Value="True"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>

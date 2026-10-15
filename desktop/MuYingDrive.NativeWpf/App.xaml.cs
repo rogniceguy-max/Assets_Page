@@ -20,12 +20,10 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
-        // A WinExe has no console, so an unhandled exception ends the process and leaves
-        // nothing behind: the failure is total and the evidence is absent. That is how
-        // "clicking a project closes the app" arrives with no output at all.
+        // Log unhandled UI exceptions before WPF terminates the app. Continuing after an
+        // unknown UI failure can leave the application in an inconsistent state.
         DispatcherUnhandledException += (_, args) =>
         {
-            args.Handled = true;
             Record(args.Exception, "界面线程");
 
             if (Interlocked.CompareExchange(ref _dialogActive, 1, 0) == 0)

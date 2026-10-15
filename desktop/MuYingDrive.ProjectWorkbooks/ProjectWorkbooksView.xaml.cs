@@ -140,7 +140,6 @@ public partial class ProjectWorkbooksView : UserControl
         return null;
     }
     private static string[] Paths(DragEventArgs e) => e.Data.GetData(DataFormats.FileDrop) as string[] ?? [];
-    private static bool IsWorkbook(string path) => string.Equals(Path.GetExtension(path), ".xlsx", StringComparison.OrdinalIgnoreCase);
     private static bool IsImage(string path) => Path.GetExtension(path).ToLowerInvariant() is ".png" or ".jpg" or ".jpeg";
     private static void Drag(DragEventArgs e, Func<string, bool> accept)
     {
@@ -148,33 +147,11 @@ public partial class ProjectWorkbooksView : UserControl
         e.Effects = paths.Length > 0 && paths.All(accept) ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
     }
-    private void OnWorkbookDragOver(object sender, DragEventArgs e) => Drag(e, IsWorkbook);
     private void OnImageDragOver(object sender, DragEventArgs e)
     { if (Row(sender) is { Row.CanEdit: true }) Drag(e, IsImage); else { e.Effects = DragDropEffects.None; e.Handled = true; } }
-    private async void OnWorkbookDrop(object sender, DragEventArgs e)
-    {
-        e.Handled = true;
-        var paths = Paths(e);
-        await Model.ExecuteAsync(() => ImportPathsAsync(paths));
-    }
-    private async Task ImportPathsAsync(string[] paths)
-    {
-        if (paths.Length == 0 || paths.Any(path => !IsWorkbook(path))) throw new InvalidDataException("项目只接收 .xlsx 文件。");
-        foreach (var path in paths)
-        {
-            if (Model.HasPendingOperation) throw new InvalidDataException("请先处理待确认的导入/新建，再发起新操作。");
-            var project = RequireProject();
-            Model.SetPending(await PendingWorkbookOperation.ForImportAsync(Model.Service, project, path, null));
-            await SubmitPendingAsync();
-        }
-    }
-    private async void OnImport(object sender, RoutedEventArgs e)
-    {
-        var picker = new OpenFileDialog { Filter = "Excel 工作簿 (*.xlsx)|*.xlsx", Multiselect = true };
-        if (picker.ShowDialog(Window.GetWindow(this)) == true) await Model.ExecuteAsync(() => ImportPathsAsync(picker.FileNames));
-    }
     private async void OnCreate(object sender, RoutedEventArgs e)
     {
+        if (Model.IsReadOnly) return;
         if (Model.HasPendingOperation)
         {
             MessageBox.Show(Window.GetWindow(this), "请先重试或取消待确认的操作。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -194,7 +171,7 @@ public partial class ProjectWorkbooksView : UserControl
 
         await Model.ExecuteAsync(async () =>
         {
-            Model.SetPending(new PendingWorkbookOperation(Model.Service.OperationScope, Guid.NewGuid().ToString("D"), RequireProject(), kind, null, null, null, name));
+            Model.SetPending(new PendingWorkbookOperation(Model.Service.OperationScope, Guid.NewGuid().ToString("D"), RequireProject(), kind, name));
             var file = await SubmitPendingAsync();
             await Model.OpenAsync(file);
             Model.ProjectFilesChanged?.Invoke();
@@ -229,6 +206,7 @@ public partial class ProjectWorkbooksView : UserControl
         if (item.IsEditingName) return;
         if (e.Key == Key.F2)
         {
+            if (Model.IsReadOnly) return;
             e.Handled = true;
             item.StartRename();
             if (sender is DependencyObject container)
@@ -250,6 +228,7 @@ public partial class ProjectWorkbooksView : UserControl
 
     private void OnStartRenameFile(object sender, RoutedEventArgs e)
     {
+        if (Model.IsReadOnly) return;
         var item = FileItem(sender);
         if (item == null) return;
         item.StartRename();
@@ -266,21 +245,16 @@ public partial class ProjectWorkbooksView : UserControl
 
     private async void OnCardRenameLostFocus(object sender, RoutedEventArgs e)
     {
-        try
-        {
-            if (FileItem(sender) is not { } item) return;
-            if (!item.IsEditingName) return;
-            item.IsEditingName = false;
-            await Model.RenameWorkbookAsync(item, item.NameDraft);
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(Window.GetWindow(this), $"重命名失败：{ex.Message}", "重命名错误", MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
+        if (Model.IsReadOnly) return;
+        if (FileItem(sender) is not { } item) return;
+        if (!item.IsEditingName) return;
+        item.IsEditingName = false;
+        await Model.RenameWorkbookAsync(item, item.NameDraft);
     }
 
     private async void OnCardRenameKeyDown(object sender, KeyEventArgs e)
     {
+        if (Model.IsReadOnly && e.Key != Key.Escape) return;
         if (FileItem(sender) is not { } item) return;
         if (e.Key == Key.Enter)
         {
@@ -297,19 +271,13 @@ public partial class ProjectWorkbooksView : UserControl
 
     private async void OnDeleteWorkbookFromMenu(object sender, RoutedEventArgs e)
     {
-        try
+        if (Model.IsReadOnly) return;
+        if (FileItem(sender) is not { } item) return;
+        if (MessageBox.Show(Window.GetWindow(this), $"确定要删除工作簿「{item.Name}」吗？\n删除后不可恢复。", "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
         {
-            if (FileItem(sender) is not { } item) return;
-            if (MessageBox.Show(Window.GetWindow(this), $"确定要删除工作簿「{item.Name}」吗？\n删除后不可恢复。", "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
-            {
-                return;
-            }
-            await Model.DeleteWorkbookAsync(item);
+            return;
         }
-        catch (Exception ex)
-        {
-            MessageBox.Show(Window.GetWindow(this), $"删除失败：{ex.Message}", "删除错误", MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
+        await Model.DeleteWorkbookAsync(item);
     }
     private async void OnRefresh(object sender, RoutedEventArgs e) => await Model.ExecuteAsync(async () =>
     {
@@ -329,9 +297,9 @@ public partial class ProjectWorkbooksView : UserControl
         else await Model.RefreshFilesAsync();
         Model.ProjectFilesChanged?.Invoke();
     });
-    private void OnBack(object sender, RoutedEventArgs e) => Model.Back();
     private async void OnAddEpisode(object sender, RoutedEventArgs e)
     {
+        if (Model.IsReadOnly) return;
         if (Model.Document is not { } document) return;
         var matchNumbers = Model.Sheets
             .Select(s => System.Text.RegularExpressions.Regex.Match(s.Name, @"第\s*(\d+)\s*集"))
@@ -349,17 +317,6 @@ public partial class ProjectWorkbooksView : UserControl
             return;
         }
         await Model.ExecuteAsync(() => Model.AddEpisodeAsync(sheetName));
-    }
-    private void OnOpenAssetFolder(object sender, RoutedEventArgs e)
-    {
-        if (Row(sender) is { } row) Model.OpenAssetFolder(row);
-    }
-    private async void OnDownload(object sender, RoutedEventArgs e)
-    {
-        if (Model.Document is not { } document) return;
-        var picker = new SaveFileDialog { Filter = "Excel 工作簿 (*.xlsx)|*.xlsx", DefaultExt = ".xlsx", FileName = Path.GetFileName(document.File.Name) };
-        if (picker.ShowDialog(Window.GetWindow(this)) == true) await Model.ExecuteAsync(async () =>
-            await Model.Service.DownloadOriginalToAsync(document.File.Id, picker.FileName));
     }
     private async void OnPickSelectedCandidate(object sender, RoutedEventArgs e)
     {
@@ -402,7 +359,7 @@ public partial class ProjectWorkbooksView : UserControl
                         row.Row.AssetFolderPath ?? (string.IsNullOrEmpty(row.Row.Category) ? null : $"{row.Row.Category}/{row.Row.Name}")));
                 }
                 var allIds = row.Row.CandidateImages.Select(a => a.Id).Concat(assets.Select(a => a.Id)).ToList();
-                await UpdateImagesWithReasonAsync(row, assets.First().Id, allIds);
+                await Model.UpdateImagesAsync(row, assets.First().Id, allIds);
             });
             return;
         }
@@ -418,7 +375,7 @@ public partial class ProjectWorkbooksView : UserControl
 
         await Model.ExecuteAsync(async () =>
         {
-            await UpdateImagesWithReasonAsync(row, chosenId, row.Row.CandidateImages.Select(a => a.Id));
+            await Model.UpdateImagesAsync(row, chosenId, row.Row.CandidateImages.Select(a => a.Id));
         });
     }
 
@@ -449,31 +406,10 @@ public partial class ProjectWorkbooksView : UserControl
                     row.Row.AssetFolderPath ?? (string.IsNullOrEmpty(row.Row.Category) ? null : $"{row.Row.Category}/{row.Row.Name}")));
             }
             var allIds = row.Row.CandidateImages.Select(a => a.Id).Concat(assets.Select(a => a.Id)).ToList();
-            await UpdateImagesWithReasonAsync(row, row.Row.SelectedImage?.Id, allIds);
+            await Model.UpdateImagesAsync(row, row.Row.SelectedImage?.Id, allIds);
         });
     }
 
-    private async void OnPickImages(object sender, RoutedEventArgs e)
-    {
-        if (Row(sender) is not { } row) return;
-        if (!row.Row.CanEdit) return;
-        var selected = Equals(((FrameworkElement)sender).Tag, "selected");
-        if (selected)
-        {
-            await PickSelectedCandidateAsync(row);
-            return;
-        }
-        await Model.ExecuteAsync(async () =>
-        {
-            var dialog = new ImagePickerWindow(Model, Model.Document?.File.ProjectId ?? RequireProject(), !selected) { Owner = Window.GetWindow(this) };
-            dialog.Resources.MergedDictionaries.Add(Resources);
-            if (dialog.ShowDialog() != true) return;
-            var ids = dialog.SelectedImages.Select(image => image.Asset.Id).ToList();
-            if (ids.Count == 0) return;
-            await UpdateImagesWithReasonAsync(row, selected ? ids.Single() : row.Row.SelectedImage?.Id,
-                selected ? row.Row.CandidateImages.Select(a => a.Id) : row.Row.CandidateImages.Select(a => a.Id).Concat(ids));
-        });
-    }
     private async void OnImageDrop(object sender, DragEventArgs e)
     {
         e.Handled = true;
@@ -496,18 +432,18 @@ public partial class ProjectWorkbooksView : UserControl
                     source,
                     row.Row.AssetFolderPath ?? (string.IsNullOrEmpty(row.Row.Category) ? null : $"{row.Row.Category}/{row.Row.Name}")));
             }
-            await UpdateImagesWithReasonAsync(row, selected ? assets.Single().Id : row.Row.SelectedImage?.Id,
+            await Model.UpdateImagesAsync(row, selected ? assets.Single().Id : row.Row.SelectedImage?.Id,
                 selected ? row.Row.CandidateImages.Select(a => a.Id).Concat(new[] { assets.Single().Id }) : row.Row.CandidateImages.Select(a => a.Id).Concat(assets.Select(a => a.Id)));
         });
     }
     private async void OnClearSelected(object sender, RoutedEventArgs e)
     {
-        if (Row(sender) is { } row) await Model.ExecuteAsync(() => UpdateImagesWithReasonAsync(row, null, row.Row.CandidateImages.Select(a => a.Id)));
+        if (Row(sender) is { } row) await Model.ExecuteAsync(() => Model.UpdateImagesAsync(row, null, row.Row.CandidateImages.Select(a => a.Id)));
     }
     private async void OnUseCandidate(object sender, RoutedEventArgs e)
     {
         if (Row(sender) is { } row && ((FrameworkElement)sender).DataContext is ImageItem image)
-            await Model.ExecuteAsync(() => UpdateImagesWithReasonAsync(row, image.Asset.Id, row.Row.CandidateImages.Select(a => a.Id)));
+            await Model.ExecuteAsync(() => Model.UpdateImagesAsync(row, image.Asset.Id, row.Row.CandidateImages.Select(a => a.Id)));
     }
     private async void OnRemoveCandidate(object sender, RoutedEventArgs e)
     {
@@ -542,13 +478,12 @@ public partial class ProjectWorkbooksView : UserControl
     }
     private async void OnOpenCandidateReview(object sender, RoutedEventArgs e)
     { if (Row(sender) is { } row && ((FrameworkElement)sender).DataContext is ImageItem image) await ReviewAsync(row, image); }
-    private async void OnGeneralReview(object sender, RoutedEventArgs e)
-    { if (Row(sender) is { } row) await ReviewAsync(row, null); }
-    private Task ReviewAsync(AssetRowItem row, ImageItem? image) => Model.ExecuteAsync(async () =>
+    private Task ReviewAsync(AssetRowItem row, ImageItem image) => Model.ExecuteAsync(async () =>
     {
         if (Model.Document is not { } document) return;
         var fileId = document.File.Id;
-        var window = new ReviewWindow(new ReviewViewModel(Model.Service, fileId, row.Row.Id, image))
+        var window = new ReviewWindow(new ReviewViewModel(Model.Service, fileId, row.Row.Id, image,
+            isReadOnly: Model.IsReadOnly))
             { Owner = Window.GetWindow(this) };
         window.Resources.MergedDictionaries.Add(Resources);
         window.ShowDialog();
@@ -568,77 +503,8 @@ public partial class ProjectWorkbooksView : UserControl
     private async void OnRetryPending(object sender, RoutedEventArgs e) => await Model.ExecuteAsync(async () => { await SubmitPendingAsync(); });
     private async void OnCancelPending(object sender, RoutedEventArgs e)
     {
-        if (MessageBox.Show(Window.GetWindow(this), "服务端可能已完成此操作。取消不会删除已导入文件，稍后可重新进入项目查看。仍要取消？", "取消待确认操作", MessageBoxButton.YesNo) == MessageBoxResult.Yes)
+        if (MessageBox.Show(Window.GetWindow(this), "服务端可能已完成创建。取消只清除本机待办，稍后可重新进入项目查看。仍要取消？", "取消待确认操作", MessageBoxButton.YesNo) == MessageBoxResult.Yes)
             await Model.ExecuteAsync(() => { Model.SetPending(null); return Task.CompletedTask; });
-    }
-    private async void OnProjectChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (!_loaded || Model.Busy) return;
-        await Model.ExecuteAsync(async () => { Model.Back(); await Model.RefreshFilesAsync(); });
-    }
-    private async void OnImportRevision(object sender, RoutedEventArgs e)
-    {
-        if (Model.Document is not { } document) return;
-        var picker = new OpenFileDialog { Filter = "Excel 工作簿 (*.xlsx)|*.xlsx", Multiselect = false };
-        if (picker.ShowDialog(Window.GetWindow(this)) != true) return;
-        await Model.ExecuteAsync(async () =>
-        {
-            if (Model.HasPendingOperation) throw new InvalidDataException("请先处理待确认操作。");
-            Model.SetPending(await PendingWorkbookOperation.ForImportAsync(Model.Service, document.File.ProjectId ?? RequireProject(), picker.FileName, document.File.Id));
-            var file = await SubmitPendingAsync(); await Model.OpenAsync(file);
-        });
-    }
-    private async void OnRevisions(object sender, RoutedEventArgs e) => await Model.ExecuteAsync(async () =>
-    {
-        if (Model.Document is not { } document) return;
-        var revisions = await Model.Service.ListRevisionsAsync(document.File.Id);
-        var chosen = WorkflowDialogs.Choose(Window.GetWindow(this), Resources, "浏览工作簿修订", revisions,
-            file => $"{file.Name}\n{file.RevisionLabel ?? "未命名修订"} · {file.Id}", false);
-        if (chosen?.Count == 1) await Model.OpenAsync(chosen[0]);
-    });
-    private async void OnExport(object sender, RoutedEventArgs e)
-    {
-        if (Model.Document is not { } document) return;
-        var picker = new SaveFileDialog { Filter = "Excel 工作簿 (*.xlsx)|*.xlsx", DefaultExt = ".xlsx", FileName = Path.GetFileNameWithoutExtension(document.File.Name) + "-当前版.xlsx" };
-        if (picker.ShowDialog(Window.GetWindow(this)) != true) return;
-        await Model.ExecuteAsync(async () =>
-        {
-            var snapshot = await Model.Service.OpenAsync(document.File.Id);
-            await Model.Service.ExportCurrentAsync(document.File.Id, snapshot.File.Version, picker.FileName);
-        });
-    }
-    private async Task UpdateImagesWithReasonAsync(AssetRowItem row, string? selectedId, IEnumerable<string> candidates)
-    {
-        string? reason = null;
-        if (selectedId != row.Row.SelectedImage?.Id)
-        {
-            reason = WorkflowDialogs.Prompt(Window.GetWindow(this), Resources, selectedId == null ? "清空选定" : "变更选定图片", "可填写选定原因。此操作会记录操作者、时间与图片版本；不会按票数自动选定。");
-            if (reason == null) return;
-        }
-        await Model.UpdateImagesAsync(row, selectedId, candidates, reason);
-    }
-    private async void OnSelectionHistory(object sender, RoutedEventArgs e)
-    {
-        if (Row(sender) is not { } row || Model.Document is not { } document) return;
-        await Model.ExecuteAsync(async () =>
-        {
-            var history = await Model.Service.GetSelectionHistoryAsync(document.File.Id, row.Row.Id);
-            WorkflowDialogs.ShowText(Window.GetWindow(this), Resources, "选定历史", history.Count == 0 ? "暂无选定变更记录。" : string.Join("\n\n", history.Select(entry =>
-                $"{entry.CreatedAt.ToLocalTime():yyyy-MM-dd HH:mm} · {entry.UserName}\n{entry.PreviousImageId ?? "未选定"} → {entry.ImageId ?? "已清空"}\n原因：{entry.Reason ?? "未填写"}")));
-        });
-    }
-    private async void OnCompareRow(object sender, RoutedEventArgs e)
-    {
-        if (Row(sender) is not { } row) return;
-        await Model.ExecuteAsync(async () =>
-        {
-            var images = row.Candidates.Concat(row.Selected == null ? [] : new[] { row.Selected }).DistinctBy(image => image.Asset.Id).ToList();
-            var chosen = WorkflowDialogs.Choose(Window.GetWindow(this), Resources, "选择 2–4 张图片比较", images, image => image.Name + "\n" + image.Details, true);
-            if (chosen == null) return;
-            if (chosen.Count is < 2 or > 4) throw new InvalidDataException("请选择 2–4 张图片。");
-            if (Model.Document is { } document) await Model.RefreshReviewSummariesAsync(document.File.Id, row);
-            var window = new CompareImagesWindow(Model.Service, chosen) { Owner = Window.GetWindow(this) }; WorkflowDialogs.Theme(window, Resources); window.ShowDialog();
-        });
     }
     private static SceneRowItem? Scene(object sender)
     {
@@ -666,16 +532,6 @@ public partial class ProjectWorkbooksView : UserControl
                 : source is FrameworkContentElement content ? content.Parent : LogicalTreeHelper.GetParent(source);
         }
         return false;
-    }
-    private void OnSceneRowClick(object sender, MouseButtonEventArgs e)
-    {
-        if (e.Handled || FromRowControl(e.OriginalSource as DependencyObject, (DependencyObject)sender)) return;
-        e.Handled = true; ((FrameworkElement)sender).Focus(); OnSceneDetails(sender, e);
-    }
-    private void OnSceneRowKeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Handled || e.Key is not (Key.Enter or Key.Space) || FromRowControl(e.OriginalSource as DependencyObject, (DependencyObject)sender)) return;
-        e.Handled = true; OnSceneDetails(sender, e);
     }
     private SceneDetailsPanel? _scenePanel;
     private SceneRowItem? _scenePanelItem;
@@ -761,6 +617,7 @@ public partial class ProjectWorkbooksView : UserControl
 
     private async void OnAddAssetRow(object sender, RoutedEventArgs e)
     {
+        if (Model.IsReadOnly) return;
         if (Model.Document is not { } document || Model.SelectedSheet is not { IsAsset: true }) return;
         await Model.ExecuteAsync(Model.AddAssetRowAsync);
     }
@@ -796,21 +653,6 @@ public partial class ProjectWorkbooksView : UserControl
         if (sender is UIElement ui) ui.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
         await Model.ExecuteInlineAsync(() => Model.UpdateAssetFieldsAsync(row));
     }
-    private async void OnSceneDiscussion(object sender, RoutedEventArgs e)
-    {
-        if (Scene(sender) is not { } row || Model.Document is not { } document) return;
-        await Model.ExecuteAsync(async () =>
-        {
-            var window = new ReviewWindow(new ReviewViewModel(Model.Service, document.File.Id, row.Row.Id, null, "scene-rows")) { Owner = Window.GetWindow(this) };
-            WorkflowDialogs.Theme(window, Resources); window.ShowDialog(); await Model.RefreshSceneSummaryAsync(document.File.Id, row);
-        });
-    }
-    private async void OnSceneOrigins(object sender, RoutedEventArgs e)
-    {
-        if (Scene(sender) is not { } row || Model.Document is not { } document) return;
-        await Model.ExecuteAsync(() => { new SceneOriginsWindow(Model, document.File.Id, row, Resources) { Owner = Window.GetWindow(this) }.ShowDialog(); Model.SceneChanged(); return Task.CompletedTask; });
-    }
-
     private long _sidebarClosedTick;
 
     private void OnOverlayBackdropMouseDown(object sender, MouseButtonEventArgs e)
@@ -827,6 +669,7 @@ public partial class ProjectWorkbooksView : UserControl
 
     private async void OnAddSceneRow(object sender, RoutedEventArgs e)
     {
+        if (Model.IsReadOnly) return;
         if (Model.Document is not { } document || Model.SelectedSheet is not { IsScene: true }) return;
         await Model.ExecuteAsync(Model.AddSceneRowAsync);
     }
@@ -906,20 +749,20 @@ public partial class ProjectWorkbooksView : UserControl
         return null;
     }
 
-    private void OnPlayVideoDirectly(object sender, RoutedEventArgs e)
+    private async void OnPlayVideoDirectly(object sender, RoutedEventArgs e)
     {
         var video = GetVideoItem(sender) ?? Scene(sender)?.Video;
-        if (video == null || string.IsNullOrWhiteSpace(video.Path)) return;
+        if (video == null) return;
+        var model = TryResolveModel(sender) ?? Model;
+        if (string.IsNullOrWhiteSpace(video.FileId))
+        {
+            MessageBox.Show(Window.GetWindow(this), "此视频没有版本化文件 ID，无法从文件服务下载。", "无法播放", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
         try
         {
-            if (File.Exists(video.Path))
-            {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(video.Path) { UseShellExecute = true });
-            }
-            else
-            {
-                MessageBox.Show(Window.GetWindow(this), $"未找到视频文件「{video.Name}」。", "无法播放", MessageBoxButton.OK, MessageBoxImage.Warning);
-            }
+            var resolvedPath = await model.DownloadVideoAsync(video);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(resolvedPath) { UseShellExecute = true });
         }
         catch (Exception ex)
         {
@@ -939,27 +782,17 @@ public partial class ProjectWorkbooksView : UserControl
 
     private async void OnVideoDrop(object sender, DragEventArgs e)
     {
-        try
+        e.Handled = true;
+        if (Scene(sender) is not { } row || !row.Row.CanEdit) return;
+        var paths = Paths(e);
+        if (paths.Length == 0 || paths.Any(p => !IsVideo(p)))
         {
-            e.Handled = true;
-            if (Scene(sender) is not { } row || !row.Row.CanEdit) return;
-            var paths = Paths(e);
-            if (paths.Length == 0 || paths.Any(p => !IsVideo(p)))
-            {
-                MessageBox.Show(Window.GetWindow(this), "请拖入视频文件（如 .mp4, .mov, .mkv 等）。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
+            MessageBox.Show(Window.GetWindow(this), "请拖入视频文件（如 .mp4, .mov, .mkv 等）。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
 
-            var model = TryResolveModel(sender) ?? Model;
-            foreach (var path in paths)
-            {
-                await model.AttachVideoFileAsync(row, path);
-            }
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(Window.GetWindow(this), $"关联视频失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
+        var model = TryResolveModel(sender) ?? Model;
+        await AttachVideosAsync(model, row, paths);
     }
 
     private async void OnPickVideo(object sender, RoutedEventArgs e)
@@ -973,13 +806,24 @@ public partial class ProjectWorkbooksView : UserControl
         };
         if (picker.ShowDialog(Window.GetWindow(this)) != true) return;
         var model = TryResolveModel(sender) ?? Model;
-        foreach (var path in picker.FileNames)
-        {
-            await model.AttachVideoFileAsync(row, path);
-        }
+        await AttachVideosAsync(model, row, picker.FileNames);
     }
 
-    private void OnDiscardVideo(object sender, RoutedEventArgs e) => OnDiscardVideoItem(sender, e);
+    private async Task AttachVideosAsync(ProjectWorkbooksViewModel model, SceneRowItem row, IEnumerable<string> paths)
+    {
+        var errors = new List<string>();
+        foreach (var path in paths)
+        {
+            try { await model.AttachVideoFileAsync(row, path); }
+            catch (Exception ex) { errors.Add($"{Path.GetFileName(path)}：{ex.Message}"); }
+        }
+
+        if (errors.Count > 0)
+        {
+            MessageBox.Show(Window.GetWindow(this), string.Join(Environment.NewLine, errors),
+                "视频关联失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
 
     private async void OnOpenDiscardedVideos(object sender, RoutedEventArgs e)
     {
@@ -1016,32 +860,22 @@ public partial class ProjectWorkbooksView : UserControl
         if (_viewportScheduled) return; _viewportScheduled = true;
         Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(async () =>
         {
-            try
+            _viewportScheduled = false;
+            if (Model.Document is not { } document) return;
+            var work = new List<Task>(); var assets = new HashSet<AssetRowItem>(); var scenes = new HashSet<SceneRowItem>();
+            foreach (var element in Descendants(WorkbookScroll))
             {
-                if (Model.Document is not { } document) return;
-                var work = new List<Task>(); var assets = new HashSet<AssetRowItem>(); var scenes = new HashSet<SceneRowItem>();
-                foreach (var element in Descendants(WorkbookScroll))
+                if (!InViewport(element, WorkbookScroll)) continue;
+                if (element.DataContext is AssetRowItem asset && assets.Add(asset))
                 {
-                    if (!InViewport(element, WorkbookScroll)) continue;
-                    if (element.DataContext is AssetRowItem asset && assets.Add(asset))
-                    {
-                        if (asset.Selected != null) work.Add(Model.EnsureThumbnailAsync(asset.Selected));
-                        foreach (var candidate in asset.Candidates) work.Add(Model.EnsureThumbnailAsync(candidate));
-                        if (!asset.SummaryLoaded) work.Add(Model.RefreshReviewSummariesAsync(document.File.Id, asset));
-                    }
-                    if (element.DataContext is SceneRowItem scene && !scene.SummaryLoaded && scenes.Add(scene))
-                        work.Add(Model.RefreshSceneSummaryAsync(document.File.Id, scene));
+                    if (asset.Selected != null) work.Add(Model.EnsureThumbnailAsync(asset.Selected));
+                    foreach (var candidate in asset.Candidates) work.Add(Model.EnsureThumbnailAsync(candidate));
+                    if (!asset.SummaryLoaded) work.Add(Model.RefreshReviewSummariesAsync(document.File.Id, asset));
                 }
-                await Task.WhenAll(work);
+                if (element.DataContext is SceneRowItem scene && !scene.SummaryLoaded && scenes.Add(scene))
+                    work.Add(Model.RefreshSceneSummaryAsync(document.File.Id, scene));
             }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[ScheduleViewport] Error: {ex.Message}");
-            }
-            finally
-            {
-                _viewportScheduled = false;
-            }
+            await Task.WhenAll(work);
         }));
     }
     private static IEnumerable<FrameworkElement> Descendants(DependencyObject parent)

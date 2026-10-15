@@ -70,8 +70,8 @@ Throws<CryptographicException>("rejects a well-formed but unsigned envelope", ()
 
 Console.WriteLine("ClientConfigurationMerge.TryRefreshConnectionFields");
 {
-    // Shaped like a real nas-client.json: the connection fields the installer owns, plus
-    // the profile that belongs to whoever is signed in on this machine.
+    // This older install still carries the retired SMB field. The installer now owns only
+    // the API address and certificate pin; the user's profile stays untouched.
     const string existing = """
         {
           "ApiBaseUri": "https://old-nas:8443/",
@@ -83,18 +83,20 @@ Console.WriteLine("ClientConfigurationMerge.TryRefreshConnectionFields");
 
     // A rotated certificate is the case this exists for: the installer must overwrite the
     // pin, and must not touch the profile that names the user's stored credentials.
-    Check("a rotated certificate rewrites the pin and share root",
+    Check("a rotated certificate rewrites the API pin and drops the retired share root",
         ClientConfigurationMerge.TryRefreshConnectionFields(existing,
-            "https://new-nas:8443/", new string('2', 64), @"\\new-nas\Assets", out var rotated));
+            "https://new-nas:8443/", new string('2', 64), out var rotated));
     Check("the rotated pin is written", rotated.Contains(new string('2', 64)));
     Check("the rotated address is written", rotated.Contains("https://new-nas:8443/"));
     Check("the old pin is gone", !rotated.Contains(new string('1', 64)));
+    Check("the retired share root is removed", !rotated.Contains("ShareRoot"));
     Check("the credential profile survives a certificate rotation",
         rotated.Contains("colleague-b"));
 
+    const string current = """{"ApiBaseUri":"https://old-nas:8443/","CertificateSha256":"1111111111111111111111111111111111111111111111111111111111111111","CredentialProfile":"colleague-b"}""";
     Check("an unchanged installer config is reported as a no-op",
-        ClientConfigurationMerge.TryRefreshConnectionFields(existing,
-            "https://old-nas:8443/", new string('1', 64), @"\\old-nas\Assets", out var unchanged));
+        ClientConfigurationMerge.TryRefreshConnectionFields(current,
+            "https://old-nas:8443/", new string('1', 64), out var unchanged));
     // Byte-identical means the caller can skip writing the file entirely, which keeps an
     // ordinary reinstall from touching a file the client reads at every start.
     Check("a no-op leaves the text byte-identical", ReferenceEquals(unchanged, existing));
@@ -102,16 +104,16 @@ Console.WriteLine("ClientConfigurationMerge.TryRefreshConnectionFields");
     Check("unknown fields are preserved",
         ClientConfigurationMerge.TryRefreshConnectionFields(
             """{"ApiBaseUri":"https://a/","CertificateSha256":"00","ShareRoot":"\\\\a\\B","SomethingElse":7}""",
-            "https://b/", "11", @"\\b\B", out var extra) && extra.Contains("SomethingElse"));
+            "https://b/", "11", out var extra) && extra.Contains("SomethingElse") && !extra.Contains("ShareRoot"));
 
     // Returning false sends the installer down its overwrite path: a file the client
     // cannot parse supplies no credential profile worth preserving either.
     Check("a non-object JSON document is rejected",
-        !ClientConfigurationMerge.TryRefreshConnectionFields("[]", "https://a/", "00", @"\\a\B", out _));
+        !ClientConfigurationMerge.TryRefreshConnectionFields("[]", "https://a/", "00", out _));
     Check("malformed JSON is rejected",
-        !ClientConfigurationMerge.TryRefreshConnectionFields("{not json", "https://a/", "00", @"\\a\B", out _));
+        !ClientConfigurationMerge.TryRefreshConnectionFields("{not json", "https://a/", "00", out _));
     Check("an empty document is rejected",
-        !ClientConfigurationMerge.TryRefreshConnectionFields("", "https://a/", "00", @"\\a\B", out _));
+        !ClientConfigurationMerge.TryRefreshConnectionFields("", "https://a/", "00", out _));
 }
 
 Console.WriteLine("UpdateFailureText.DescribeConnectionFailure");

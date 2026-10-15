@@ -1,0 +1,22 @@
+[Unit]
+Description=MuYingDrive NAS transfer daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=muying-transfer
+Group=muying-transfer
+EnvironmentFile=/etc/muying-transfer/daemon.env
+ExecStart=/opt/muying-transfer/bin/muying-transfer-daemon
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/muying-transfer/objects /srv/muying-transfer/staging /var/lib/muying-transfer
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

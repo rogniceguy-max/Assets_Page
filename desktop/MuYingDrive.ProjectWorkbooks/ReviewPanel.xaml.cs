@@ -12,7 +12,6 @@ public partial class ReviewPanel : UserControl
 {
     private bool _loaded;
     public ReviewPanel() => InitializeComponent();
-    public void AddAction(UIElement element) => ActionPanel.Children.Add(element);
     private ReviewViewModel Model => (ReviewViewModel)DataContext;
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -41,11 +40,4 @@ public partial class ReviewPanel : UserControl
     public bool TryLeave() => !Model.Busy && ConfirmDiscard();
     private bool ConfirmDiscard() => !Model.HasDraft || MessageBox.Show(Window.GetWindow(this), "当前输入尚未保存，是否放弃这份草稿？", "保留草稿", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes;
     private void OnCancelEdit(object sender, RoutedEventArgs e) { if (ConfirmDiscard()) Model.CancelEdit(); }
-    private async void OnResolve(object sender, RoutedEventArgs e)
-    {
-        if (((FrameworkElement)sender).DataContext is not ReviewComment comment || !comment.CanResolve) return;
-        var note = comment.Resolved ? "" : WorkflowDialogs.Prompt(Window.GetWindow(this), Resources, "标记已解决", "填写解决说明；处理状态与好/不好评价无关。", Model.ResolutionDraft(comment), allowEmpty: false);
-        if (note == null) return;
-        await Model.ExecuteAsync(() => Model.ResolveAsync(comment, !comment.Resolved, note));
-    }
 }

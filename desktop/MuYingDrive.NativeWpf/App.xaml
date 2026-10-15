@@ -16,8 +16,6 @@
             <DataTemplate DataType="{x:Type vm:WorkspaceViewModel}"><views:WorkspaceView /></DataTemplate>
             <DataTemplate DataType="{x:Type vm:FilesViewModel}"><views:FilesView /></DataTemplate>
             <DataTemplate DataType="{x:Type vm:ProjectImagesViewModel}"><views:ProjectImagesView /></DataTemplate>
-            <!-- The tour's browser renders through the same view; both implement IFileBrowser. -->
-            <DataTemplate DataType="{x:Type vm:VisitorViewModel}"><views:FilesView /></DataTemplate>
             <DataTemplate DataType="{x:Type vm:TransferViewModel}"><views:TransferView /></DataTemplate>
             <DataTemplate DataType="{x:Type vm:SyncViewModel}"><views:SyncView /></DataTemplate>
             <!-- The workbook page is a separate library with its own namespace, so it is

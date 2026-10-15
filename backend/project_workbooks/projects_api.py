@@ -6,21 +6,31 @@ import re
 import io
 import time
 import threading
+import unicodedata
 from tempfile import SpooledTemporaryFile
 from dataclasses import dataclass, field
 from typing import Any, BinaryIO, Mapping, Protocol
-from urllib.parse import parse_qs, quote, unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from .workflow_services import StreamAsset, WorkflowServices
 
 ROOT = "/api/v2/project-workbooks"
-XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
 UPLOAD_LIMIT = 64 * 1024 * 1024
 JSON_LIMIT = 64 * 1024
 SCENE_JSON_LIMIT = 256 * 1024
 JSON_RESPONSE_LIMIT = 25 * 1024 * 1024
-DOWNLOAD_LIMIT = 256 * 1024 * 1024
+SCENE_ROW_VERSION_KEYS = frozenset({
+    "scene_number", "beat_number", "story_content", "breakdown_plan", "label_level", "note",
+    "video", "videos", "discarded_videos",
+})
+SCENE_ROW_SCALAR_FIELDS = frozenset({
+    "scene_number", "beat_number", "story_content", "breakdown_plan", "label_level", "note",
+})
+SCENE_ROW_VIDEO_ACTIONS = frozenset({"attach", "add", "discard", "restore"})
+SCENE_ROW_VIDEO_OPERATION_FIELDS = frozenset({
+    "video_action", "video", "video_id", "video_name", "allow_multiple",
+})
 
 
 class ApiFault(Exception):
@@ -28,13 +38,6 @@ class ApiFault(Exception):
     def __init__(self, status: int, code: str, message: str):
         super().__init__(message)
         self.status, self.code, self.message = status, code, message
-
-
-@dataclass(frozen=True)
-class BinaryAsset:
-    data: bytes
-    media_type: str
-    name: str
 
 
 @dataclass(frozen=True)
@@ -57,27 +60,11 @@ class Security(Protocol):
 
 
 class WorkbookServices(Protocol):
-    """Every method MUST enforce current resource ACL, including all binary GETs.
+    """Workbook-document reads; the active workflow service owns all other API operations.
 
     All returned mappings conform to ../contracts/API.md. Never expose disk paths.
-    Import/create commit bytes and metadata atomically, and return only when GET
-    can produce a supported document (or use a separately versioned async API).
     """
-    def list_files(self, actor: Any) -> list[dict[str, Any]]: ...
-    def create(self, actor: Any, template_kind: str) -> dict[str, Any]: ...
-    def import_xlsx(self, actor: Any, name: str, data: bytes) -> dict[str, Any]: ...
     def document(self, actor: Any, file_id: str) -> dict[str, Any]: ...
-    def original(self, actor: Any, file_id: str) -> BinaryAsset: ...
-    def list_images(self, actor: Any) -> list[dict[str, Any]]: ...
-    def upload_image(self, actor: Any, name: str, media_type: str, data: bytes) -> dict[str, Any]:
-        """Decode/validate bytes, pixel limits and actual type BEFORE persistence."""
-        ...
-    def image_content(self, actor: Any, asset_id: str, thumbnail: bool) -> BinaryAsset:
-        """Authorize each GET. Serve PNG/JPEG renditions for WebP to native WPF."""
-        ...
-    def replace_images(self, actor: Any, file_id: str, row_id: str,
-                       expected_version: int, selected_image_id: str | None,
-                       candidate_image_ids: list[str]) -> dict[str, Any]: ...
 
 
 class ReviewServices(Protocol):
@@ -92,9 +79,6 @@ class ReviewServices(Protocol):
                      expected_version: int, text: str) -> dict[str, Any]: ...
     def delete_comment(self, actor: Any, file_id: str, row_id: str, comment_id: str,
                        expected_version: int) -> dict[str, Any]: ...
-    def resolve_comment(self, actor: Any, file_id: str, row_id: str, comment_id: str,
-                        expected_version: int, resolved: bool,
-                        resolution_note: str | None) -> dict[str, Any]: ...
 
 
 def json_response(status: int, value: Any) -> Response:
@@ -162,20 +146,100 @@ def asset_component(value: Any, maximum: int, label: str) -> str | None:
     return text or None
 
 
-def origins_payload(value: Any, file_id: str, row_id: str) -> list[dict[str, str]]:
-    if not isinstance(value, list) or len(value) > 100:
-        raise invalid("来源最多 100 项。")
-    seen = set()
-    for origin in value:
-        if not isinstance(origin, dict) or set(origin) != {"file_id", "row_id"}:
-            raise invalid()
-        if not valid_id(origin["file_id"]) or not valid_id(origin["row_id"]):
-            raise invalid()
-        key = (origin["file_id"], origin["row_id"])
-        if key in seen or origin["file_id"] == file_id:
-            raise invalid("来源必须是其他修订的唯一真实节拍行。")
-        seen.add(key)
-    return value
+def video_item_payload(value: Any) -> dict[str, Any] | None:
+    """Validate a VideoItem before it crosses the workbook API boundary.
+
+    New writes use project-relative POSIX paths, carry an ID, and store the file name as
+    the final path segment. Stored workbook payloads are not rewritten by this validator.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise invalid("视频信息格式无效。")
+    allowed = {"id", "file_id", "name", "path", "duration", "thumb_url", "thumbUrl",
+               "discarded_at", "discardedAt"}
+    if set(value) - allowed:
+        raise invalid("视频信息包含未知字段。")
+
+    def safe_text(item: Any, maximum: int, label: str, *, non_empty: bool = False) -> str | None:
+        if item is None:
+            return None
+        if (not isinstance(item, str) or len(item) > maximum
+                or any(unicodedata.category(char) == "Cc" or 0xD800 <= ord(char) <= 0xDFFF
+                       for char in item)
+                or (non_empty and not item.strip())):
+            raise invalid(f"{label}无效。")
+        return item
+
+    name = safe_text(value.get("name"), 255, "视频名称", non_empty=True)
+    if name is None or name in {".", ".."} or "/" in name or "\\" in name:
+        raise invalid("视频名称必须是文件名。")
+
+    video_id = value.get("id")
+    if not valid_id(video_id):
+        raise invalid("视频标识无效。")
+    file_id = value.get("file_id")
+    if not valid_id(file_id) or file_id != video_id:
+        raise invalid("视频标识必须对应稳定文件标识。")
+
+    path = safe_text(value.get("path"), 4096, "视频路径")
+    if path is None:
+        raise invalid("新视频必须使用项目内逻辑路径。")
+    if path is not None:
+        segments = path.split("/")
+        if (not path or path.startswith("/") or "\\" in path
+                or re.match(r"^[A-Za-z]:", path)
+                or any(segment in {"", ".", ".."} for segment in segments)):
+            raise invalid("新视频路径必须是项目内使用 / 分隔的相对路径。")
+        if segments[-1].casefold() != name.casefold():
+            raise invalid("视频路径末尾必须与视频名称一致。")
+
+    payload = dict(value)
+    payload["name"] = name
+    if "duration" in payload:
+        safe_text(payload["duration"], 100, "视频时长")
+    for field in ("thumb_url", "thumbUrl"):
+        if field in payload:
+            safe_text(payload[field], 2048, "视频缩略图地址")
+    for field in ("discarded_at", "discardedAt"):
+        if field in payload:
+            safe_text(payload[field], 100, "视频删除时间")
+    return payload
+
+
+def scene_row_update_version_fields(changes: Mapping[str, Any]) -> set[str]:
+    """Return every field version a generic scene-row update can change."""
+    version_fields = set(changes) & SCENE_ROW_SCALAR_FIELDS
+
+    if "video_action" not in changes:
+        if "video" in changes:
+            version_fields.update({"video", "videos"})
+        return version_fields
+
+    action = changes["video_action"]
+    if not isinstance(action, str) or action not in SCENE_ROW_VIDEO_ACTIONS:
+        raise invalid("视频操作无效。")
+    if action in {"attach", "add"}:
+        if changes.get("video"):
+            version_fields.update({"video", "videos"})
+            allow_multiple = changes.get("allow_multiple", action == "add")
+            if type(allow_multiple) is not bool:
+                raise invalid("视频列表选项无效。")
+            if not allow_multiple:
+                version_fields.add("discarded_videos")
+    elif action == "discard":
+        version_fields.update({"video", "videos", "discarded_videos"})
+    elif action == "restore":
+        version_fields.update({"video", "videos", "discarded_videos"})
+    return version_fields
+
+
+def is_pure_video_operation(changes: Mapping[str, Any]) -> bool:
+    """Whether an unversioned generic scene-row update is only an atomic video action."""
+    action = changes.get("video_action")
+    return (isinstance(action, str) and action in SCENE_ROW_VIDEO_ACTIONS
+            and not (set(changes) & SCENE_ROW_SCALAR_FIELDS)
+            and not (set(changes) - SCENE_ROW_VIDEO_OPERATION_FIELDS))
 
 
 def query_values(raw: str) -> dict[str, list[str]]:
@@ -247,29 +311,15 @@ def object_body(headers: Mapping[str, str], body: bytes, limit: int = JSON_LIMIT
     return value
 
 
-def binary_response(asset: BinaryAsset, *, original: bool = False) -> Response:
-    # Byte storage and filenames originate from trusted host adapters, not URLs.
-    if not asset.data or len(asset.data) > (DOWNLOAD_LIMIT if original else UPLOAD_LIMIT):
-        raise ApiFault(413, "TOO_LARGE", "下载内容为空或超过大小限制。")
-    if original:
-        return Response(200, asset.data, {"Content-Type": XLSX,
-            "Content-Disposition": "attachment; filename*=UTF-8''" + quote(asset.name, safe="")})
-    if asset.media_type not in IMAGE_TYPES:
-        raise ApiFault(415, "UNSUPPORTED_TYPE", "图片类型不受支持。")
-    return Response(200, asset.data, {"Content-Type": asset.media_type})
-
-
-def stream_response(asset: StreamAsset, *, workbook: bool = False) -> Response:
-    limit = DOWNLOAD_LIMIT if workbook else UPLOAD_LIMIT
-    if type(asset.length) is not int or asset.length <= 0 or asset.length > limit:
+def stream_response(asset: StreamAsset) -> Response:
+    if type(asset.length) is not int or asset.length <= 0 or asset.length > UPLOAD_LIMIT:
         asset.stream.close()
         raise ApiFault(413, "TOO_LARGE", "下载内容超过大小限制。")
-    if (workbook and asset.media_type != XLSX) or (not workbook and asset.media_type not in IMAGE_TYPES):
+    if asset.media_type not in IMAGE_TYPES:
         asset.stream.close()
         raise ApiFault(415, "UNSUPPORTED_TYPE", "下载内容类型不受支持。")
     try:
-        # Host returns a pinned immutable, seekable snapshot (or its temporary
-        # spool). Validate length BEFORE sending headers, not after truncation.
+        # Validate the seekable image stream's reported length before sending headers.
         if asset.stream.tell() != 0:
             raise ValueError("Stream must start at zero")
         asset.stream.seek(0, io.SEEK_END)
@@ -278,11 +328,8 @@ def stream_response(asset: StreamAsset, *, workbook: bool = False) -> Response:
         asset.stream.seek(0)
     except (OSError, ValueError):
         asset.stream.close()
-        raise ApiFault(503, "STORAGE_UNAVAILABLE", "下载快照尚未就绪。") from None
-    headers = {"Content-Type": XLSX if workbook else asset.media_type}
-    if workbook:
-        headers["Content-Disposition"] = "attachment; filename*=UTF-8''" + quote(asset.name, safe="")
-    return Response(200, asset.stream, headers, asset.length, 180 if workbook else 90)
+        raise ApiFault(503, "STORAGE_UNAVAILABLE", "图片内容暂不可用。") from None
+    return Response(200, asset.stream, {"Content-Type": asset.media_type}, asset.length)
 
 
 class ProjectsApi:
@@ -322,7 +369,7 @@ class ProjectsApi:
     def _route(self, actor: Any, method: str, target: str,
                headers: Mapping[str, str], body: bytes) -> Response:
         parsed = urlsplit(target)
-        upload = method == "POST" and parsed.path.rstrip("/") in {ROOT + "/import", ROOT + "/image-assets"}
+        upload = method == "POST" and parsed.path.rstrip("/") == ROOT + "/image-assets"
         if upload and len(body) > self.upload_limit:
             raise ApiFault(413, "TOO_LARGE", "文件超过上传限制。")
         path = parsed.path[len(ROOT):].strip("/")
@@ -337,196 +384,158 @@ class ProjectsApi:
             raise invalid()
         svc = self.services
         query = query_values(parsed.query)
+        is_restore_route = len(parts) == 2 and parts[1] == "restore" and method == "POST"
+        if parts and parts[0] not in {"create", "image-assets", "projects"} and not is_restore_route:
+            active_check = getattr(self._workflow(), "assert_active_workbook", None)
+            if callable(active_check):
+                active_check(parts[0])
         if method == "GET" and parts == ["projects"]:
             if query:
                 raise invalid()
             return json_response(200, {"items": self._workflow().projects(actor)})
         if method == "GET" and not parts:
-            if query:
-                if set(query) != {"project_id"}:
-                    raise invalid()
-                project_id = review_target(query["project_id"][0], allow_general=False)
-                return json_response(200, {"items": self._workflow().list_files(actor, project_id)})
-            return json_response(200, {"items": svc.list_files(actor)})
+            if set(query) - {"project_id", "include_deleted"} or "project_id" not in query:
+                raise invalid("列出工作簿需要指定项目范围。")
+            project_id = review_target(query["project_id"][0], allow_general=False)
+            raw_deleted = query.get("include_deleted", ["false"])[0]
+            if raw_deleted not in {"true", "false"}:
+                raise invalid("删除项筛选无效。")
+            if raw_deleted == "true":
+                items = self._workflow().list_files(actor, project_id, include_deleted=True)
+            else:
+                items = self._workflow().list_files(actor, project_id)
+            return json_response(200, {"items": items})
         if parts == ["create"] and method == "POST":
             value = object_body(headers, body)
-            if {"template_kind", "project_id", "operation_id"}.issubset(value.keys()) and set(value.keys()).issubset({"template_kind", "project_id", "operation_id", "name"}):
-                if value["template_kind"] not in ("scene_beats", "asset_review"):
-                    raise invalid("请选择一种内置模板。")
-                name_val = value.get("name")
-                if name_val is not None:
-                    name_val = str(name_val).strip()
-                    if not name_val:
-                        name_val = None
-                return json_response(201, self._workflow().create(actor, value["template_kind"],
-                    review_target(value["project_id"], allow_general=False),
-                    review_target(value["operation_id"], allow_general=False),
-                    name=name_val))
-            if set(value) != {"template_kind"} or value["template_kind"] not in ("scene_beats", "asset_review"):
+            if (not {"template_kind", "project_id", "operation_id"}.issubset(value)
+                    or set(value) - {"template_kind", "project_id", "operation_id", "name"}
+                    or value["template_kind"] not in ("scene_beats", "asset_review")):
                 raise invalid("请选择一种内置模板。")
-            return json_response(201, svc.create(actor, value["template_kind"]))
-        if parts == ["import"] and method == "POST":
-            if any(key in headers for key in ("x-project-id", "x-operation-id", "x-revision-of")):
-                return self._upload_route(actor, target, headers, io.BytesIO(body), len(body))
-            name = filename(headers)
-            media_type = headers.get("content-type", "").split(";", 1)[0].strip().lower()
-            if not name.lower().endswith(".xlsx") or media_type not in {XLSX, "application/octet-stream"}:
-                raise ApiFault(415, "UNSUPPORTED_TYPE", "项目只接收 .xlsx 文件。")
-            if not body:
-                raise ApiFault(422, "INVALID_WORKBOOK", "表格文件为空。")
-            return json_response(201, svc.import_xlsx(actor, name, body))
+            name_val = value.get("name")
+            if name_val is not None:
+                name_val = str(name_val).strip() or None
+            return json_response(201, self._workflow().create(actor, value["template_kind"],
+                review_target(value["project_id"], allow_general=False),
+                review_target(value["operation_id"], allow_general=False), name=name_val))
         if parts == ["image-assets"]:
             if method == "GET":
-                if query:
-                    if set(query) - {"project_id", "q", "category", "cursor", "page_size"} or "project_id" not in query:
-                        raise invalid("素材检索需要项目范围。")
-                    project_id = review_target(query["project_id"][0], allow_general=False)
-                    q = optional_text(query.get("q", [None])[0], 200)
-                    category = query.get("category", [None])[0]
-                    if category not in (None, "角色", "场景"):
-                        raise invalid()
-                    raw_size = query.get("page_size", ["40"])[0]
-                    if not re.fullmatch(r"[0-9]{1,3}", raw_size) or not 1 <= int(raw_size) <= 100:
-                        raise invalid()
-                    cursor = optional_text(query.get("cursor", [None])[0], 4096)
-                    return json_response(200, self._workflow().list_images(actor, project_id, q,
-                        category, cursor, int(raw_size)))
-                return json_response(200, {"items": svc.list_images(actor)})
+                if (set(query) - {"project_id", "q", "category", "cursor", "page_size"}
+                        or "project_id" not in query):
+                    raise invalid("素材检索需要项目范围。")
+                project_id = review_target(query["project_id"][0], allow_general=False)
+                q = optional_text(query.get("q", [None])[0], 200)
+                category = query.get("category", [None])[0]
+                if category not in (None, "角色", "场景"):
+                    raise invalid()
+                raw_size = query.get("page_size", ["40"])[0]
+                if not re.fullmatch(r"[0-9]{1,3}", raw_size) or not 1 <= int(raw_size) <= 100:
+                    raise invalid()
+                cursor = optional_text(query.get("cursor", [None])[0], 4096)
+                return json_response(200, {"items": self._workflow().list_images(actor, project_id, q,
+                    category, cursor, int(raw_size))})
             if method == "POST":
-                if "x-project-id" in headers:
-                    return self._upload_route(actor, target, headers, io.BytesIO(body), len(body))
-                media_type = headers.get("content-type", "").split(";", 1)[0].strip().lower()
-                if media_type not in IMAGE_TYPES:
-                    raise ApiFault(415, "UNSUPPORTED_TYPE", "请选择 PNG、JPEG 或 WebP 图片。")
-                if not body:
-                    raise ApiFault(422, "INVALID_IMAGE", "图片为空。")
-                return json_response(201, svc.upload_image(actor, filename(headers), media_type, body))
+                if "x-project-id" not in headers:
+                    raise invalid("上传图片需要指定项目范围。")
+                return self._upload_route(actor, target, headers, io.BytesIO(body), len(body))
         if len(parts) == 3 and parts[0] == "image-assets" and parts[2] == "name" and method == "PUT":
             value = object_body(headers, body)
             if query or set(value) != {"expected_version", "display_name"}:
                 raise invalid()
-            rename = getattr(self._workflow(), "rename_image", None)
-            if rename is None:
-                raise ApiFault(503, "STORAGE_UNAVAILABLE", "图片重命名尚未接入。")
-            return json_response(200, rename(actor, parts[1], review_version(value["expected_version"]),
-                                              value["display_name"]))
+            return json_response(200, self._workflow().rename_image(actor, parts[1],
+                review_version(value["expected_version"]), value["display_name"]))
         if len(parts) == 2 and parts[0] == "image-assets" and method == "GET":
             if query:
                 raise invalid()
-            get_image = getattr(self._workflow(), "image_metadata", None)
-            if get_image is None:
-                raise ApiFault(503, "STORAGE_UNAVAILABLE", "素材读取尚未接入。")
-            return json_response(200, get_image(actor, parts[1]))
+            return json_response(200, self._workflow().image_metadata(actor, parts[1]))
         if len(parts) == 3 and parts[0] == "image-assets" and parts[2] == "content" and method == "GET":
             query = parse_qs(parsed.query, keep_blank_values=True)
             if set(query) - {"thumbnail"} or query.get("thumbnail", ["true"]) not in (["true"], ["false"]):
                 raise invalid()
             thumbnail = query.get("thumbnail", ["true"]) == ["true"]
-            if self.workflow is not None:
-                return stream_response(self.workflow.image_content_stream(actor, parts[1], thumbnail))
-            return binary_response(svc.image_content(actor, parts[1], thumbnail))
+            return stream_response(self._workflow().image_content_stream(actor, parts[1], thumbnail))
         # Reserved static names must never fall through as workbook IDs.
-        if parts and parts[0] not in {"create", "import", "image-assets", "projects"}:
+        if parts and parts[0] not in {"create", "image-assets", "projects"}:
+            if len(parts) == 2 and parts[1] == "restore" and method == "POST":
+                if query:
+                    raise invalid()
+                return json_response(200, self._workflow().restore_workbook(actor, parts[0]))
             if len(parts) == 2 and parts[1] == "name" and method == "PUT":
                 value = object_body(headers, body)
                 if query or set(value) != {"expected_name_version", "display_name"}:
                     raise invalid()
-                rename = getattr(self._workflow(), "rename_workbook", None)
-                if rename is None:
-                    raise ApiFault(503, "STORAGE_UNAVAILABLE", "工作簿重命名尚未接入。")
-                return json_response(200, rename(actor, parts[0],
-                    review_version(value["expected_name_version"]), value["display_name"]))
-            if len(parts) == 4 and parts[1] == "sheets" and parts[3] == "name" and method == "PUT":
-                value = object_body(headers, body)
-                if query or set(value) != {"expected_name_version", "display_name"}:
-                    raise invalid()
-                rename = getattr(self._workflow(), "rename_sheet", None)
-                if rename is None:
-                    raise ApiFault(503, "STORAGE_UNAVAILABLE", "工作表重命名尚未接入。")
-                return json_response(200, rename(actor, parts[0], parts[2],
+                return json_response(200, self._workflow().rename_workbook(actor, parts[0],
                     review_version(value["expected_name_version"]), value["display_name"]))
             if len(parts) == 2 and parts[1] in {"scene-rows", "asset-rows"} and method == "POST":
                 value = object_body(headers, body)
                 if query or set(value) != {"sheet_id"}:
                     raise invalid()
-                creator = getattr(self._workflow(), "add_scene_row" if parts[1] == "scene-rows" else "add_asset_row", None)
-                if creator is None:
-                    raise ApiFault(503, "STORAGE_UNAVAILABLE", "新增表格行尚未接入。")
+                creator = self._workflow().add_scene_row if parts[1] == "scene-rows" else self._workflow().add_asset_row
                 return json_response(201, creator(actor, parts[0], review_target(value["sheet_id"], allow_general=False)))
             if len(parts) == 3 and parts[1] in {"scene-rows", "asset-rows"} and method == "DELETE":
                 value = object_body(headers, body)
                 if query or set(value) != {"expected_version"}:
                     raise invalid()
-                delete = getattr(self._workflow(), "delete_row", None)
-                if delete is None:
-                    raise ApiFault(503, "STORAGE_UNAVAILABLE", "删除表格行尚未接入。")
                 kind = "scene_beats" if parts[1] == "scene-rows" else "asset_review"
-                return json_response(200, delete(actor, parts[0], parts[2],
+                return json_response(200, self._workflow().delete_row(actor, parts[0], parts[2],
                     review_version(value["expected_version"]), kind))
             if len(parts) >= 4 and parts[1] in {"asset-rows", "scene-rows"} and parts[3] in {"reviews", "review-summaries"}:
                 return self._review_route(actor, method, parts, parsed.query, headers, body)
             if len(parts) == 1 and method == "GET":
                 return json_response(200, svc.document(actor, parts[0]))
             if len(parts) == 1 and method == "DELETE":
-                delete = getattr(self._workflow(), "delete_workbook", None)
-                if delete is None:
-                    raise ApiFault(503, "STORAGE_UNAVAILABLE", "工作簿删除尚未接入。")
-                return json_response(200, delete(actor, parts[0]))
+                return json_response(200, self._workflow().delete_workbook(actor, parts[0]))
             if len(parts) == 2 and parts[1] == "sheets" and method == "POST":
                 value = object_body(headers, body)
                 sheet_name = review_text(value.get("sheet_name"))
-                if self.workflow is not None:
-                    return json_response(201, self._workflow().add_sheet(actor, parts[0], sheet_name))
-                raise ApiFault(503, "STORAGE_UNAVAILABLE", "新增工作表服务暂未接入。")
-            if len(parts) == 2 and parts[1] == "original" and method == "GET":
-                if self.workflow is not None:
-                    return stream_response(self.workflow.original_stream(actor, parts[0]), workbook=True)
-                return binary_response(svc.original(actor, parts[0]), original=True)
-            if len(parts) == 2 and parts[1] == "revisions" and method == "GET":
-                if query:
-                    raise invalid()
-                return json_response(200, {"items": self._workflow().revisions(actor, parts[0])})
-            if len(parts) == 2 and parts[1] == "export" and method == "GET":
-                if set(query) != {"expected_version"} or not re.fullmatch(r"[0-9]{1,19}", query["expected_version"][0]):
-                    raise invalid()
-                version = review_version(int(query["expected_version"][0]))
-                return stream_response(self._workflow().export_current(actor, parts[0], version), workbook=True)
-            if len(parts) == 4 and parts[1] == "asset-rows" and parts[3] == "selection-history" and method == "GET":
-                if query:
-                    raise invalid()
-                return json_response(200, {"items": self._workflow().selection_history(actor, parts[0], parts[2])})
+                return json_response(201, self._workflow().add_sheet(actor, parts[0], sheet_name))
             if len(parts) in (3, 4) and parts[1] == "scene-rows" and method == "PUT":
                 value = object_body(headers, body, SCENE_JSON_LIMIT)
                 if query:
                     raise invalid()
-                base_fields = {"expected_version", "label_level", "breakdown_plan"}
-                versioned_fields = {"expected_versions", "label_level", "breakdown_plan"}
-                combined_fields = {"expected_version", "expected_versions", "label_level", "breakdown_plan"}
-                if len(parts) == 3 and set(value) in (base_fields, versioned_fields, combined_fields):
-                    if value["label_level"] not in (None, "红", "黄", "绿"):
-                        raise invalid()
-                    expected = value.get("expected_versions", value.get("expected_version"))
-                    if isinstance(expected, dict):
-                        if set(expected) != {"label_level", "breakdown_plan"} or any(
-                                type(item) is not int or item < 1 for item in expected.values()):
-                            raise invalid("字段版本无效。")
-                    else:
-                        expected = review_version(expected)
-                    return json_response(200, self._workflow().update_scene(actor, parts[0], parts[2],
-                        expected, value["label_level"],
-                        optional_text(value["breakdown_plan"], 20000)))
                 if len(parts) == 3:
-                    expected = value.get("expected_versions", value.get("expected_version", 1))
-                    if isinstance(expected, int) and expected > 0:
-                        expected = review_version(expected)
+                    if "expected_version" in value and "expected_versions" in value:
+                        raise invalid("只能指定一种节拍版本条件。")
+                    if "expected_versions" in value:
+                        expected = value["expected_versions"]
+                        if (not isinstance(expected, dict) or not expected
+                                or set(expected) - SCENE_ROW_VERSION_KEYS
+                                or any(type(item) is not int or not 1 <= item <= 2**63 - 1
+                                       for item in expected.values())):
+                            raise invalid("字段版本无效。")
+                    elif "expected_version" in value:
+                        expected = review_version(value["expected_version"])
+                    else:
+                        expected = None
+                    if "video" in value and "video_action" not in value:
+                        raise invalid("视频必须通过明确的视频操作关联或更新。")
+                    if "video" in value:
+                        value["video"] = video_item_payload(value["video"])
+                    if "video_action" in value:
+                        action = value["video_action"]
+                        if not isinstance(action, str) or action not in SCENE_ROW_VIDEO_ACTIONS:
+                            raise invalid("视频操作无效。")
+                    if "allow_multiple" in value and type(value["allow_multiple"]) is not bool:
+                        raise invalid("视频列表选项无效。")
+                    if "video_id" in value and value["video_id"] is not None and not valid_id(value["video_id"]):
+                        raise invalid("视频标识无效。")
+                    if "video_name" in value:
+                        video_name = value["video_name"]
+                        if (not isinstance(video_name, str) or not video_name.strip() or len(video_name) > 255
+                                or any(unicodedata.category(char) == "Cc" or 0xD800 <= ord(char) <= 0xDFFF
+                                       for char in video_name)
+                                or "/" in video_name or "\\" in video_name):
+                            raise invalid("视频名称无效。")
+                    if "expected_versions" in value:
+                        required_versions = scene_row_update_version_fields(value)
+                        if not required_versions.issubset(expected):
+                            raise invalid("字段版本必须覆盖本次更新涉及的所有字段。")
+                    elif expected is None and not is_pure_video_operation(value):
+                        raise invalid("节拍字段更新必须携带版本；无版本请求只允许纯视频操作。")
                     return json_response(200, self._workflow().update_scene_row(actor, parts[0], parts[2],
                         expected, value))
                 if len(parts) == 4 and parts[3] == "story-content" and set(value) == {"expected_version", "story_content"}:
                     return json_response(200, self._workflow().update_story_content(actor, parts[0], parts[2],
                         review_version(value["expected_version"]), optional_text(value["story_content"], 20000)))
-                if len(parts) == 4 and parts[3] == "origins" and set(value) == {"expected_version", "origins"}:
-                    return json_response(200, self._workflow().update_origins(actor, parts[0], parts[2],
-                        review_version(value["expected_version"]), origins_payload(value["origins"], parts[0], parts[2])))
                 raise invalid()
             if len(parts) == 3 and parts[1] == "asset-rows" and method == "PUT":
                 value = object_body(headers, body)
@@ -537,13 +546,8 @@ class ProjectsApi:
                     asset_component(value["name"], 500, "名称")))
             if len(parts) == 4 and parts[1] == "asset-rows" and parts[3] == "images" and method == "PUT":
                 value = object_body(headers, body)
-                has_reason = "selection_reason" in value
-                reason = optional_text(value.pop("selection_reason", None), 4000)
-                if has_reason or self.workflow is not None:
-                    change = validate_image_change(value)
-                    return json_response(200, self._workflow().replace_images(actor, parts[0], parts[2], *change, reason))
                 change = validate_image_change(value)
-                return json_response(200, svc.replace_images(actor, parts[0], parts[2], *change))
+                return json_response(200, self._workflow().replace_images(actor, parts[0], parts[2], *change))
         raise ApiFault(404, "NOT_FOUND", "接口不存在。")
 
     def _review_route(self, actor: Any, method: str, parts: list[str], raw_query: str,
@@ -558,9 +562,16 @@ class ProjectsApi:
             raise invalid() from None
         file_id, row_id = parts[0], parts[2]
         tail = parts[3:]
+
+        def validate_row() -> None:
+            validator = getattr(self.workflow, "assert_active_row", None)
+            if callable(validator):
+                validator(file_id, row_id, "scene_beats" if scene else "asset_review")
+
         if method == "GET" and tail == ["review-summaries"]:
             if query or body:
                 raise invalid()
+            validate_row()
             return json_response(200, {"items": service.summaries(actor, file_id, row_id)})
         if method == "GET" and tail == ["reviews"]:
             if set(query) - {"image_id"} or body or ("image_id" in query and len(query["image_id"]) != 1):
@@ -568,6 +579,7 @@ class ProjectsApi:
             target = review_target(query["image_id"][0], allow_general=False) if "image_id" in query else None
             if scene and target is not None:
                 raise invalid("节拍讨论不接受图片目标。")
+            validate_row()
             return json_response(200, service.thread(actor, file_id, row_id, target))
         if method == "DELETE" and len(tail) == 3 and tail[:2] == ["reviews", "comments"]:
             if body or set(query) != {"expected_version"} or len(query["expected_version"]) != 1:
@@ -576,19 +588,10 @@ class ProjectsApi:
             if not re.fullmatch(r"[0-9]{1,19}", raw_version):
                 raise invalid("评论版本无效。")
             version = review_version(int(raw_version))
+            validate_row()
             return json_response(200, service.delete_comment(actor, file_id, row_id, tail[2], version))
         if query:
             raise invalid()
-        if method == "PUT" and len(tail) == 4 and tail[:2] == ["reviews", "comments"] and tail[3] == "resolution":
-            value = object_body(headers, body)
-            if set(value) != {"expected_version", "resolved", "resolution_note"} or type(value["resolved"]) is not bool:
-                raise invalid()
-            note = optional_text(value["resolution_note"], 4000)
-            note = note.strip() if note is not None else None
-            if value["resolved"] and not note:
-                raise invalid("已解决需要填写说明。")
-            return json_response(200, service.resolve_comment(actor, file_id, row_id, tail[2],
-                review_version(value["expected_version"]), value["resolved"], note or None))
         if method == "PUT" and tail == ["reviews", "vote"]:
             if scene:
                 raise invalid("节拍讨论不支持图片投票。")
@@ -596,6 +599,7 @@ class ProjectsApi:
             if set(value) != {"image_id", "verdict"} or value["verdict"] not in ("good", "bad", None):
                 raise invalid()
             image_id = review_target(value["image_id"], allow_general=False)
+            validate_row()
             return json_response(200, service.vote(actor, file_id, row_id, image_id, value["verdict"]))
         if method == "POST" and tail == ["reviews", "comments"]:
             value = object_body(headers, body)
@@ -603,12 +607,14 @@ class ProjectsApi:
                 raise invalid()
             if scene and value["image_id"] is not None:
                 raise invalid("节拍讨论不接受图片目标。")
+            validate_row()
             return json_response(201, service.add_comment(actor, file_id, row_id,
                 review_target(value["image_id"]), review_text(value["text"])))
         if method == "PUT" and len(tail) == 3 and tail[:2] == ["reviews", "comments"]:
             value = object_body(headers, body)
             if set(value) != {"expected_version", "text"}:
                 raise invalid()
+            validate_row()
             return json_response(200, service.edit_comment(actor, file_id, row_id, tail[2],
                 review_version(value["expected_version"]), review_text(value["text"])))
         raise ApiFault(404, "NOT_FOUND", "接口不存在。")
@@ -627,14 +633,6 @@ class ProjectsApi:
         name = filename(headers)
         project = header_id(headers, "x-project-id")
         media_type = headers.get("content-type", "").split(";", 1)[0].strip().lower()
-        if path == ROOT + "/import":
-            operation = header_id(headers, "x-operation-id")
-            revision = header_id(headers, "x-revision-of")
-            if (project is None) != (operation is None) or (revision is not None and project is None):
-                raise invalid("导入需要项目和操作标识。")
-            if not name.lower().endswith(".xlsx") or media_type not in {XLSX, "application/octet-stream"}:
-                raise ApiFault(415, "UNSUPPORTED_TYPE", "项目只接收 .xlsx 文件。")
-            return json_response(201, workflow.import_xlsx_stream(actor, name, source, length, project, operation, revision))
         if path == ROOT + "/image-assets":
             if media_type not in IMAGE_TYPES:
                 raise ApiFault(415, "UNSUPPORTED_TYPE", "请选择 PNG、JPEG 或 WebP 图片。")
@@ -663,12 +661,12 @@ class ProjectsApi:
             lengths = handler.headers.get_all("Content-Length", [])
             if headers.get("transfer-encoding") or len(lengths) > 1:
                 raise invalid("请求长度格式无效。")
-            is_upload = handler.command == "POST" and urlsplit(handler.path).path.rstrip("/") in {
-                ROOT + "/import", ROOT + "/image-assets"}
+            is_upload = handler.command == "POST" and urlsplit(handler.path).path.rstrip("/") == ROOT + "/image-assets"
             if is_upload:
-                self._workflow()  # Fail before reading a large body when adapter is missing.
+                handler.close_connection = True
+                raise ApiFault(409, "TRANSFER_REQUIRED", "请通过统一文件传输服务上传图片。")
             is_scene_update = handler.command == "PUT" and re.fullmatch(
-                re.escape(ROOT) + r"/[^/]+/scene-rows/[^/]+(?:/(?:origins|story-content))?/?", urlsplit(handler.path).path) is not None
+                re.escape(ROOT) + r"/[^/]+/scene-rows/[^/]+(?:/story-content)?/?", urlsplit(handler.path).path) is not None
             limit = self.upload_limit if is_upload else (SCENE_JSON_LIMIT if is_scene_update else JSON_LIMIT)
             raw_length = lengths[0] if lengths else ("0" if handler.command in {"GET", "DELETE"} else "")
             if not re.fullmatch(r"[0-9]{1,12}", raw_length):
@@ -774,8 +772,6 @@ class ProjectsApi:
                 raise invalid("实时更新需要项目范围。")
             project_id = review_target(query["project_id"][0], allow_general=False)
             workflow = self._workflow()
-            if not all(hasattr(workflow, name) for name in ("latest_event_sequence", "wait_for_events")):
-                raise ApiFault(503, "STORAGE_UNAVAILABLE", "实时更新服务暂不可用。")
             workflow.list_files(actor, project_id)  # Project and directory availability are checked before streaming.
             last_event = headers.get("last-event-id")
             after_values = query.get("after")

@@ -24,9 +24,8 @@ public sealed class FeedbackViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Feedback over an already-configured client. Used by the login-free tour, whose
-    /// token is a visitor session: the server reports CanManage false for it, so the
-    /// maintenance controls never appear.
+    /// Feedback over an already-configured client. A visitor session can read only what
+    /// the service allows; the shared workspace disables the feedback entry for read-only users.
     /// </summary>
     public FeedbackViewModel(V2ApiClient api, string sessionToken)
     {

@@ -21,11 +21,6 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
-        // A second entry point, deliberately kept out of the render harness below: this one
-        // talks to a real SMB share and writes to it. Run it against the isolated test share
-        // only, never against production material.
-        if (args.Length == 2 && args[0] == "--nas-acceptance") return RunNasAcceptance(args[1]);
-
         try
         {
             var application = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
@@ -34,8 +29,27 @@ internal static class Program
             PresentationTraceSources.DataBindingSource.Switch.Level = SourceLevels.Error;
             var output = args.Length > 0 ? args[0] : Path.Combine(Path.GetTempPath(), "muying-feedback-render");
             Directory.CreateDirectory(output);
-            var settings = new NasClientSettings(new Uri("https://feedback-test.invalid"), new string('0', 64), @"\\feedback-test.invalid\share");
-            var session = new DriveSession(new V2UserSession { Id = 1, UserName = "fixture-only", Department = "fixture-only", GroupType = "film", Spaces = new() { ["film"] = "/film", ["writing"] = "/writing", ["public"] = "/public", ["personal"] = "/personal/fixture" } }, "fixture-token", new SmbConnectionResult(0));
+            var settings = new NasClientSettings(new Uri("https://feedback-test.invalid"), new string('0', 64));
+            var session = new DriveSession(new V2UserSession { Id = 1, UserName = "fixture-only", Department = "fixture-only", GroupType = "film", Spaces = new() { ["film"] = "/film", ["writing"] = "/writing", ["public"] = "/public", ["personal"] = "/personal/fixture" } }, "fixture-token");
+            var employeeNamespace = FileClientIdentity.GetEmployeeAgentNamespace(settings.ApiBaseUri, 42);
+            Assert(employeeNamespace == FileClientIdentity.GetEmployeeAgentNamespace(settings.ApiBaseUri, 42), "Employee agent namespace must be stable across sign-ins.");
+            Assert(employeeNamespace != FileClientIdentity.GetEmployeeAgentNamespace(settings.ApiBaseUri, 43), "Different employees must not share a local agent queue.");
+            Assert(employeeNamespace != FileClientIdentity.GetEmployeeAgentNamespace(new Uri("https://other-test.invalid"), 42),
+                "The same employee on a different service must not share a local agent queue.");
+            var syncConfigPath = FileClientIdentity.GetEmployeeSyncConfigPath(settings.ApiBaseUri, 42);
+            Assert(syncConfigPath == FileClientIdentity.GetEmployeeSyncConfigPath(settings.ApiBaseUri, 42), "Employee sync configuration must be stable across sign-ins.");
+            Assert(syncConfigPath != FileClientIdentity.GetEmployeeSyncConfigPath(settings.ApiBaseUri, 43) &&
+                   Path.GetFileName(Path.GetDirectoryName(syncConfigPath)) is not ("42" or "43"),
+                "Different employees must use isolated sync configuration without exposing account IDs in the path.");
+            Assert(syncConfigPath != FileClientIdentity.GetEmployeeSyncConfigPath(new Uri("https://other-test.invalid"), 42),
+                "The same employee on a different service must not reuse sync configuration.");
+            const string visitorToken = "visitor-secret-fixture";
+            var visitorNamespace = FileClientIdentity.GetVisitorAgentNamespace(settings.ApiBaseUri, visitorToken);
+            Assert(visitorNamespace == FileClientIdentity.GetVisitorAgentNamespace(settings.ApiBaseUri, visitorToken), "Visitor namespace must be stable for one visitor session.");
+            Assert(visitorNamespace != FileClientIdentity.GetVisitorAgentNamespace(settings.ApiBaseUri, "another-visitor-session") &&
+                   visitorNamespace != FileClientIdentity.GetVisitorAgentNamespace(new Uri("https://other-test.invalid"), visitorToken) &&
+                   !visitorNamespace.Contains(visitorToken, StringComparison.Ordinal),
+                "Visitor sessions must use distinct namespaces without exposing their bearer tokens.");
             using var model = new FeedbackViewModel(session, settings);
             var item = new FeedbackItem(new string('a', 32), "problem", "upload", "上传暂停后无法继续", "点击继续按钮后，没有恢复上传。\n复现：上传文件、暂停，再点击继续。", "in_progress", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, []);
             model.Items.Add(item);
@@ -46,6 +60,12 @@ internal static class Program
             model.Draft.PrivacyConfirmed = true;
             Assert(model.Draft.SubmitCommand.CanExecute(null), "Valid anonymous draft must be submittable.");
             var bitmap = BitmapSource.Create(64, 32, 96, 96, PixelFormats.Bgra32, null, Enumerable.Repeat((byte)160, 64 * 32 * 4).ToArray(), 64 * 4);
+            var imageItem = new ImageItem(new ImageAsset("asset-fixture", "cover", "image/webp", 64, 32)
+            {
+                CurrentRevisionId = "revision-1"
+            }, bitmap);
+            imageItem.UpdateAsset(imageItem.Asset with { CurrentRevisionId = "revision-2" });
+            Assert(imageItem.Preview is null, "A changed image revision must invalidate its displayed thumbnail.");
             var preview = FeedbackImageService.FromClipboard(bitmap);
             model.Draft.AddImage(preview);
             Assert(!model.Draft.PrivacyConfirmed, "Changing images requires another privacy confirmation.");
@@ -60,13 +80,18 @@ internal static class Program
             model.Draft.IsAdding = false;
             var main = new MainViewModel();
             var workspace = WorkspaceViewModel.ForEmployee(main, session, settings);
-            // The employee workspace always carries all three pages; the nullable
-            // properties exist for the tour, which has neither transfers nor files.
+            // Employee-only pages are loaded in the same workspace shell as read-only sessions.
             typeof(FeedbackViewModel).GetField("_loaded", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(workspace.Feedback, true);
             workspace.Transfers!.Tasks.Add(failed);
             workspace.Files!.SearchText = "fixture-browse-filter";
             var files = workspace.Files;
             var transfers = workspace.Transfers;
+            typeof(FilesViewModel).GetField("_scope", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(files, new LogicalFileScope("project:project-fixture", "project-fixture"));
+            typeof(FilesViewModel).GetField("_isRecycleBin", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(files, true);
+            Assert(files.IsRecycleBin && files.CanRestore,
+                "An employee must be able to restore a soft-deleted file from a project scope.");
             workspace.NavigateCommand.Execute("反馈");
             Assert(ReferenceEquals(workspace.CurrentContent, workspace.Feedback), "Feedback must be a peer workspace.");
             workspace.NavigateCommand.Execute("传输");
@@ -88,7 +113,7 @@ internal static class Program
             }
 
             var tree = ProjectNavigation.ForProject("211953005", "孟婆",
-                [new ProjectNavigation.WorkbookEntry("file-id", "孟婆2_场景节拍表.xlsx")]);
+                [new ProjectNavigation.WorkbookEntry("file-id", "孟婆2_场景节拍表")]);
             Assert(tree.Kind == ProjectNodeKind.Project && tree.Name == "孟婆", "A project row is the project.");
             Assert(tree.Id == "211953005", "A project row is identified by the backend's id, not its name.");
             Assert(tree.IsProject, "Project row IsProject is true.");
@@ -119,36 +144,6 @@ internal static class Program
             Assert(UniqueName.WithoutSuffix("照片 (2).jpg") == "照片.jpg", "The existing suffix is stripped for the next candidate.");
             Assert(UniqueName.WithoutSuffix("照片.jpg") == "照片.jpg", "A plain name is already a base name.");
 
-            // --- what a write may be called ----------------------------------------------
-            foreach (var bad in new[]
-                     {
-                         "", "   ", ".", "..", "a\\b", "a/b", "a:b", "a*b", "a?b", "a\"b", "a<b", "a>b", "a|b",
-                         "CON", "con.txt", "nul", "LPT1.log", "trailing.", "trailing ", "line\nbreak"
-                     })
-            {
-                var rejected = false;
-                try { SmbSpaceResolver.ValidateNameSegment(bad); }
-                catch (InvalidOperationException) { rejected = true; }
-                Assert(rejected, $"The name '{bad.Replace("\n", "\\n")}' must be refused.");
-            }
-            Assert(SmbSpaceResolver.ValidateNameSegment("正常的名字 (2).jpg") == "正常的名字 (2).jpg",
-                "An ordinary name passes through unchanged.");
-
-            // --- where a write may land ---------------------------------------------------
-            var resolver = new SmbSpaceResolver(settings, session.User);
-            var departmentScope = resolver.ResolveScope(DriveSpaceKind.Department);
-            var department = departmentScope.Root;
-            Assert(resolver.IsWithinSpace(departmentScope, department), "The space root is inside itself.");
-            Assert(resolver.RequireWritablePath(departmentScope, Path.Combine(department, "素材", "a.png")).Length > 0,
-                "A path inside the space is a valid write target.");
-            var walkedOut = false;
-            try { resolver.RequireWritablePath(departmentScope, Path.Combine(department, "..", "elsewhere")); }
-            catch (InvalidOperationException) { walkedOut = true; }
-            Assert(walkedOut, "A path that walks out of the space must be refused.");
-            // The link walk must not reject an ordinary path, or browsing would break the
-            // moment it was added to the read side.
-            SmbSpaceResolver.EnsureNoReparsePoints(department);
-
             // --- what a folder selection expands to ---------------------------------------
             var walkRoot = Path.Combine(Path.GetTempPath(), "muying-walk-" + Guid.NewGuid().ToString("N"));
             var chosen = Path.Combine(walkRoot, "素材");
@@ -164,12 +159,36 @@ internal static class Program
                 "An empty folder is still in the plan; otherwise the uploaded shape is not the chosen shape.");
             Directory.Delete(walkRoot, recursive: true);
 
-            // The tour renders the same FilesView from a different view model, and WPF binds
-            // against the runtime type rather than IFileBrowser — so rendering it here is the
-            // only thing that catches a member the employee side has and the tour does not.
-            // Its constructor is offline; only InitializeAsync talks to the API.
+            // A visitor uses the standard file browser with a read-only DriveSession.
+            // Construct it offline so rendering verifies its hidden mutation affordances.
             var visitorApi = new V2ApiClient(new V2ApiClientOptions(new Uri("https://feedback-test.invalid"), new string('0', 64)));
-            var visitor = new VisitorViewModel(main, visitorApi);
+            var visitorSession = new DriveSession(
+                new V2UserSession { Id = 0, UserName = "访客", Department = "只读访问", GroupType = "visitor" },
+                visitorToken);
+            var visitorAgent = new RustTransferAgentClient(visitorNamespace, userSid: "S-1-5-21-render-harness");
+            var visitorTransfers = new TransferViewModel(visitorApi, visitorSession, settings, visitorAgent,
+                Guid.NewGuid().ToString("D"));
+            var visitor = new FilesViewModel(visitorApi, visitorSession, visitorTransfers, visitorAgent,
+                Guid.NewGuid().ToString("D"));
+            var readOnlyWorkspace = WorkspaceViewModel.ForSession(main, visitorSession, settings);
+            var readOnlyNavKeys = readOnlyWorkspace.NavigationItems.Select(item => item.Key).ToArray();
+            Assert(readOnlyNavKeys.SequenceEqual(navKeys),
+                "Read-only visitors use the same workspace navigation as employees.");
+            Assert(readOnlyWorkspace.NavigationItems.Where(item => item.Key is "个人空间" or "同步" or "反馈")
+                    .All(item => !item.IsEnabled),
+                "A read-only session sees the common navigation but cannot open personal, sync, or feedback features.");
+            Assert(readOnlyWorkspace.NavigationItems.Where(item => item.Key is "图片" or "视频" or "传输")
+                    .All(item => item.IsEnabled),
+                "A read-only session can browse shared media and monitor its own transfers.");
+            readOnlyWorkspace.NavigateCommand.Execute("同步");
+            Assert(readOnlyWorkspace.SelectedNavigation == "图片",
+                "Invoking a disabled read-only navigation item has no effect.");
+            typeof(FilesViewModel).GetField("_scope", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(visitor, new LogicalFileScope("project:project-fixture", "project-fixture"));
+            typeof(FilesViewModel).GetField("_isRecycleBin", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(visitor, true);
+            Assert(visitor.IsReadOnly && !visitor.CanShowRecycleBin && !visitor.CanRestore,
+                "A visitor must remain read-only in project scopes.");
 
             foreach (var theme in new[] { "Light", "Dark" })
             {
@@ -180,11 +199,13 @@ internal static class Program
                 workspace.Feedback!.Items.Clear(); workspace.Feedback.Items.Add(item);
                 workspace.NavigateCommand.Execute("反馈");
                 Render(new WorkspaceView { DataContext = workspace }, 1200, 720, 96, Path.Combine(output, $"workspace-{theme}.png"));
+                Render(new WorkspaceView { DataContext = readOnlyWorkspace }, 1200, 720, 96,
+                    Path.Combine(output, $"workspace-readonly-{theme}.png"));
                 workspace.ToggleSidebarCommand.Execute(null);
                 Render(new WorkspaceView { DataContext = workspace }, 900, 600, 96, Path.Combine(output, $"workspace-collapsed-{theme}.png"));
                 workspace.ToggleSidebarCommand.Execute(null);
                 Render(new TransferView { DataContext = workspace.Transfers }, 960, 480, 96, Path.Combine(output, $"transfer-failure-{theme}.png"));
-                Render(new FilesView { DataContext = visitor }, 1100, 680, 96, Path.Combine(output, $"tour-{theme}.png"));
+                Render(new FilesView { DataContext = visitor }, 1100, 680, 96, Path.Combine(output, $"visitor-file-readonly-{theme}.png"));
 
                 // The two dialogs are new windows, and the render harness is what proves
                 // their XAML resolves against the shared theme dictionaries.
@@ -230,7 +251,6 @@ internal static class Program
                 {
                     SceneContext = "第二场 · 夜",
                     CastContext = "孟婆",
-                    LegacyNotes = [new LegacyNote("成员批注一", "这里要停一下。", "F2")],
                     CanEdit = true,
                 });
                 var panel = new SceneDetailsPanel(workbook, "file-fixture", sceneItem, new ResourceDictionary());
@@ -244,7 +264,7 @@ internal static class Program
                 // a refusal must leave the open workbook alone rather than being ignored.
                 var asked = 0;
                 workbook.ConfirmLeaving = () => { asked++; return false; };
-                workbook.OpenAsync(new ProjectFile("file-fixture", "孟婆2_场景节拍表.xlsx", "scene_beats", 1)).GetAwaiter().GetResult();
+                workbook.OpenAsync(new ProjectFile("file-fixture", "孟婆2_场景节拍表", "scene_beats", 1)).GetAwaiter().GetResult();
                 Assert(asked == 1, "Opening a workbook has to ask before it takes the open one away.");
                 Assert(!workbook.IsOpen, "A refused open must not replace what is open.");
                 workbook.ConfirmLeaving = null;
@@ -283,138 +303,17 @@ internal static class Program
                 typeof(FeedbackViewModel).GetProperty(nameof(FeedbackViewModel.IsBusy))!.SetValue(model, false);
                 foreach (var savedItem in saved) model.Items.Add(savedItem);
             }
-            visitor.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            visitor.Dispose();
+            visitorTransfers.DisposeAsync().AsTask().GetAwaiter().GetResult();
             visitorApi.Dispose();
+            readOnlyWorkspace.DisposeAsync().AsTask().GetAwaiter().GetResult();
             Assert(bindingErrors.Messages.Count == 0, string.Join("\n", bindingErrors.Messages));
             workspace.DisposeAsync().AsTask().GetAwaiter().GetResult(); main.Dispose();
-            Console.WriteLine("PASS: draft privacy gate, image limits, anonymous serialization, retained workspace/queue instances, Light/Dark list/detail/form/empty/loading/error rendering, 150%/200% rendering; no binding errors.");
+            Console.WriteLine("PASS: draft privacy gate, image limits, anonymous serialization, common employee/read-only workspace navigation, retained workspace/queue instances, Light/Dark list/detail/form/empty/loading/error rendering, 150%/200% rendering; no binding errors.");
             application.Shutdown();
             return 0;
         }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
-    }
-
-    /// <summary>
-    /// Exercises the write operations against a real SMB share.
-    /// </summary>
-    /// <param name="spaceDirectory">
-    /// The UNC directory to treat as one space, e.g.
-    /// <c>\\NAS\MuYing_ACL_Test\film</c>. The share root and the virtual path are derived
-    /// from it.
-    /// </param>
-    /// <remarks>
-    /// The unit tests cannot reach these: the path checks and the mutations talk to a real
-    /// filesystem, and the failures that matter only appear against a server — a rename
-    /// that lands on the wrong name, a recursive delete that misses a level, a conflict
-    /// that refuses instead of numbering.
-    /// </remarks>
-    private static int RunNasAcceptance(string spaceDirectory)
-    {
-        var failures = 0;
-        void Verify(string name, bool ok, string detail = "")
-        {
-            Console.WriteLine((ok ? "  PASS  " : "  FAIL  ") + name + (detail.Length > 0 ? $"  ({detail})" : ""));
-            if (!ok) failures++;
-        }
-
-        var full = Path.GetFullPath(spaceDirectory);
-        var parent = Path.GetDirectoryName(full);
-        if (parent is null || !Directory.Exists(full))
-        {
-            Console.Error.WriteLine($"The space directory does not exist: {full}");
-            return 1;
-        }
-
-        // The space under test is "film", rooted at the directory given; "public" exists so
-        // that "refuses a path belonging to another space" tests that refusal rather than
-        // dying earlier on a space the fixture never defined.
-        var settings = new NasClientSettings(
-            new Uri("https://nas-acceptance.invalid"), new string('0', 64), parent);
-        var session = new DriveSession(
-            new V2UserSession
-            {
-                Id = 1, UserName = "acceptance", Department = "acceptance", GroupType = "film",
-                Spaces = new() { ["film"] = Path.GetFileName(full), ["public"] = "公共素材" }
-            },
-            "acceptance-token", new SmbConnectionResult(0));
-
-        var spaces = new SmbSpaceResolver(settings, session.User);
-        var mutations = new SmbFileMutations(spaces);
-        // The department scope, resolved once. Everything below works on the scope — a root
-        // plus a policy — so this harness is the same shape as the browser it exercises.
-        var scope = spaces.ResolveScope(DriveSpaceKind.Department);
-        var scratch = Path.Combine(full, "_ops-probe-" + Guid.NewGuid().ToString("N"));
-
-        try
-        {
-            Console.WriteLine($"space: {full}");
-            Console.WriteLine($"scratch: {scratch}");
-
-            Directory.CreateDirectory(scratch);
-            mutations.EnsureDirectoriesAsync(scope, [
-                Path.Combine(scratch, "素材"),
-                Path.Combine(scratch, "素材", "子目录"),
-                Path.Combine(scratch, "素材", "空目录")
-            ]).GetAwaiter().GetResult();
-            Verify("creates nested and empty directories",
-                Directory.Exists(Path.Combine(scratch, "素材", "子目录")) &&
-                Directory.Exists(Path.Combine(scratch, "素材", "空目录")));
-
-            var original = Path.Combine(scratch, "照片.txt");
-            File.WriteAllText(original, "first");
-            var copy = mutations.DuplicateInPlaceAsync(scope, original).GetAwaiter().GetResult();
-            Verify("duplicates beside the original", File.Exists(copy), Path.GetFileName(copy));
-            Verify("the copy is numbered, not named the same",
-                Path.GetFileName(copy) == "照片 (2).txt", Path.GetFileName(copy));
-            Verify("the original is untouched", File.ReadAllText(original) == "first");
-
-            var second = mutations.DuplicateInPlaceAsync(scope, original).GetAwaiter().GetResult();
-            Verify("a second duplicate takes the next number",
-                Path.GetFileName(second) == "照片 (3).txt", Path.GetFileName(second));
-
-            var renamed = mutations.RenameAsync(scope, original, "改名后.txt").GetAwaiter().GetResult();
-            Verify("renames to a free name exactly",
-                Path.GetFileName(renamed) == "改名后.txt" && !File.Exists(original), Path.GetFileName(renamed));
-
-            // The exact number it lands on depends on what is already there, so the property
-            // asserted is the one that matters: it is not the name asked for, it is numbered,
-            // and what it would have landed on is untouched.
-            var collided = mutations.RenameAsync(scope, renamed, "照片 (2).txt").GetAwaiter().GetResult();
-            var collidedName = Path.GetFileName(collided);
-            Verify("a rename onto an existing name is numbered rather than overwriting",
-                collidedName != "照片 (2).txt" && collidedName.StartsWith("照片 (") && collidedName.EndsWith(").txt"),
-                collidedName);
-            Verify("the file it would have overwritten still has its own contents",
-                File.ReadAllText(Path.Combine(scratch, "照片 (2).txt")) == "first");
-
-            File.WriteAllText(Path.Combine(scratch, "素材", "a.txt"), "a");
-            File.WriteAllText(Path.Combine(scratch, "素材", "子目录", "b.txt"), "b");
-            // Four: a.txt, 子目录, 子目录/b.txt, 空目录. Folders count — the point of the
-            // number is to warn about everything that goes, not just the files.
-            var contained = mutations.CountContainedAsync(scope, Path.Combine(scratch, "素材")).GetAwaiter().GetResult();
-            Verify("counts everything under a folder for the confirmation", contained == 4, $"{contained}");
-
-            var escaped = false;
-            try { mutations.DeleteAsync(scope, Path.Combine(full, "..", "Assets", "00_公共素材")); }
-            catch (InvalidOperationException) { escaped = true; }
-            Verify("refuses a path that walks out of the space", escaped);
-
-            var wrongKind = false;
-            try { mutations.DeleteAsync(spaces.ResolveScope(DriveSpaceKind.Public), Path.Combine(scratch, "素材")); }
-            catch (InvalidOperationException) { wrongKind = true; }
-            Verify("refuses a path belonging to another space", wrongKind);
-
-            mutations.DeleteAsync(scope, scratch).GetAwaiter().GetResult();
-            Verify("deletes a folder and everything under it", !Directory.Exists(scratch));
-        }
-        finally
-        {
-            try { if (Directory.Exists(scratch)) Directory.Delete(scratch, recursive: true); } catch (IOException) { }
-        }
-
-        Console.WriteLine();
-        Console.WriteLine(failures == 0 ? "NAS ACCEPTANCE PASSED" : $"{failures} NAS CHECK(S) FAILED");
-        return failures == 0 ? 0 : 1;
     }
 
     private static void Render(FrameworkElement content, double width, double height, double dpi, string path)
