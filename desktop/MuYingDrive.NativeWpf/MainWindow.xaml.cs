@@ -50,26 +50,40 @@ public partial class MainWindow : Window
         _isPreparingClose = true;
         try
         {
-            if (!await _viewModel.PrepareForShutdownAsync())
+            try
             {
-                MessageBox.Show(_viewModel.UpdateCloseErrorMessage, "暂时无法退出更新", MessageBoxButton.OK, MessageBoxImage.Information);
-                _isPreparingClose = false;
-                return;
+                await _viewModel.PrepareForShutdownAsync();
+            }
+            catch
+            {
             }
 
-            if (!string.IsNullOrWhiteSpace(_viewModel.UpdateCloseErrorMessage))
-                MessageBox.Show(_viewModel.UpdateCloseErrorMessage, "更新已取消", MessageBoxButton.OK, MessageBoxImage.Warning);
+            try
+            {
+                await _viewModel.ShutdownAsync();
+            }
+            catch
+            {
+            }
 
-            await _viewModel.ShutdownAsync();
-            if (_viewModel.HasPreparedUpdateHandoff && !_viewModel.LaunchPreparedUpdater())
-                MessageBox.Show("更新程序无法启动。当前版本仍保留，下次启动沐影盘后可以重试更新。", "更新未启动", MessageBoxButton.OK, MessageBoxImage.Warning);
+            if (_viewModel.HasPreparedUpdateHandoff)
+            {
+                try
+                {
+                    _viewModel.LaunchPreparedUpdater();
+                }
+                catch
+                {
+                }
+            }
+        }
+        catch
+        {
+        }
+        finally
+        {
             _allowClose = true;
             Close();
-        }
-        catch (Exception)
-        {
-            MessageBox.Show("关闭时无法安全保存所有传输进度。沐影盘仍保持打开，请稍后重试。", "暂时无法退出", MessageBoxButton.OK, MessageBoxImage.Warning);
-            _isPreparingClose = false;
         }
     }
 

@@ -2,7 +2,10 @@ using System.IO;
 
 namespace MuYingDrive.ProjectWorkbooks;
 
-public sealed record ProjectInfo(string Id, string Name);
+public sealed record ProjectInfo(string Id, string Name)
+{
+    public override string ToString() => Name;
+}
 public sealed record ProjectFile(string Id, string Name, string TemplateKind, long Version)
 {
     public long NameVersion { get; init; } = 1;

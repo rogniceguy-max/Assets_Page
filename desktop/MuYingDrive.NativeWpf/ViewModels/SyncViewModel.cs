@@ -255,52 +255,66 @@ public sealed class SyncViewModel : ObservableObject, IDisposable
 
     private void ToggleSync()
     {
-        if (_syncService == null) return;
-
-        if (_syncService.IsWatching)
+        try
         {
-            _syncService.Stop();
+            if (_syncService == null) return;
+
+            if (_syncService.IsWatching)
+            {
+                _syncService.Stop();
+                ValidationMessage = string.Empty;
+                return;
+            }
+
+            if (SelectedProject == null)
+            {
+                ValidationMessage = "请先选择需要同步的项目。";
+                return;
+            }
+
+            var selectedEpisodes = Episodes.Where(e => e.IsSelected).ToList();
+            if (selectedEpisodes.Count == 0)
+            {
+                ValidationMessage = "请至少勾选一个集数。";
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(LocalDirectory))
+            {
+                ValidationMessage = "请先选择剪辑电脑本地目录。";
+                return;
+            }
+
             ValidationMessage = string.Empty;
-            return;
+            _syncService.Start(SelectedProject.Name, selectedEpisodes, LocalDirectory);
+            SaveConfig();
         }
-
-        if (SelectedProject == null)
+        catch (Exception ex)
         {
-            ValidationMessage = "请先选择需要同步的项目。";
-            return;
+            ValidationMessage = $"开启同步出错: {ex.Message}";
         }
-
-        var selectedEpisodes = Episodes.Where(e => e.IsSelected).ToList();
-        if (selectedEpisodes.Count == 0)
-        {
-            ValidationMessage = "请至少勾选一个集数。";
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(LocalDirectory))
-        {
-            ValidationMessage = "请先选择剪辑电脑本地目录。";
-            return;
-        }
-
-        ValidationMessage = string.Empty;
-        _syncService.Start(SelectedProject.Name, selectedEpisodes, LocalDirectory);
-        SaveConfig();
     }
 
     private async Task SyncNowAsync()
     {
-        if (_syncService == null || SelectedProject == null) return;
-        var selectedEpisodes = Episodes.Where(e => e.IsSelected).ToList();
-        if (selectedEpisodes.Count == 0 || string.IsNullOrWhiteSpace(LocalDirectory)) return;
+        try
+        {
+            if (_syncService == null || SelectedProject == null) return;
+            var selectedEpisodes = Episodes.Where(e => e.IsSelected).ToList();
+            if (selectedEpisodes.Count == 0 || string.IsNullOrWhiteSpace(LocalDirectory)) return;
 
-        if (!_syncService.IsWatching)
-        {
-            _syncService.Start(SelectedProject.Name, selectedEpisodes, LocalDirectory);
+            if (!_syncService.IsWatching)
+            {
+                _syncService.Start(SelectedProject.Name, selectedEpisodes, LocalDirectory);
+            }
+            else
+            {
+                await _syncService.SyncNowAsync();
+            }
         }
-        else
+        catch (Exception ex)
         {
-            await _syncService.SyncNowAsync();
+            ValidationMessage = $"同步出错: {ex.Message}";
         }
     }
 

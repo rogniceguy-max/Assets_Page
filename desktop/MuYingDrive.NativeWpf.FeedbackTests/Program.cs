@@ -97,6 +97,8 @@ internal static class Program
                 "A workbook row carries the file id the document route takes.");
             Assert(tree.Children.All(child => child.ProjectId == "211953005"),
                 "Every row knows which project it belongs to.");
+            Assert(new ProjectInfo("211953005", "孟婆").ToString() == "孟婆",
+                "ProjectInfo.ToString() must return only Name.");
 
             // --- the names a duplicate gets ---------------------------------------------
             Assert(UniqueName.WithSuffix("照片.jpg", 2) == "照片 (2).jpg", "A duplicate is numbered before its extension.");

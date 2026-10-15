@@ -66,8 +66,14 @@
                         <TextBlock Text="选择项目" FontSize="{StaticResource Typography.FontSize.SmallTitle}" FontWeight="SemiBold"
                                    Foreground="{DynamicResource Brush.Text.Primary}" Margin="0,0,0,12" />
                         <ComboBox ItemsSource="{Binding Projects}" SelectedItem="{Binding SelectedProject}"
-                                  DisplayMemberPath="Name" MinWidth="280" MaxWidth="380" HorizontalAlignment="Left"
-                                  AutomationProperties.Name="选择项目" />
+                                  MinWidth="280" MaxWidth="380" HorizontalAlignment="Left"
+                                  AutomationProperties.Name="选择项目">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
                     </StackPanel>
                 </Border>
 

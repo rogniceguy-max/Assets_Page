@@ -21,6 +21,7 @@ public sealed class EpisodeSyncService : ObservableObject, IDisposable
     private readonly string _shareRoot;
     private readonly SemaphoreSlim _syncLock = new(1, 1);
     private readonly HashSet<string> _suppressedDeletes = new(StringComparer.OrdinalIgnoreCase);
+    private volatile bool _isInternalSyncing;
 
     private FileSystemWatcher? _watcher;
     private Timer? _periodicTimer;
@@ -62,43 +63,57 @@ public sealed class EpisodeSyncService : ObservableObject, IDisposable
     {
         Stop();
 
-        _currentProjectName = projectName;
-        _currentEpisodes = episodes.Where(e => e.IsSelected).ToList();
-        _currentLocalRoot = ResolveLocalProjectRoot(localDirectory, projectName);
-
-        if (string.IsNullOrWhiteSpace(_currentProjectName) || _currentEpisodes.Count == 0 || string.IsNullOrWhiteSpace(_currentLocalRoot))
+        try
         {
-            StatusText = "未开启同步";
-            return;
-        }
+            _currentProjectName = projectName;
+            _currentEpisodes = episodes.Where(e => e.IsSelected).ToList();
+            _currentLocalRoot = ResolveLocalProjectRoot(localDirectory, projectName);
 
-        Directory.CreateDirectory(_currentLocalRoot);
-
-        _watcher = new FileSystemWatcher(_currentLocalRoot)
-        {
-            IncludeSubdirectories = true,
-            NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.CreationTime,
-            EnableRaisingEvents = true
-        };
-
-        _watcher.Created += OnLocalFileCreatedOrChanged;
-        _watcher.Changed += OnLocalFileCreatedOrChanged;
-        _watcher.Deleted += OnLocalFileDeleted;
-        _watcher.Renamed += OnLocalFileRenamed;
-
-        IsWatching = true;
-
-        // Trigger immediate sync
-        _ = SyncNowAsync();
-
-        // Check NAS updates periodically every 6 seconds
-        _periodicTimer = new Timer(_ =>
-        {
-            if (IsWatching && !IsSyncing)
+            if (string.IsNullOrWhiteSpace(_currentProjectName) || _currentEpisodes.Count == 0 || string.IsNullOrWhiteSpace(_currentLocalRoot))
             {
-                _ = SyncNowAsync(silent: true);
+                StatusText = "未开启同步";
+                return;
             }
-        }, null, TimeSpan.FromSeconds(6), TimeSpan.FromSeconds(6));
+
+            Directory.CreateDirectory(_currentLocalRoot);
+
+            _watcher = new FileSystemWatcher(_currentLocalRoot)
+            {
+                IncludeSubdirectories = true,
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.CreationTime
+            };
+
+            _watcher.Created += OnLocalFileCreatedOrChanged;
+            _watcher.Changed += OnLocalFileCreatedOrChanged;
+            _watcher.Deleted += OnLocalFileDeleted;
+            _watcher.Renamed += OnLocalFileRenamed;
+            _watcher.EnableRaisingEvents = true;
+
+            IsWatching = true;
+
+            // Trigger immediate sync
+            _ = SyncNowAsync();
+
+            // Check NAS updates periodically every 6 seconds
+            _periodicTimer = new Timer(_ =>
+            {
+                try
+                {
+                    if (IsWatching && !IsSyncing)
+                    {
+                        _ = SyncNowAsync(silent: true);
+                    }
+                }
+                catch
+                {
+                }
+            }, null, TimeSpan.FromSeconds(6), TimeSpan.FromSeconds(6));
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"启动同步失败: {ex.Message}";
+            Stop();
+        }
     }
 
     /// <summary>
@@ -107,20 +122,29 @@ public sealed class EpisodeSyncService : ObservableObject, IDisposable
     public void Stop()
     {
         IsWatching = false;
-        if (_watcher != null)
+        try
         {
-            _watcher.EnableRaisingEvents = false;
-            _watcher.Created -= OnLocalFileCreatedOrChanged;
-            _watcher.Changed -= OnLocalFileCreatedOrChanged;
-            _watcher.Deleted -= OnLocalFileDeleted;
-            _watcher.Renamed -= OnLocalFileRenamed;
-            _watcher.Dispose();
-            _watcher = null;
-        }
+            if (_watcher != null)
+            {
+                _watcher.EnableRaisingEvents = false;
+                _watcher.Created -= OnLocalFileCreatedOrChanged;
+                _watcher.Changed -= OnLocalFileCreatedOrChanged;
+                _watcher.Deleted -= OnLocalFileDeleted;
+                _watcher.Renamed -= OnLocalFileRenamed;
+                _watcher.Dispose();
+                _watcher = null;
+            }
 
-        _periodicTimer?.Dispose();
-        _periodicTimer = null;
-        StatusText = "未开启同步";
+            _periodicTimer?.Dispose();
+            _periodicTimer = null;
+        }
+        catch
+        {
+        }
+        finally
+        {
+            StatusText = "未开启同步";
+        }
     }
 
     /// <summary>
@@ -137,6 +161,7 @@ public sealed class EpisodeSyncService : ObservableObject, IDisposable
         try
         {
             IsSyncing = true;
+            _isInternalSyncing = true;
             var totalSynchronized = 0;
 
             foreach (var episode in _currentEpisodes)
@@ -252,6 +277,7 @@ public sealed class EpisodeSyncService : ObservableObject, IDisposable
         }
         finally
         {
+            _isInternalSyncing = false;
             IsSyncing = false;
             _syncLock.Release();
         }
@@ -259,48 +285,120 @@ public sealed class EpisodeSyncService : ObservableObject, IDisposable
 
     private async void OnLocalFileCreatedOrChanged(object sender, FileSystemEventArgs e)
     {
-        if (!IsWatching || !File.Exists(e.FullPath)) return;
-        var ext = Path.GetExtension(e.FullPath);
-        if (!VideoExtensions.Contains(ext)) return;
-
-        var rel = Path.GetRelativePath(_currentLocalRoot, e.FullPath);
-        var parts = rel.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length < 3) return;
-
-        var episodeName = parts[0];
-        var subFolder = parts[1];
-        var fileName = parts[2];
-
-        // Ensure file is ready
-        if (!await WaitForFileReadyAsync(e.FullPath)) return;
-
-        if (subFolder.Equals("成片", StringComparison.OrdinalIgnoreCase))
+        try
         {
-            var nasFinalDir = Path.Combine(_shareRoot, "项目", _currentProjectName, episodeName, "成片");
-            Directory.CreateDirectory(nasFinalDir);
-            var nasDest = Path.Combine(nasFinalDir, fileName);
-            if (NeedsCopy(e.FullPath, nasDest))
+            if (!IsWatching || _isInternalSyncing || string.IsNullOrEmpty(e.FullPath)) return;
+            if (!File.Exists(e.FullPath)) return;
+            var ext = Path.GetExtension(e.FullPath);
+            if (!VideoExtensions.Contains(ext)) return;
+
+            var rel = Path.GetRelativePath(_currentLocalRoot, e.FullPath);
+            var parts = rel.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 3) return;
+
+            var episodeName = parts[0];
+            var subFolder = parts[1];
+            var fileName = parts[2];
+
+            // Ensure file is ready
+            if (!await WaitForFileReadyAsync(e.FullPath)) return;
+            if (!IsWatching || _isInternalSyncing) return;
+
+            if (subFolder.Equals("成片", StringComparison.OrdinalIgnoreCase))
             {
-                StatusText = "正在同步 1 个文件...";
-                await CopyFileAsync(e.FullPath, nasDest);
-                StatusText = "已同步最新";
+                if (string.IsNullOrWhiteSpace(_shareRoot)) return;
+                var nasFinalDir = Path.Combine(_shareRoot, "项目", _currentProjectName, episodeName, "成片");
+                Directory.CreateDirectory(nasFinalDir);
+                var nasDest = Path.Combine(nasFinalDir, fileName);
+                if (NeedsCopy(e.FullPath, nasDest))
+                {
+                    StatusText = "正在同步 1 个文件...";
+                    await CopyFileAsync(e.FullPath, nasDest);
+                    StatusText = "已同步最新";
+                }
+                return;
             }
-            return;
-        }
 
-        if (subFolder.EndsWith("beat", StringComparison.OrdinalIgnoreCase))
-        {
-            var beatNum = NormalizeBeatNum(subFolder);
-            var episode = _currentEpisodes.FirstOrDefault(ep => ep.Name.Equals(episodeName, StringComparison.OrdinalIgnoreCase));
-            if (episode == null) return;
-
-            var nasBeatDir = Path.Combine(_shareRoot, "项目", _currentProjectName, episodeName, $"第{beatNum}beat");
-            Directory.CreateDirectory(nasBeatDir);
-            var nasDest = Path.Combine(nasBeatDir, fileName);
-            if (NeedsCopy(e.FullPath, nasDest))
+            if (subFolder.EndsWith("beat", StringComparison.OrdinalIgnoreCase))
             {
-                StatusText = "正在同步 1 个文件...";
-                await CopyFileAsync(e.FullPath, nasDest);
+                if (string.IsNullOrWhiteSpace(_shareRoot)) return;
+                var beatNum = NormalizeBeatNum(subFolder);
+                var episode = _currentEpisodes.FirstOrDefault(ep => ep.Name.Equals(episodeName, StringComparison.OrdinalIgnoreCase));
+                if (episode == null) return;
+
+                var nasBeatDir = Path.Combine(_shareRoot, "项目", _currentProjectName, episodeName, $"第{beatNum}beat");
+                Directory.CreateDirectory(nasBeatDir);
+                var nasDest = Path.Combine(nasBeatDir, fileName);
+                if (NeedsCopy(e.FullPath, nasDest))
+                {
+                    StatusText = "正在同步 1 个文件...";
+                    await CopyFileAsync(e.FullPath, nasDest);
+
+                    try
+                    {
+                        var doc = await _service.OpenAsync(episode.FileId);
+                        var sheet = doc.Sheets.FirstOrDefault(s => s.Kind == "scene_review" || s.SceneRows.Count > 0);
+                        if (sheet != null)
+                        {
+                            var row = sheet.SceneRows.FirstOrDefault(r =>
+                                NormalizeBeatNum(!string.IsNullOrWhiteSpace(r.BeatNumber) ? r.BeatNumber : r.SceneNumber) == beatNum);
+
+                            if (row == null)
+                            {
+                                row = await _service.CreateSceneRowAsync(doc.File.Id, sheet.Id);
+                                await _service.UpdateSceneRowAsync(doc.File.Id, row.Id, new UpdateSceneRowRequest
+                                {
+                                    BeatNumber = beatNum,
+                                    SceneNumber = beatNum
+                                });
+                            }
+
+                            var videoItem = new VideoItem(Guid.NewGuid().ToString("D"), fileName, nasDest);
+                            await _service.UpdateSceneRowAsync(doc.File.Id, row.Id, new UpdateSceneRowRequest
+                            {
+                                VideoAction = "add",
+                                Video = videoItem
+                            });
+                        }
+                    }
+                    catch
+                    {
+                    }
+
+                    StatusText = "已同步最新";
+                }
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private async void OnLocalFileDeleted(object sender, FileSystemEventArgs e)
+    {
+        try
+        {
+            if (!IsWatching || _isInternalSyncing || string.IsNullOrEmpty(e.FullPath)) return;
+
+            lock (_suppressedDeletes)
+            {
+                if (_suppressedDeletes.Remove(e.FullPath)) return;
+            }
+
+            var rel = Path.GetRelativePath(_currentLocalRoot, e.FullPath);
+            var parts = rel.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 3) return;
+
+            var episodeName = parts[0];
+            var subFolder = parts[1];
+            var fileName = parts[2];
+
+            // Soft deletion protection for beat videos
+            if (subFolder.EndsWith("beat", StringComparison.OrdinalIgnoreCase))
+            {
+                var beatNum = NormalizeBeatNum(subFolder);
+                var episode = _currentEpisodes.FirstOrDefault(ep => ep.Name.Equals(episodeName, StringComparison.OrdinalIgnoreCase));
+                if (episode == null) return;
 
                 try
                 {
@@ -311,94 +409,45 @@ public sealed class EpisodeSyncService : ObservableObject, IDisposable
                         var row = sheet.SceneRows.FirstOrDefault(r =>
                             NormalizeBeatNum(!string.IsNullOrWhiteSpace(r.BeatNumber) ? r.BeatNumber : r.SceneNumber) == beatNum);
 
-                        if (row == null)
+                        if (row != null)
                         {
-                            row = await _service.CreateSceneRowAsync(doc.File.Id, sheet.Id);
+                            // Soft delete via discard action, NAS physical file remains 100% intact!
                             await _service.UpdateSceneRowAsync(doc.File.Id, row.Id, new UpdateSceneRowRequest
                             {
-                                BeatNumber = beatNum,
-                                SceneNumber = beatNum
+                                VideoAction = "discard",
+                                VideoName = fileName
+                            });
+
+                            StatusText = "已将误删/删除文件转入废片库，NAS原文件已保留";
+                            _ = Task.Delay(3000).ContinueWith(_ =>
+                            {
+                                if (StatusText == "已将误删/删除文件转入废片库，NAS原文件已保留")
+                                    StatusText = "已同步最新";
                             });
                         }
-
-                        var videoItem = new VideoItem(Guid.NewGuid().ToString("D"), fileName, nasDest);
-                        await _service.UpdateSceneRowAsync(doc.File.Id, row.Id, new UpdateSceneRowRequest
-                        {
-                            VideoAction = "add",
-                            Video = videoItem
-                        });
                     }
                 }
                 catch
                 {
                 }
-
-                StatusText = "已同步最新";
             }
         }
-    }
-
-    private async void OnLocalFileDeleted(object sender, FileSystemEventArgs e)
-    {
-        if (!IsWatching) return;
-
-        lock (_suppressedDeletes)
+        catch
         {
-            if (_suppressedDeletes.Remove(e.FullPath)) return;
-        }
-
-        var rel = Path.GetRelativePath(_currentLocalRoot, e.FullPath);
-        var parts = rel.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length < 3) return;
-
-        var episodeName = parts[0];
-        var subFolder = parts[1];
-        var fileName = parts[2];
-
-        // Soft deletion protection for beat videos
-        if (subFolder.EndsWith("beat", StringComparison.OrdinalIgnoreCase))
-        {
-            var beatNum = NormalizeBeatNum(subFolder);
-            var episode = _currentEpisodes.FirstOrDefault(ep => ep.Name.Equals(episodeName, StringComparison.OrdinalIgnoreCase));
-            if (episode == null) return;
-
-            try
-            {
-                var doc = await _service.OpenAsync(episode.FileId);
-                var sheet = doc.Sheets.FirstOrDefault(s => s.Kind == "scene_review" || s.SceneRows.Count > 0);
-                if (sheet != null)
-                {
-                    var row = sheet.SceneRows.FirstOrDefault(r =>
-                        NormalizeBeatNum(!string.IsNullOrWhiteSpace(r.BeatNumber) ? r.BeatNumber : r.SceneNumber) == beatNum);
-
-                    if (row != null)
-                    {
-                        // Soft delete via discard action, NAS physical file remains 100% intact!
-                        await _service.UpdateSceneRowAsync(doc.File.Id, row.Id, new UpdateSceneRowRequest
-                        {
-                            VideoAction = "discard",
-                            VideoName = fileName
-                        });
-
-                        StatusText = "已将误删/删除文件转入废片库，NAS原文件已保留";
-                        _ = Task.Delay(3000).ContinueWith(_ =>
-                        {
-                            if (StatusText == "已将误删/删除文件转入废片库，NAS原文件已保留")
-                                StatusText = "已同步最新";
-                        });
-                    }
-                }
-            }
-            catch
-            {
-            }
         }
     }
 
     private void OnLocalFileRenamed(object sender, RenamedEventArgs e)
     {
-        OnLocalFileDeleted(sender, new FileSystemEventArgs(WatcherChangeTypes.Deleted, Path.GetDirectoryName(e.OldFullPath) ?? "", Path.GetFileName(e.OldFullPath)));
-        OnLocalFileCreatedOrChanged(sender, new FileSystemEventArgs(WatcherChangeTypes.Created, Path.GetDirectoryName(e.FullPath) ?? "", Path.GetFileName(e.FullPath)));
+        try
+        {
+            if (!IsWatching || _isInternalSyncing) return;
+            OnLocalFileDeleted(sender, new FileSystemEventArgs(WatcherChangeTypes.Deleted, Path.GetDirectoryName(e.OldFullPath) ?? "", Path.GetFileName(e.OldFullPath)));
+            OnLocalFileCreatedOrChanged(sender, new FileSystemEventArgs(WatcherChangeTypes.Created, Path.GetDirectoryName(e.FullPath) ?? "", Path.GetFileName(e.FullPath)));
+        }
+        catch
+        {
+        }
     }
 
     private static string ResolveLocalProjectRoot(string localDirectory, string projectName)
