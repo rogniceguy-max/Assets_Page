@@ -15,7 +15,7 @@
 
                     <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                         <Border Width="30" Height="30" CornerRadius="8" Background="{DynamicResource Brush.Surface.Subtle}" Margin="0,0,12,0">
-                            <controls:LucideIcon Icon="File" Width="16" Height="16" Stroke="{DynamicResource Brush.Text.Secondary}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            <controls:LucideIcon Icon="{Binding IconName}" Width="16" Height="16" Stroke="{DynamicResource Brush.Text.Secondary}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
                         <StackPanel VerticalAlignment="Center">
                             <TextBlock Text="{Binding FileName}" FontWeight="Medium" TextTrimming="CharacterEllipsis" />
@@ -100,9 +100,35 @@
                        TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
         </Border>
         <Grid Grid.Row="1">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                <ItemsControl ItemsSource="{Binding Tasks}" ItemTemplate="{StaticResource TransferTaskTemplate}" />
-            </ScrollViewer>
+            <ListBox ItemsSource="{Binding Tasks}" ItemTemplate="{StaticResource TransferTaskTemplate}"
+                     BorderThickness="0" Background="Transparent"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     ScrollViewer.CanContentScroll="True"
+                     VirtualizingPanel.IsVirtualizing="True"
+                     VirtualizingPanel.VirtualizationMode="Recycling">
+                <ListBox.ItemsPanel>
+                    <ItemsPanelTemplate><VirtualizingStackPanel /></ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Padding" Value="0" />
+                        <Setter Property="Margin" Value="0" />
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                        <Setter Property="Focusable" Value="False" />
+                        <Setter Property="Background" Value="Transparent" />
+                        <Setter Property="BorderThickness" Value="0" />
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <ContentPresenter />
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+            </ListBox>
             <Border Background="{DynamicResource Brush.Surface.Canvas}" Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}">
                 <TextBlock Text="暂无传输任务" Foreground="{DynamicResource Brush.Text.Secondary}"
                            HorizontalAlignment="Center" VerticalAlignment="Center" />

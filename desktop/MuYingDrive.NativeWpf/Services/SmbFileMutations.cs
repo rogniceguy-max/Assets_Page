@@ -1,5 +1,7 @@
 namespace MuYingDrive.NativeWpf.Services;
 
+public sealed record FreeNameResolution(string? Name, InvalidOperationException? Error);
+
 /// <summary>
 /// The write half of the SMB share: rename, duplicate, delete, create directories.
 /// </summary>
@@ -41,6 +43,89 @@ public sealed class SmbFileMutations(SmbSpaceResolver spaces)
         {
             var candidate = UniqueName.WithSuffix(safeName, index);
             if (IsFree(directory, candidate, claimed)) return candidate;
+        }
+
+        throw new InvalidOperationException("同名项目过多，无法自动命名。请先整理目标文件夹。");
+    }
+
+    /// <summary>
+    /// Resolves names for a batch without probing the UNC share once per candidate.
+    /// Each destination directory is validated and enumerated once; names reserved earlier
+    /// in the same directory are included so duplicate inputs receive distinct suffixes.
+    /// </summary>
+    /// <remarks>
+    /// Filesystem enumeration and path validation against SMB are blocking. Keep the whole
+    /// preflight on a worker thread so a large selection does not freeze the WPF dispatcher.
+    /// Invalid individual names are returned alongside their item instead of aborting the
+    /// remaining batch. The transfer engine still refuses an existing destination at write
+    /// time, closing the race between this advisory name choice and the actual upload.
+    /// </remarks>
+    public Task<IReadOnlyList<FreeNameResolution>> ResolveFreeNamesAsync(
+        SpaceScope scope,
+        IReadOnlyList<(string Directory, string DesiredName)> requests,
+        CancellationToken cancellationToken = default) =>
+        Task.Run<IReadOnlyList<FreeNameResolution>>(() =>
+        {
+            var results = new FreeNameResolution[requests.Count];
+            var availableNamesByDirectory = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+            for (var index = 0; index < requests.Count; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var (directory, desiredName) = requests[index];
+
+                string safeName;
+                try
+                {
+                    safeName = SmbSpaceResolver.ValidateNameSegment(desiredName);
+                }
+                catch (InvalidOperationException exception)
+                {
+                    results[index] = new FreeNameResolution(null, exception);
+                    continue;
+                }
+
+                if (!availableNamesByDirectory.TryGetValue(directory, out var availableNames))
+                {
+                    var verifiedDirectory = _spaces.RequireWritablePath(scope, directory);
+                    availableNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    try
+                    {
+                        foreach (var entry in Directory.EnumerateFileSystemEntries(verifiedDirectory))
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            availableNames.Add(Path.GetFileName(entry));
+                        }
+                    }
+                    catch (DirectoryNotFoundException)
+                    {
+                        // A missing destination is empty; the transfer engine will create it.
+                    }
+
+                    availableNamesByDirectory.Add(directory, availableNames);
+                }
+
+                try
+                {
+                    results[index] = new FreeNameResolution(ResolveFreeName(safeName, availableNames), null);
+                }
+                catch (InvalidOperationException exception)
+                {
+                    results[index] = new FreeNameResolution(null, exception);
+                }
+            }
+
+            return results;
+        }, cancellationToken);
+
+    private static string ResolveFreeName(string safeName, ISet<string> availableNames)
+    {
+        if (availableNames.Add(safeName)) return safeName;
+
+        for (var index = UniqueName.FirstSuffix; index <= UniqueName.MaxAttempts; index++)
+        {
+            var candidate = UniqueName.WithSuffix(safeName, index);
+            if (availableNames.Add(candidate)) return candidate;
         }
 
         throw new InvalidOperationException("同名项目过多，无法自动命名。请先整理目标文件夹。");
@@ -139,16 +224,17 @@ public sealed class SmbFileMutations(SmbSpaceResolver spaces)
     public Task EnsureDirectoriesAsync(
         SpaceScope scope, IReadOnlyList<string> directories, CancellationToken cancellationToken = default)
     {
-        var verified = directories
-            .Where(directory => !string.IsNullOrWhiteSpace(directory))
-            .Select(directory => _spaces.RequireWritablePath(scope, directory))
-            // Shallowest first: RequireWritablePath walks every existing component, and
-            // creating a parent before its child keeps that walk meaningful.
-            .OrderBy(directory => directory.Length)
-            .ToArray();
-
         return Task.Run(() =>
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            var verified = directories
+                .Where(directory => !string.IsNullOrWhiteSpace(directory))
+                .Select(directory => _spaces.RequireWritablePath(scope, directory))
+                // Shallowest first: RequireWritablePath walks every existing component, and
+                // creating a parent before its child keeps that walk meaningful.
+                .OrderBy(directory => directory.Length)
+                .ToArray();
+
             foreach (var directory in verified)
             {
                 cancellationToken.ThrowIfCancellationRequested();
