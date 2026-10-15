@@ -24,7 +24,7 @@ public partial class ProjectWorkbooksView : UserControl
         Model.PropertyChanged += OnModelPropertyChanged;
         // One guard for every way out: closing the workbook from the page, refreshing it,
         // and the host's project tree opening a different one, which never asks this view.
-        Model.ConfirmLeaving = TryLeaveScenePanel;
+        Model.ConfirmLeaving = TryLeaveDetailsPanel;
         await Model.ExecuteAsync(Model.InitializeAsync);
     }
 
@@ -37,6 +37,7 @@ public partial class ProjectWorkbooksView : UserControl
     {
         if (e.PropertyName != nameof(ProjectWorkbooksViewModel.Document)) return;
         HideScenePanel();
+        HideAssetPanel();
     }
     private void AdoptHostTheme()
     {
@@ -216,7 +217,11 @@ public partial class ProjectWorkbooksView : UserControl
             await Model.ExecuteAsync(() => Model.UpdateImagesAsync(row, row.Row.SelectedImage?.Id, row.Row.CandidateImages.Where(a => a.Id != image.Asset.Id).Select(a => a.Id)));
     }
     private async void OnPreviewSelected(object sender, RoutedEventArgs e)
-    { if (Row(sender) is { Selected: { } image } row) await ReviewAsync(row, image); }
+    {
+        if (Row(sender) is not { } row) return;
+        if (row.Selected != null) await ReviewAsync(row, row.Selected);
+        else if (row.Row.CanEdit) OnPickImages(sender, e);
+    }
     private async void OnPreviewCandidate(object sender, RoutedEventArgs e)
     { if (Row(sender) is { } row && ((FrameworkElement)sender).DataContext is ImageItem image) await ReviewAsync(row, image); }
     private async void OnGeneralReview(object sender, RoutedEventArgs e)
@@ -340,6 +345,8 @@ public partial class ProjectWorkbooksView : UserControl
     }
     private SceneDetailsPanel? _scenePanel;
     private SceneRowItem? _scenePanelItem;
+    private AssetDetailsPanel? _assetPanel;
+    private AssetRowItem? _assetPanelItem;
 
     private async void OnSceneDetails(object sender, RoutedEventArgs e)
     {
@@ -347,15 +354,16 @@ public partial class ProjectWorkbooksView : UserControl
         // Clicking the beat that is already open must not rebuild the panel — rebuilding is
         // how the draft gets dropped, and re-clicking a row is a plausible thing to do.
         if (_scenePanel != null && ReferenceEquals(row, _scenePanelItem)) return;
-        if (!TryLeaveScenePanel()) return;
+        if (!TryLeaveDetailsPanel()) return;
         ShowScenePanel(document.File.Id, row);
         await Model.ExecuteAsync(() => Model.RefreshSceneSummaryAsync(document.File.Id, row));
     }
 
     private void ShowScenePanel(string fileId, SceneRowItem item)
     {
+        HideAssetPanel();
         var panel = new SceneDetailsPanel(Model, fileId, item, Resources);
-        panel.CloseRequested += (_, _) => TryLeaveScenePanel();
+        panel.CloseRequested += (_, _) => TryLeaveDetailsPanel();
         _scenePanel = panel; _scenePanelItem = item;
         ScenePanelContent.Content = panel;
         ScenePanelHost.Visibility = Visibility.Visible;
@@ -364,20 +372,70 @@ public partial class ProjectWorkbooksView : UserControl
     private void HideScenePanel()
     {
         _scenePanel = null; _scenePanelItem = null;
-        ScenePanelContent.Content = null;
-        ScenePanelHost.Visibility = Visibility.Collapsed;
+        if (_assetPanel == null)
+        {
+            ScenePanelContent.Content = null;
+            ScenePanelHost.Visibility = Visibility.Collapsed;
+        }
     }
 
-    /// <summary>
-    /// True when it is safe to take the panel away, which it then does. The panel's own
-    /// TryLeave decides — it refuses while a request is in flight and asks before dropping an
-    /// unsaved draft — and every path that leaves or replaces the workbook has to ask first.
-    /// </summary>
-    private bool TryLeaveScenePanel()
+    private async void OnAssetReviewClick(object sender, RoutedEventArgs e)
     {
-        if (_scenePanel is { } panel && !panel.TryLeave()) return false;
+        if (Row(sender) is not { } row || Model.Document is not { } document) return;
+        if (_assetPanel != null && ReferenceEquals(row, _assetPanelItem)) return;
+        if (!TryLeaveDetailsPanel()) return;
+        ShowAssetPanel(document.File.Id, row);
+        await Model.ExecuteAsync(() => Model.RefreshReviewSummariesAsync(document.File.Id, row));
+    }
+
+    private void ShowAssetPanel(string fileId, AssetRowItem item)
+    {
         HideScenePanel();
+        var panel = new AssetDetailsPanel(Model, fileId, item, Resources);
+        panel.CloseRequested += (_, _) => TryLeaveDetailsPanel();
+        _assetPanel = panel; _assetPanelItem = item;
+        ScenePanelContent.Content = panel;
+        ScenePanelHost.Visibility = Visibility.Visible;
+    }
+
+    private void HideAssetPanel()
+    {
+        _assetPanel = null; _assetPanelItem = null;
+        if (_scenePanel == null)
+        {
+            ScenePanelContent.Content = null;
+            ScenePanelHost.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private bool TryLeaveDetailsPanel()
+    {
+        if (_scenePanel is { } sPanel && !sPanel.TryLeave()) return false;
+        if (_assetPanel is { } aPanel && !aPanel.TryLeave()) return false;
+        HideScenePanel();
+        HideAssetPanel();
         return true;
+    }
+
+    private async void OnAddAssetRow(object sender, RoutedEventArgs e)
+    {
+        if (Model.Document is not { } document || Model.SelectedSheet is not { IsAsset: true }) return;
+        await Model.ExecuteAsync(Model.AddAssetRowAsync);
+    }
+
+    private async void OnAssetFieldLostFocus(object sender, RoutedEventArgs e)
+    {
+        if (Row(sender) is not { } row) return;
+        await Model.ExecuteInlineAsync(() => Model.UpdateAssetFieldsAsync(row));
+    }
+
+    private async void OnAssetFieldKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        if (Row(sender) is not { } row) return;
+        e.Handled = true;
+        if (sender is UIElement ui) ui.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+        await Model.ExecuteInlineAsync(() => Model.UpdateAssetFieldsAsync(row));
     }
     private async void OnSceneDiscussion(object sender, RoutedEventArgs e)
     {

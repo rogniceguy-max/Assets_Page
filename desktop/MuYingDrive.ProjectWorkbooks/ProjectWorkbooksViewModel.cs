@@ -93,12 +93,20 @@ public sealed class AssetRowItem(AssetRow row, ImageItem? selected, IReadOnlyLis
     internal bool SummaryLoaded { get; set; }
     private ReviewSummary? _generalSummary;
     public string GeneralSummaryText => _generalSummary is { } summary ? $"整条记录讨论 · 评论 {summary.CommentCount}" : "整条记录讨论 · 评论 ?";
+    public string ReviewCountText => _generalSummary is { } summary
+        ? (summary.CommentCount > 0 ? $"{summary.CommentCount} 条评论" : "暂无评论")
+        : "评论 ?";
+    public string ReviewSnippetText => _generalSummary is { } summary
+        ? (summary.CommentCount > 0 ? "点击查看或发表讨论" : "点击添加首条批注")
+        : "点击打开评审侧栏";
     public void SetSummaries(IReadOnlyList<ReviewSummary>? summaries)
     {
         _generalSummary = summaries?.FirstOrDefault(s => s.ImageId == null);
         Selected?.SetSummary(summaries?.FirstOrDefault(s => s.ImageId == Selected.Asset.Id));
         foreach (var image in Candidates) image.SetSummary(summaries?.FirstOrDefault(s => s.ImageId == image.Asset.Id));
         Changed(nameof(GeneralSummaryText));
+        Changed(nameof(ReviewCountText));
+        Changed(nameof(ReviewSnippetText));
     }
 }
 public sealed class SceneRowItem(SceneRow row) : ObservableModel
