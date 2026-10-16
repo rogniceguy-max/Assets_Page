@@ -322,7 +322,10 @@ public sealed class MainViewModel : ObservableObject
 
         if (CurrentPage is WorkspaceViewModel { Transfers: { } transfers } && !await transfers.PrepareForUpdateAsync())
         {
-            UpdateCloseErrorMessage = "有传输任务未能安全保存检查点。请稍后重试；沐影盘仍保持打开。";
+            UpdateCloseErrorMessage = string.IsNullOrWhiteSpace(transfers.UpdatePreparationErrorMessage)
+                ? "传输任务未能安全暂停或完成提交。请稍后重试；沐影盘仍保持打开。"
+                : $"无法为更新安全暂停传输任务：{transfers.UpdatePreparationErrorMessage}{Environment.NewLine}沐影盘仍保持打开。";
+            await AbortPreparedUpdateCloseAsync();
             return false;
         }
 
@@ -421,7 +424,10 @@ public sealed class MainViewModel : ObservableObject
         // A visitor workspace carries no transfers, so there is nothing to prepare.
         if (CurrentPage is WorkspaceViewModel { Transfers: { } transfers } && !await transfers.PrepareForUpdateAsync())
         {
-            MessageBox.Show("有传输任务未能安全保存检查点。请稍后重试。", "暂时无法更新", MessageBoxButton.OK, MessageBoxImage.Information);
+            var message = string.IsNullOrWhiteSpace(transfers.UpdatePreparationErrorMessage)
+                ? "传输任务未能安全暂停或完成提交。请稍后重试。"
+                : $"无法为更新安全暂停传输任务：{transfers.UpdatePreparationErrorMessage}";
+            MessageBox.Show(message, "暂时无法更新", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         _installUpdateOnExit = true;

@@ -10,6 +10,9 @@ video), and publishes the derivative through the same transfer service.
 from __future__ import annotations
 
 import hashlib
+import functools
+import hmac
+import http.client
 import json
 import logging
 import os
@@ -32,6 +35,7 @@ from typing import Any, Callable
 
 MAX_JSON_BYTES = 1024 * 1024
 MAX_TRANSFER_CHUNK_BYTES = 64 * 1024 * 1024
+BUNDLED_NAS_CA_SHA256 = "4790b534847c67bce7f3a6b82d66518ee1bc3c37c97dff1edab446445de883d5"
 MAX_ATTEMPTS = 3
 MAX_DOWNLOAD_CACHE_BYTES = 4 * 1024 * 1024 * 1024
 MAX_DOWNLOAD_CACHE_AGE_SECONDS = 14 * 24 * 60 * 60
@@ -58,11 +62,77 @@ class HttpStatusError(WorkerError):
         self.retryable = retryable
 
 
+class CertificatePinMismatch(ssl.SSLError):
+    pass
+
+
 class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, response, code, message, headers, new_url):
         # Authenticated API requests and transfer tickets must not be forwarded to
         # a redirect target. A deployment must configure the final HTTPS URL.
         return None
+
+
+class PinnedHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, *args: Any, expected_pin: bytes | None, **kwargs: Any):
+        # urllib passes this to its HTTPSConnection factory, while http.client's
+        # constructor uses the equivalent setting already held by the SSLContext.
+        kwargs.pop("check_hostname", None)
+        super().__init__(*args, **kwargs)
+        self._expected_pin = expected_pin
+
+    def connect(self) -> None:
+        super().connect()
+        certificate = self.sock.getpeercert(binary_form=True) if self.sock is not None else None
+        if self._expected_pin is not None and not _certificate_matches_pin(certificate, self._expected_pin):
+            self.close()
+            raise CertificatePinMismatch("NAS TLS certificate pin mismatch")
+
+
+class PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, context: ssl.SSLContext, expected_pin: bytes | None):
+        super().__init__(context=context)
+        self._expected_pin = expected_pin
+
+    def https_open(self, request: urllib.request.Request):
+        connection = functools.partial(PinnedHTTPSConnection, expected_pin=self._expected_pin)
+        return self.do_open(connection, request, context=self._context,
+                            check_hostname=self._context.check_hostname)
+
+
+def _parse_sha256_pin(fingerprint: str) -> bytes:
+    normalized = "".join(character for character in fingerprint if character in "0123456789abcdefABCDEF")
+    if len(normalized) != 64 or any(
+            character not in "0123456789abcdefABCDEF:- " for character in fingerprint):
+        raise WorkerError("MUYING_V2_CERT_SHA256 must be a 32-byte SHA-256 fingerprint")
+    try:
+        return bytes.fromhex(normalized)
+    except ValueError as exc:
+        raise WorkerError("MUYING_V2_CERT_SHA256 is invalid") from exc
+
+
+def _certificate_matches_pin(certificate: bytes | None, expected_pin: bytes) -> bool:
+    return certificate is not None and hmac.compare_digest(
+        hashlib.sha256(certificate).digest(), expected_pin)
+
+
+def _create_tls_context(ca_file: Path) -> ssl.SSLContext:
+    try:
+        if ca_file.is_symlink() or not ca_file.is_file() or ca_file.stat().st_size > MAX_JSON_BYTES:
+            raise WorkerError("MUYING_V2_CA_FILE must point to a regular NAS CA certificate")
+        ca_contents = ca_file.read_bytes()
+        if not hmac.compare_digest(hashlib.sha256(ca_contents).hexdigest(), BUNDLED_NAS_CA_SHA256):
+            raise WorkerError("MUYING_V2_CA_FILE does not match the bundled NAS CA certificate")
+        # Load the exact bytes that were fingerprinted so a path replacement
+        # between validation and SSL setup cannot change the trust anchor.
+        tls_context = ssl.create_default_context(cadata=ca_contents.decode("ascii"))
+    except WorkerError:
+        raise
+    except (OSError, ssl.SSLError, UnicodeDecodeError) as exc:
+        raise WorkerError("the configured NAS CA certificate could not be loaded") from exc
+    if tls_context.verify_mode != ssl.CERT_REQUIRED or not tls_context.check_hostname:
+        raise WorkerError("NAS TLS certificate and hostname verification must remain enabled")
+    return tls_context
 
 
 def _json_log(level: int, event: str, **fields: Any) -> None:
@@ -137,9 +207,9 @@ def _read_json(response: Any) -> dict[str, Any]:
     return parsed
 
 
-def _open_request(request: urllib.request.Request, timeout: float = 60.0):
-    context = ssl.create_default_context()
-    opener = urllib.request.build_opener(NoRedirectHandler(), urllib.request.HTTPSHandler(context=context))
+def _open_request(request: urllib.request.Request, timeout: float = 60.0, *,
+                  context: ssl.SSLContext, expected_pin: bytes | None = None):
+    opener = urllib.request.build_opener(NoRedirectHandler(), PinnedHTTPSHandler(context, expected_pin))
     try:
         return opener.open(request, timeout=timeout)
     except urllib.error.HTTPError as exc:
@@ -149,7 +219,12 @@ def _open_request(request: urllib.request.Request, timeout: float = 60.0):
         except Exception:
             pass
         raise HttpStatusError(status, retryable=status in RETRYABLE_HTTP_STATUSES) from None
-    except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as exc:
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, CertificatePinMismatch):
+            raise WorkerError("NAS TLS certificate pin mismatch") from None
+        # Do not include exception text; it can contain the full endpoint URL.
+        raise RetryableError(type(exc.reason).__name__) from None
+    except (TimeoutError, ConnectionError, OSError) as exc:
         # Do not include exception text; it can contain the full endpoint URL.
         raise RetryableError(type(exc).__name__) from None
 
@@ -178,6 +253,8 @@ def _retry(operation: Callable[[], Any], *, attempts: int, event: str,
 class WorkerConfig:
     api_base_uri: str
     token: str
+    tls_context: ssl.SSLContext
+    certificate_sha256: bytes
     worker_id: str
     ffmpeg: str
     ffprobe: str
@@ -192,6 +269,12 @@ class WorkerConfig:
         if not api_base_uri or not token:
             raise WorkerError("MUYING_V2_API_BASE_URI and MUYING_V2_MEDIA_WORKER_TOKEN are required")
         _origin(api_base_uri)
+        certificate_sha256 = _parse_sha256_pin(os.environ.get("MUYING_V2_CERT_SHA256", "").strip())
+        ca_file_value = os.environ.get("MUYING_V2_CA_FILE", "").strip()
+        if not ca_file_value:
+            raise WorkerError("MUYING_V2_CA_FILE must point to the bundled NAS CA certificate")
+        ca_file = Path(ca_file_value).expanduser()
+        tls_context = _create_tls_context(ca_file)
         worker_id = os.environ.get("MUYING_V2_MEDIA_WORKER_ID", "").strip() or str(uuid.uuid4())
         if len(worker_id) > 128 or any(ord(ch) < 32 for ch in worker_id):
             raise WorkerError("MUYING_V2_MEDIA_WORKER_ID is invalid")
@@ -210,7 +293,7 @@ class WorkerConfig:
             os.chmod(temp_root, 0o700)
         except OSError:
             pass
-        return cls(api_base_uri, token, worker_id, ffmpeg, ffprobe, temp_root,
+        return cls(api_base_uri, token, tls_context, certificate_sha256, worker_id, ffmpeg, ffprobe, temp_root,
                    poll_interval=poll_interval, attempts=attempts)
 
 
@@ -244,6 +327,8 @@ def _resolve_binary(env_name: str, candidates: tuple[str, ...], fallbacks: tuple
 class MediaWorker:
     def __init__(self, config: WorkerConfig):
         self.config = config
+        self._tls_context = config.tls_context
+        self._certificate_sha256 = config.certificate_sha256
         self._job_retry_state: dict[str, dict[str, int]] | None = None
         self._job_retry_state_path = config.temp_root / "job-retry-state.json"
 
@@ -329,7 +414,8 @@ class MediaWorker:
 
         def request_once() -> dict[str, Any]:
             request = urllib.request.Request(url, data=body, headers=headers, method=method)
-            with _open_request(request) as response:
+            with _open_request(request, context=self._tls_context,
+                               expected_pin=self._certificate_sha256) as response:
                 return _read_json(response)
 
         return _retry(request_once, attempts=self.config.attempts, event=f"api_{method.lower()}")
@@ -347,7 +433,7 @@ class MediaWorker:
 
         def request_once() -> dict[str, Any]:
             request = urllib.request.Request(url, data=body, headers=headers, method=method)
-            with _open_request(request) as response:
+            with _open_request(request, context=self._tls_context) as response:
                 return _read_json(response)
 
         return _retry(request_once, attempts=self.config.attempts, event=f"transfer_{method.lower()}")
@@ -475,7 +561,7 @@ class MediaWorker:
                     "X-Transfer-Ticket": ticket,
                     "Range": f"bytes={current}-",
                 }, method="GET")
-                with _open_request(request, timeout=180.0) as response:
+                with _open_request(request, timeout=180.0, context=self._tls_context) as response:
                     if response.status != 206:
                         raise WorkerError("transfer service did not honor the requested byte range")
                     content_range = response.headers.get("Content-Range", "")
@@ -671,7 +757,7 @@ class MediaWorker:
                 "Content-Range": f"bytes {start}-{end}/{total}",
                 "X-Chunk-SHA256": chunk_hash,
             }, method="PUT")
-            with _open_request(request, timeout=180.0) as response:
+            with _open_request(request, timeout=180.0, context=self._tls_context) as response:
                 if not 200 <= response.status < 300:
                     raise HttpStatusError(response.status, retryable=response.status in RETRYABLE_HTTP_STATUSES)
                 response.read(1024)

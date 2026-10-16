@@ -1,7 +1,7 @@
 use std::{path::Path, sync::Mutex};
 
 use anyhow::{Context, Result};
-use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
+use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -160,6 +160,39 @@ pub struct SyncBaseline {
 
 pub struct QueueStore {
     connection: Mutex<Connection>,
+}
+
+fn task_snapshot_from_row(row: &Row<'_>) -> rusqlite::Result<TaskSnapshot> {
+    Ok(TaskSnapshot {
+        task_id: row.get(0)?,
+        operation_id: row.get(1)?,
+        kind: row.get(2)?,
+        state: row.get(3)?,
+        display_name: row.get(4)?,
+        folder_group: row.get(5)?,
+        logical_path: row.get(6)?,
+        file_id: row.get(7)?,
+        revision_id: row.get(8)?,
+        object_id: row.get(9)?,
+        expected_version: row.get(10)?,
+        batch_id: row.get(11)?,
+        version: row.get(10)?,
+        bytes_total: row.get::<_, Option<i64>>(12)?.map(|value| value as u64),
+        bytes_done: row.get::<_, i64>(13)? as u64,
+        created_at: row.get(14)?,
+        updated_at: row.get(15)?,
+        attempt: row.get::<_, i64>(16)? as u32,
+        retryable: row.get::<_, bool>(17)?,
+        error_code: row.get(18)?,
+        message: row.get(19)?,
+        source: row.get(20)?,
+        root_id: row.get(21)?,
+        commit_started: row.get(22)?,
+        source_path: row.get(23)?,
+        destination_path: row.get(24)?,
+        scope_id: row.get(25)?,
+        project_id: row.get(26)?,
+    })
 }
 
 impl QueueStore {
@@ -639,8 +672,19 @@ impl QueueStore {
         let connection = self.connection.lock().expect("queue mutex poisoned");
         let changed = connection.execute(
             "UPDATE tasks SET state='paused',control_state='shutdown_paused',updated_at=?2
-             WHERE operation_id=?1 AND state IN ('queued','hashing','waiting_stable','transferring','verifying')
+             WHERE operation_id=?1 AND state IN ('queued','hashing','waiting_stable','transferring','verifying','waiting_network','offline')
                 AND commit_started=0",
+            params![operation_id, unix_now()],
+        )?;
+        Ok(changed > 0)
+    }
+
+    pub fn resume_shutdown_paused(&self, operation_id: &str) -> Result<bool> {
+        let connection = self.connection.lock().expect("queue mutex poisoned");
+        let changed = connection.execute(
+            "UPDATE tasks SET state='queued',control_state=NULL,error_code=NULL,message=NULL,
+                retryable=0,retry_at=0,updated_at=?2
+             WHERE operation_id=?1 AND state='paused' AND control_state='shutdown_paused' AND commit_started=0",
             params![operation_id, unix_now()],
         )?;
         Ok(changed > 0)
@@ -748,39 +792,34 @@ impl QueueStore {
                 source_path,destination_path,scope_id,project_id
              FROM tasks ORDER BY created_at DESC LIMIT 1000",
         )?;
-        let rows = statement.query_map([], |row| {
-            Ok(TaskSnapshot {
-                task_id: row.get(0)?,
-                operation_id: row.get(1)?,
-                kind: row.get(2)?,
-                source: row.get(20)?,
-                state: row.get(3)?,
-                display_name: row.get(4)?,
-                folder_group: row.get(5)?,
-                logical_path: row.get(6)?,
-                file_id: row.get(7)?,
-                revision_id: row.get(8)?,
-                object_id: row.get(9)?,
-                expected_version: row.get(10)?,
-                batch_id: row.get(11)?,
-                version: row.get(10)?,
-                bytes_total: row.get::<_, Option<i64>>(12)?.map(|v| v as u64),
-                bytes_done: row.get::<_, i64>(13)? as u64,
-                created_at: row.get(14)?,
-                updated_at: row.get(15)?,
-                attempt: row.get::<_, i64>(16)? as u32,
-                retryable: row.get::<_, bool>(17)?,
-                error_code: row.get(18)?,
-                message: row.get(19)?,
-                root_id: row.get(21)?,
-                commit_started: row.get(22)?,
-                source_path: row.get(23)?,
-                destination_path: row.get(24)?,
-                scope_id: row.get(25)?,
-                project_id: row.get(26)?,
-            })
-        })?;
+        let rows = statement.query_map([], task_snapshot_from_row)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Returns every task that could prevent a safe app update. Unlike the UI history
+    /// list, this is not truncated to the latest 1000 terminal and active rows.
+    pub fn list_tasks_for_update(&self) -> Result<(usize, Vec<TaskSnapshot>)> {
+        const MAX_UPDATE_TASKS: usize = 1000;
+        const ACTIVE_FILTER: &str = "state NOT IN ('completed','conflict','cancelled','canceled','failed','paused') OR commit_started<>0";
+        let connection = self.connection.lock().expect("queue mutex poisoned");
+        let total: i64 = connection.query_row(
+            &format!("SELECT COUNT(*) FROM tasks WHERE {ACTIVE_FILTER}"),
+            [],
+            |row| row.get(0),
+        )?;
+        let total = usize::try_from(total).unwrap_or(usize::MAX);
+        if total > MAX_UPDATE_TASKS {
+            return Ok((total, Vec::new()));
+        }
+
+        let mut statement = connection.prepare(&format!(
+            "SELECT task_id,operation_id,kind,state,display_name,folder_group,logical_path,file_id,revision_id,object_id,
+                expected_version,batch_parent_id,bytes_total,bytes_done,created_at,updated_at,attempt,retryable,error_code,message,source,root_id,commit_started,
+                source_path,destination_path,scope_id,project_id
+             FROM tasks WHERE {ACTIVE_FILTER} ORDER BY created_at DESC"
+        ))?;
+        let rows = statement.query_map([], task_snapshot_from_row)?;
+        Ok((total, rows.collect::<rusqlite::Result<Vec<_>>>()?))
     }
 
     pub fn claim_next(&self, available_sync_roots: &[String]) -> Result<Option<TaskRecord>> {
@@ -1848,6 +1887,106 @@ mod tests {
             .set_user_task_state(&operation_id, TaskState::Cancelled)
             .unwrap());
         assert!(queue.task_record(&operation_id).unwrap().unwrap().commit_started);
+        drop(queue);
+        remove_test_db(&path);
+    }
+
+    #[test]
+    fn update_task_list_keeps_old_active_and_ambiguous_tasks_visible() {
+        let path = std::env::temp_dir().join(format!("transfer-queue-{}.sqlite", Uuid::new_v4()));
+        let queue = QueueStore::open(&path).unwrap();
+        let old_active_id = Uuid::new_v4().to_string();
+        queue.enqueue(&upload_task(old_active_id.clone(), "wpf", None)).unwrap();
+
+        let paused_id = Uuid::new_v4().to_string();
+        queue.enqueue(&upload_task(paused_id.clone(), "wpf", None)).unwrap();
+        assert!(queue.set_shutdown_paused(&paused_id).unwrap());
+
+        let ambiguous_id = Uuid::new_v4().to_string();
+        queue.enqueue(&upload_task(ambiguous_id.clone(), "wpf", None)).unwrap();
+        assert!(queue.mark_commit_started(&ambiguous_id).unwrap());
+        assert!(queue.update_worker_state(&ambiguous_id, TaskState::Failed, None,
+            Some("network_error"), Some("response lost"), true, 0).unwrap());
+
+        let safe_failed_id = Uuid::new_v4().to_string();
+        queue.enqueue(&upload_task(safe_failed_id.clone(), "wpf", None)).unwrap();
+        assert!(queue.update_worker_state(&safe_failed_id, TaskState::Failed, None,
+            Some("local_error"), Some("not committed"), false, 0).unwrap());
+
+        // More than the regular UI history cap of terminal rows must not hide the older
+        // active task or an unresolved commit from update preparation.
+        for _ in 0..1001 {
+            let terminal_id = Uuid::new_v4().to_string();
+            queue.enqueue(&upload_task(terminal_id.clone(), "wpf", None)).unwrap();
+            assert!(queue.update_worker_state(&terminal_id, TaskState::Completed, Some(1),
+                None, None, false, 0).unwrap());
+        }
+
+        let (total, tasks) = queue.list_tasks_for_update().unwrap();
+        let ids: std::collections::HashSet<_> = tasks.iter().map(|task| task.operation_id.as_str()).collect();
+        assert_eq!(total, 2);
+        assert_eq!(tasks.len(), total);
+        assert!(ids.contains(old_active_id.as_str()));
+        assert!(ids.contains(ambiguous_id.as_str()));
+        assert!(!ids.contains(paused_id.as_str()));
+        assert!(!ids.contains(safe_failed_id.as_str()));
+        assert!(tasks.iter().any(|task| task.operation_id == ambiguous_id && task.commit_started));
+
+        drop(queue);
+        remove_test_db(&path);
+    }
+
+    #[test]
+    fn resume_shutdown_pause_never_overrides_user_pause_or_cancel() {
+        let path = std::env::temp_dir().join(format!("transfer-queue-{}.sqlite", Uuid::new_v4()));
+        let queue = QueueStore::open(&path).unwrap();
+
+        let shutdown_paused_id = Uuid::new_v4().to_string();
+        queue.enqueue(&upload_task(shutdown_paused_id.clone(), "wpf", None)).unwrap();
+        assert!(queue.set_shutdown_paused(&shutdown_paused_id).unwrap());
+        assert!(queue.resume_shutdown_paused(&shutdown_paused_id).unwrap());
+        assert_eq!(queue.task_record(&shutdown_paused_id).unwrap().unwrap().snapshot.state, "queued");
+
+        let user_paused_id = Uuid::new_v4().to_string();
+        queue.enqueue(&upload_task(user_paused_id.clone(), "wpf", None)).unwrap();
+        assert!(queue.set_user_task_state(&user_paused_id, TaskState::Paused).unwrap());
+        assert!(!queue.resume_shutdown_paused(&user_paused_id).unwrap());
+        let user_paused = queue.task_record(&user_paused_id).unwrap().unwrap();
+        assert_eq!(user_paused.snapshot.state, "paused");
+        assert_eq!(user_paused.control_state.as_deref(), Some("user_paused"));
+
+        let cancelled_id = Uuid::new_v4().to_string();
+        queue.enqueue(&upload_task(cancelled_id.clone(), "wpf", None)).unwrap();
+        assert!(queue.set_shutdown_paused(&cancelled_id).unwrap());
+        assert!(queue.set_user_task_state(&cancelled_id, TaskState::Cancelled).unwrap());
+        assert!(!queue.resume_shutdown_paused(&cancelled_id).unwrap());
+        assert_eq!(queue.task_record(&cancelled_id).unwrap().unwrap().snapshot.state, "cancelled");
+
+        drop(queue);
+        remove_test_db(&path);
+    }
+
+    #[test]
+    fn update_safely_pauses_legacy_network_wait_states() {
+        let path = std::env::temp_dir().join(format!("transfer-queue-{}.sqlite", Uuid::new_v4()));
+        let queue = QueueStore::open(&path).unwrap();
+
+        for state in ["waiting_network", "offline"] {
+            let operation_id = Uuid::new_v4().to_string();
+            queue.enqueue(&upload_task(operation_id.clone(), "wpf", None)).unwrap();
+            queue.connection.lock().unwrap().execute(
+                "UPDATE tasks SET state=?2 WHERE operation_id=?1",
+                params![operation_id, state],
+            ).unwrap();
+
+            assert!(queue.set_shutdown_paused(&operation_id).unwrap());
+            let paused = queue.task_record(&operation_id).unwrap().unwrap();
+            assert_eq!(paused.snapshot.state, "paused");
+            assert_eq!(paused.control_state.as_deref(), Some("shutdown_paused"));
+            assert!(queue.resume_shutdown_paused(&operation_id).unwrap());
+            assert_eq!(queue.task_record(&operation_id).unwrap().unwrap().snapshot.state, "queued");
+        }
+
         drop(queue);
         remove_test_db(&path);
     }

@@ -106,7 +106,12 @@ public sealed class ReviewViewModel(IProjectWorkbookService service, string file
         }
         if (ImageId != null)
         {
-            try { Preview = ProjectWorkbooksViewModel.Decode(await service.GetImageContentAsync(ImageId, false)); ImageError = null; }
+            try
+            {
+                var bytes = await service.GetImageContentAsync(ImageId, false);
+                Preview = await Task.Run(() => ProjectWorkbooksViewModel.Decode(bytes));
+                ImageError = null;
+            }
             catch { ImageError = "大图读取失败，可重新加载。"; }
         }
     }

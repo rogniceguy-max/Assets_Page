@@ -26,7 +26,8 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
     private readonly Dictionary<string, TransferAgentTaskSnapshot> _snapshots = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Dictionary<string, TransferAgentTaskSnapshot>> _groups = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TransferTask> _groupTasks = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, TaskCompletionSource<TransferAgentTaskSnapshot>> _transferWaiters = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<TaskCompletionSource<TransferAgentTaskSnapshot>>> _transferWaiters = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _updatePausedTaskIds = new(StringComparer.Ordinal);
     private string _operationErrorMessage = string.Empty;
     private bool _acceptTransferActions = true;
     private bool _initialized;
@@ -35,6 +36,7 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
     private bool _agentEventConnectionFaulted;
     private bool _agentEventConnected;
     private bool _disposed;
+    private string _updatePreparationErrorMessage = string.Empty;
 
     public TransferViewModel(V2ApiClient api, DriveSession session, NasClientSettings settings,
         RustTransferAgentClient agent, string clientId)
@@ -76,6 +78,11 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
             if (SetProperty(ref _operationErrorMessage, value))
                 OnPropertyChanged(nameof(HasOperationError));
         }
+    }
+    public string UpdatePreparationErrorMessage
+    {
+        get => _updatePreparationErrorMessage;
+        private set => SetProperty(ref _updatePreparationErrorMessage, value);
     }
     public bool HasOperationError => !string.IsNullOrWhiteSpace(OperationErrorMessage);
     public bool IsAgentInitializationInProgress
@@ -120,6 +127,7 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
                 await RefreshTasksAsync(cancellationToken).ConfigureAwait(true);
                 _initialized = true;
                 if (_agentEventConnected) HandleAgentConnectionRecovered();
+                await RetryRestoreUpdatePausedTasksAfterReconnectAsync(cancellationToken).ConfigureAwait(true);
             }
             catch (OperationCanceledException) when (_disposed)
             {
@@ -227,15 +235,85 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
         if (FindSnapshotByOperationId(operationId) is { State: "cancelled" or "canceled" } cancelled)
             throw new OperationCanceledException(cancelled.Message ?? "文件上传已取消。");
         var completion = new TaskCompletionSource<TransferAgentTaskSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
-        lock (_transferWaiters) _transferWaiters[operationId] = completion;
+        lock (_transferWaiters)
+        {
+            if (!_transferWaiters.TryGetValue(operationId, out var waiters))
+                _transferWaiters[operationId] = waiters = [];
+            waiters.Add(completion);
+        }
         try
         {
-            await RefreshTasksAsync().ConfigureAwait(false);
-            if (FindSnapshotByOperationId(operationId) is { } refreshed)
-                CompleteTransferWaiter(refreshed);
-            return await completion.Task.WaitAsync(TimeSpan.FromMinutes(30), cancellationToken).ConfigureAwait(false);
+            if (FindSnapshotByOperationId(operationId) is { } cached)
+                CompleteTransferWaiter(cached);
+            if (completion.Task.IsCompleted)
+                return await completion.Task.ConfigureAwait(false);
+
+            var deadline = DateTimeOffset.UtcNow + TimeSpan.FromMinutes(30);
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    var refreshed = await RefreshTaskSnapshotByIdAsync(operationId, cancellationToken).ConfigureAwait(false);
+                    CompleteTransferWaiter(refreshed);
+                }
+                catch (TransferAgentException exception) when (exception.Code == "task_not_found")
+                {
+                    throw new InvalidOperationException("下载任务已不在本机传输队列中，无法自动打开。请重新双击文件。", exception);
+                }
+                catch (Exception exception) when (IsAgentIpcFailure(exception))
+                {
+                    // A lost pipe reply does not undo an enqueue. Keep the waiter alive;
+                    // task_state events and the next durable snapshot can still complete it.
+                    App.Record(exception, "RustTransferAgent.WaitForTransfer.Refresh");
+                }
+
+                var remaining = deadline - DateTimeOffset.UtcNow;
+                if (remaining <= TimeSpan.Zero)
+                    throw new TimeoutException("等待传输完成超时，任务仍保留在传输队列中。可在传输页查看当前状态。");
+                try
+                {
+                    return await completion.Task.WaitAsync(
+                        remaining < TimeSpan.FromSeconds(2) ? remaining : TimeSpan.FromSeconds(2), cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (TimeoutException) when (DateTimeOffset.UtcNow < deadline) { }
+            }
         }
-        finally { lock (_transferWaiters) _transferWaiters.Remove(operationId); }
+        finally
+        {
+            lock (_transferWaiters)
+            {
+                if (_transferWaiters.TryGetValue(operationId, out var waiters))
+                {
+                    waiters.Remove(completion);
+                    if (waiters.Count == 0) _transferWaiters.Remove(operationId);
+                }
+            }
+        }
+    }
+
+    private async Task<TransferAgentTaskSnapshot> RefreshTaskSnapshotByIdAsync(string operationId,
+        CancellationToken cancellationToken)
+    {
+        JsonElement payload;
+        try { payload = await _agent.GetTaskAsync(operationId, cancellationToken).ConfigureAwait(false); }
+        catch (TransferAgentException exception) when (exception.Code == "unknown_command")
+        {
+            // Support a still-running older agent during an in-place client update.
+            await RefreshTasksAsync(cancellationToken).ConfigureAwait(false);
+            return FindSnapshotByOperationId(operationId) ??
+                throw new InvalidOperationException("当前传输代理版本较旧，无法按编号确认此任务状态。请重启沐影盘后重试。", exception);
+        }
+
+        var response = JsonSerializer.Deserialize<TransferAgentTaskResponse>(payload.GetRawText(),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true });
+        var snapshot = response?.Task ?? throw new InvalidDataException("传输代理没有返回指定任务的状态。");
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher is null || _disposed) return snapshot;
+        if (dispatcher.CheckAccess()) ApplySnapshots([snapshot]);
+        else await dispatcher.InvokeAsync(() => ApplySnapshots([snapshot])).Task.WaitAsync(cancellationToken);
+        return snapshot;
     }
 
     public async Task<FolderUploadEnqueueResult> AddFolderUploadAsync(
@@ -396,6 +474,11 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
     public Task<bool> RetryOperationAsync(string operationId) =>
         SendOperationCommandAsync(operationId, "resume", requireRetryable: true);
 
+    public void ReportOperationError(string message)
+    {
+        if (!string.IsNullOrWhiteSpace(message)) SetOperationError(message);
+    }
+
     public Task<bool> ResumeOperationAsync(string operationId) =>
         SendOperationCommandAsync(operationId, "resume", requireRetryable: false);
 
@@ -437,7 +520,24 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
                 System.Windows.Threading.DispatcherPriority.DataBind, timeout.Token).Task
                 .WaitAsync(timeout.Token).ConfigureAwait(false);
             foreach (var id in taskIds)
-                _ = await _agent.RequestAsync("pause_for_shutdown", new { task_id = id }, timeout.Token).ConfigureAwait(false);
+            {
+                try
+                {
+                    _ = await _agent.RequestAsync("pause_for_shutdown", new { task_id = id }, timeout.Token)
+                        .ConfigureAwait(false);
+                }
+                catch (TransferAgentException exception) when (exception.Code == "task_state_changed")
+                {
+                    // The UI snapshot may be stale by the time the durable pause is applied.
+                    // A task that completed, was cancelled, or was paused in the meantime is
+                    // already safe to leave alone; only report a failure if it remains active.
+                    var latest = await RefreshTaskSnapshotByIdAsync(id, timeout.Token).ConfigureAwait(false);
+                    if (!IsSafeToStopForUpdate(latest))
+                        throw new InvalidOperationException(
+                            $"传输任务“{DisplayName(latest)}”在退出前状态发生变化，暂停请求未生效。",
+                            exception);
+                }
+            }
             await RefreshTasksAsync(timeout.Token).ConfigureAwait(false);
             return true;
         }
@@ -484,37 +584,220 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
 
     public async Task ResumeAfterFailedStopAsync(CancellationToken cancellationToken = default)
     {
-        _acceptTransferActions = true;
-        RaiseTransferCommandStates();
-        await _agent.ResumeAfterFailedStopAsync(cancellationToken).ConfigureAwait(false);
+        var acquired = false;
+        try
+        {
+            await _lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            acquired = true;
+            SetAcceptTransferActions(false);
+            await _agent.ResumeAfterFailedStopAsync(cancellationToken).ConfigureAwait(false);
+
+            string[] taskIds;
+            lock (_snapshotGate) taskIds = _updatePausedTaskIds.ToArray();
+            await RestoreUpdatePausedTasksAsync(taskIds, cancellationToken,
+                "RustTransferAgent.ResumeUpdatePausedTask").ConfigureAwait(false);
+
+            if (taskIds.Length > 0)
+            {
+                try { await RefreshTasksAsync(cancellationToken).ConfigureAwait(false); }
+                catch (Exception exception)
+                {
+                    App.Record(exception, "RustTransferAgent.ResumeUpdatePausedTask.Refresh");
+                    SetOperationError($"更新取消后的任务状态刷新失败（{exception.GetType().Name}）：{exception.Message}");
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            App.Record(exception, "RustTransferAgent.ResumeAfterFailedStop");
+            SetOperationError($"更新取消后恢复传输代理失败（{exception.GetType().Name}）：{exception.Message}");
+        }
+        finally
+        {
+            if (acquired)
+            {
+                SetAcceptTransferActions(true);
+                _lifecycleGate.Release();
+            }
+        }
+    }
+
+    private async Task RestoreUpdatePausedTasksAsync(IEnumerable<string> taskIds,
+        CancellationToken cancellationToken, string recordSource)
+    {
+        foreach (var taskId in taskIds.Distinct(StringComparer.Ordinal))
+        {
+            try
+            {
+                // This transition only resumes rows still paused by update preparation;
+                // it cannot undo another window's cancel or a user's manual pause.
+                _ = await _agent.ResumeShutdownPausedTaskAsync(taskId, cancellationToken).ConfigureAwait(false);
+                _ = await RefreshTaskSnapshotByIdAsync(taskId, cancellationToken).ConfigureAwait(false);
+                lock (_snapshotGate) _updatePausedTaskIds.Remove(taskId);
+            }
+            catch (Exception exception)
+            {
+                App.Record(exception, recordSource);
+                SetOperationError($"传输任务“{taskId}”仍未确认恢复（{exception.GetType().Name}）：{exception.Message}。任务标识已保留，可重连代理后重试。");
+                lock (_snapshotGate) _updatePausedTaskIds.Add(taskId);
+            }
+        }
+    }
+
+    private async Task RetryRestoreUpdatePausedTasksAfterReconnectAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var acquired = false;
+        var actionsDisabled = false;
+        try
+        {
+            await _lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            acquired = true;
+
+            string[] taskIds;
+            lock (_snapshotGate) taskIds = _updatePausedTaskIds.ToArray();
+            // Update preparation keeps transfer actions disabled until handoff succeeds
+            // or rolls back. Do not resume its checkpointed tasks during that window.
+            if (_disposed || !_initialized || !_acceptTransferActions || taskIds.Length == 0) return;
+
+            await SetAcceptTransferActionsAsync(false, cancellationToken).ConfigureAwait(false);
+            actionsDisabled = true;
+            await RestoreUpdatePausedTasksAsync(taskIds, cancellationToken,
+                "RustTransferAgent.ResumeUpdatePausedTask.AfterReconnect").ConfigureAwait(false);
+
+            try { await RefreshTasksAsync(cancellationToken).ConfigureAwait(false); }
+            catch (Exception exception)
+            {
+                App.Record(exception, "RustTransferAgent.ResumeUpdatePausedTask.AfterReconnect.Refresh");
+                SetOperationError($"代理重连后刷新传输任务失败（{exception.GetType().Name}）：{exception.Message}");
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (Exception exception)
+        {
+            App.Record(exception, "RustTransferAgent.ResumeUpdatePausedTask.AfterReconnect");
+            SetOperationError($"代理重连后恢复更新暂停任务失败（{exception.GetType().Name}）：{exception.Message}");
+        }
+        finally
+        {
+            if (acquired)
+            {
+                try
+                {
+                    if (actionsDisabled)
+                        await SetAcceptTransferActionsAsync(true, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    App.Record(exception, "RustTransferAgent.ResumeUpdatePausedTask.AfterReconnect.EnableActions");
+                }
+                finally { _lifecycleGate.Release(); }
+            }
+        }
+    }
+
+    private async Task SetAcceptTransferActionsAsync(bool value, CancellationToken cancellationToken)
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher is null || dispatcher.CheckAccess())
+        {
+            SetAcceptTransferActions(value);
+            return;
+        }
+
+        await dispatcher.InvokeAsync(() => SetAcceptTransferActions(value),
+            System.Windows.Threading.DispatcherPriority.DataBind, cancellationToken).Task.ConfigureAwait(false);
     }
 
     public async Task<bool> PrepareForUpdateAsync()
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(20);
         var acquired = false;
+        var pauseAttemptedForThisAttempt = new HashSet<string>(StringComparer.Ordinal);
+        var pendingSummary = string.Empty;
+        UpdatePreparationErrorMessage = string.Empty;
         try
         {
             await _lifecycleGate.WaitAsync(timeout.Token).ConfigureAwait(false);
             acquired = true;
             SetAcceptTransferActions(false);
-            await RefreshTasksAsync(timeout.Token).ConfigureAwait(false);
-            var dispatcher = Application.Current?.Dispatcher;
-            if (dispatcher is null) throw new InvalidOperationException("无法访问传输任务界面，未能安全暂停任务。");
-            var taskIds = await dispatcher.InvokeAsync(
-                () => Tasks.Where(task => task.State is TransferState.Running or TransferState.Queued)
-                    .SelectMany(TaskIds).Distinct(StringComparer.Ordinal).ToArray(),
-                System.Windows.Threading.DispatcherPriority.DataBind, timeout.Token).Task
-                .WaitAsync(timeout.Token).ConfigureAwait(false);
-            foreach (var id in taskIds)
-                _ = await _agent.RequestAsync("pause", new { task_id = id }, timeout.Token).ConfigureAwait(false);
-            await RefreshTasksAsync(timeout.Token).ConfigureAwait(false);
-            var finalStates = TaskSnapshots.ToDictionary(snapshot => snapshot.TaskId, snapshot => snapshot.State,
-                StringComparer.Ordinal);
-            return taskIds.All(id => finalStates.TryGetValue(id, out var state) && (state is "paused" or "completed"));
+
+            while (true)
+            {
+                timeout.Token.ThrowIfCancellationRequested();
+                var liveSnapshots = await RefreshLiveTaskSnapshotsAsync(timeout.Token, forUpdate: true).ConfigureAwait(false);
+                var pending = liveSnapshots.Where(snapshot => !IsSafeToStopForUpdate(snapshot)).ToArray();
+                if (pending.Length == 0)
+                {
+                    lock (_snapshotGate)
+                        foreach (var taskId in pauseAttemptedForThisAttempt) _updatePausedTaskIds.Add(taskId);
+                    return true;
+                }
+
+                pendingSummary = DescribePendingUpdateTasks(pending);
+                var unpausable = pending.Where(snapshot =>
+                    !CanPauseForUpdate(snapshot) && !IsCommitInProgress(snapshot)).ToArray();
+                if (unpausable.Length > 0)
+                    throw new InvalidOperationException(
+                        $"传输代理返回了无法安全暂停的任务状态。{DescribePendingUpdateTasks(unpausable)}");
+
+                var pauseable = pending.Where(CanPauseForUpdate).ToArray();
+                foreach (var snapshot in pauseable)
+                {
+                    var taskId = TaskId(snapshot);
+                    pauseAttemptedForThisAttempt.Add(taskId);
+                    try
+                    {
+                        _ = await _agent.RequestAsync("pause_for_shutdown", new { task_id = taskId }, timeout.Token)
+                            .ConfigureAwait(false);
+                    }
+                    catch (TransferAgentException exception) when (exception.Code == "task_state_changed")
+                    {
+                        // A folder child can finish between list_tasks and pause. Re-read the
+                        // durable queue and accept a safe terminal state instead of treating the
+                        // expected race as a checkpoint failure.
+                        var latest = await RefreshTaskSnapshotByIdAsync(taskId, timeout.Token).ConfigureAwait(false);
+                        if (IsSafeToStopForUpdate(latest) || IsCommitInProgress(latest))
+                        {
+                            pauseAttemptedForThisAttempt.Remove(taskId);
+                            continue;
+                        }
+                        throw new InvalidOperationException(
+                            $"传输任务“{DisplayName(snapshot)}”当前为“{TransferTaskStateProjection.Label(latest.State)}”，暂停请求未生效。",
+                            exception);
+                    }
+                }
+
+                if (DateTimeOffset.UtcNow >= deadline)
+                    throw new TimeoutException($"等待传输任务暂停或完成超时。{pendingSummary}");
+
+                // Tasks staged for a commit cannot be paused safely. Let their commit finish,
+                // then verify their durable state on the next list_tasks.
+                await Task.Delay(150, timeout.Token).ConfigureAwait(false);
+            }
         }
-        catch
+        catch (Exception exception)
         {
+            if (exception is OperationCanceledException && timeout.IsCancellationRequested)
+                exception = new TimeoutException($"等待传输任务安全暂停或提交完成超时。{pendingSummary}", exception);
+            var reportedException = exception is TransferAgentException { Code: "unknown_command" }
+                ? new InvalidOperationException(
+                    "当前运行的 Rust 传输代理版本不支持更新安全检查。请完全退出沐影盘并重新打开后再试；仍失败时请先重启电脑，避免旧代理进程继续占用。",
+                    exception)
+                : exception;
+            App.Record(reportedException, "RustTransferAgent.PrepareForUpdate");
+            UpdatePreparationErrorMessage = reportedException.Message;
+            SetOperationError($"更新准备失败：{reportedException.Message}");
+
+            // The app stays open when preparation fails. Restore tasks paused by this
+            // attempt so a failed update check does not leave them unexpectedly stopped.
+            using var rollbackTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            lock (_snapshotGate)
+                foreach (var taskId in pauseAttemptedForThisAttempt) _updatePausedTaskIds.Add(taskId);
+            await RestoreUpdatePausedTasksAsync(pauseAttemptedForThisAttempt, rollbackTimeout.Token,
+                "RustTransferAgent.PrepareForUpdate.ResumeAfterFailure").ConfigureAwait(false);
+
             SetAcceptTransferActions(true);
             return false;
         }
@@ -676,11 +959,22 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
 
     public async Task RefreshTasksAsync(CancellationToken cancellationToken = default)
     {
+        _ = await RefreshLiveTaskSnapshotsAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<IReadOnlyList<TransferAgentTaskSnapshot>> RefreshLiveTaskSnapshotsAsync(
+        CancellationToken cancellationToken = default, bool forUpdate = false)
+    {
         await _refreshGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             JsonElement payload;
-            try { payload = await _agent.ListTasksAsync(cancellationToken).ConfigureAwait(false); }
+            try
+            {
+                payload = forUpdate
+                    ? await _agent.ListTasksForUpdateAsync(cancellationToken).ConfigureAwait(false)
+                    : await _agent.ListTasksAsync(cancellationToken).ConfigureAwait(false);
+            }
             catch (Exception exception) when (IsAgentIpcFailure(exception))
             {
                 ReportAgentIpcFailure("刷新传输任务", exception);
@@ -689,13 +983,43 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
             var response = JsonSerializer.Deserialize<TransferAgentTaskListResponse>(payload.GetRawText(),
                 new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true })
                 ?? new TransferAgentTaskListResponse();
+            if (forUpdate && !response.Complete)
+                throw new InvalidOperationException(
+                    $"当前有 {response.Total} 项活动或提交结果待确认的传输任务，超过安全检查上限；请先等待或处理部分任务，再更新。");
             var dispatcher = Application.Current?.Dispatcher;
-            if (dispatcher is null) return;
-            if (_disposed) return;
+            if (dispatcher is null || _disposed) return response.Tasks;
             if (dispatcher.CheckAccess()) ApplySnapshots(response.Tasks);
             else await dispatcher.InvokeAsync(() => ApplySnapshots(response.Tasks)).Task.WaitAsync(cancellationToken);
+            return response.Tasks;
         }
         finally { _refreshGate.Release(); }
+    }
+
+    private static string TaskId(TransferAgentTaskSnapshot snapshot) =>
+        string.IsNullOrWhiteSpace(snapshot.TaskId) ? snapshot.OperationId : snapshot.TaskId;
+
+    private static bool IsSafeToStopForUpdate(TransferAgentTaskSnapshot snapshot) =>
+        !snapshot.CommitStarted &&
+        (string.Equals(snapshot.State, "paused", StringComparison.OrdinalIgnoreCase) ||
+         TransferTaskStateProjection.IsTerminal(snapshot.State));
+
+    private static bool IsCommitInProgress(TransferAgentTaskSnapshot snapshot) =>
+        snapshot.CommitStarted || snapshot.State is "staged" or "committing";
+
+    private static bool CanPauseForUpdate(TransferAgentTaskSnapshot snapshot) =>
+        !snapshot.CommitStarted && snapshot.State is
+            "queued" or "hashing" or "waiting_stable" or "transferring" or "verifying" or
+            "waiting_network" or "offline";
+
+    private static string DisplayName(TransferAgentTaskSnapshot snapshot) =>
+        string.IsNullOrWhiteSpace(snapshot.DisplayName) ? snapshot.LogicalPath ?? TaskId(snapshot) : snapshot.DisplayName;
+
+    private static string DescribePendingUpdateTasks(IEnumerable<TransferAgentTaskSnapshot> snapshots)
+    {
+        var pending = snapshots.Take(3)
+            .Select(snapshot => $"“{DisplayName(snapshot)}”（{(snapshot.CommitStarted ? "提交结果待确认" : TransferTaskStateProjection.Label(snapshot.State))}）")
+            .ToArray();
+        return pending.Length == 0 ? string.Empty : $"待处理任务：{string.Join("、", pending)}。";
     }
 
     private void ApplySnapshots(IEnumerable<TransferAgentTaskSnapshot> snapshots)
@@ -728,13 +1052,16 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
     {
         lock (_transferWaiters)
         {
-            if (!_transferWaiters.TryGetValue(snapshot.OperationId, out var waiter)) return;
+            if (!_transferWaiters.TryGetValue(snapshot.OperationId, out var waiters)) return;
             if (snapshot.State is "failed" or "conflict")
-                waiter.TrySetException(new InvalidOperationException(snapshot.Message ?? "文件上传失败。"));
+                foreach (var waiter in waiters)
+                    waiter.TrySetException(new InvalidOperationException(snapshot.Message ?? "文件传输失败。"));
             else if (snapshot.State is "cancelled" or "canceled")
-                waiter.TrySetException(new OperationCanceledException(snapshot.Message ?? "文件上传已取消。"));
+                foreach (var waiter in waiters)
+                    waiter.TrySetException(new OperationCanceledException(snapshot.Message ?? "文件传输已取消。"));
             else if (snapshot.State == "completed" && !string.IsNullOrWhiteSpace(snapshot.FileId))
-                waiter.TrySetResult(snapshot);
+                foreach (var waiter in waiters)
+                    waiter.TrySetResult(snapshot);
         }
     }
 
@@ -789,7 +1116,11 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
 
     private void HandleAgentEvent(object? sender, TransferAgentEventArgs args)
     {
-        if (args.EventName == "connected") HandleAgentConnectionRecovered();
+        if (args.EventName == "connected")
+        {
+            HandleAgentConnectionRecovered();
+            _ = RetryRestoreUpdatePausedTasksAfterReconnectAsync();
+        }
         if (args.EventName is "connected" or "scan_warning")
         {
             _ = Task.Run(async () =>

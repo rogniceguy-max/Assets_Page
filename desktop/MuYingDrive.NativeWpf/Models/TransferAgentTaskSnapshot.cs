@@ -43,6 +43,13 @@ public sealed record TransferAgentTaskSnapshot
 public sealed class TransferAgentTaskListResponse
 {
     [JsonPropertyName("tasks")] public List<TransferAgentTaskSnapshot> Tasks { get; init; } = [];
+    [JsonPropertyName("total")] public int Total { get; init; }
+    [JsonPropertyName("complete")] public bool Complete { get; init; } = true;
+}
+
+public sealed class TransferAgentTaskResponse
+{
+    [JsonPropertyName("task")] public TransferAgentTaskSnapshot? Task { get; init; }
 }
 
 public sealed class UnixEpochSecondsDateTimeOffsetConverter : JsonConverter<DateTimeOffset>

@@ -45,6 +45,7 @@ public sealed class DriveFileItem : ObservableObject
     public DateTime ModifiedTime { get; init; }
     public string LogicalPath { get; init; } = string.Empty;
     public string? FileId { get; init; }
+    public string? Sha256 { get; init; }
     public string? DirectoryId { get; init; }
     public string ScopeId { get; init; } = string.Empty;
     public string? ProjectId { get; init; }

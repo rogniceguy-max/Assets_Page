@@ -322,11 +322,15 @@ public sealed class ProjectImagesViewModel : ObservableObject, IDisposable
             if (item.Preview != null || ct.IsCancellationRequested) return;
             await OnUiAsync(item.BeginLoading);
             var bytes = await _service.GetImageContentAsync(item.Asset.Id, thumbnail: true, ct);
-            var preview = ProjectWorkbooksViewModel.Decode(bytes, thumbnail: true);
+            var preview = await Task.Run(() => ProjectWorkbooksViewModel.Decode(bytes, thumbnail: true), ct);
             await OnUiAsync(() => item.SetPreview(preview));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
-        catch { await OnUiAsync(() => item.SetPreview(null, "预览加载失败")); }
+        catch (Exception exception)
+        {
+            App.Record(exception, "ProjectImagesViewModel.LoadPreview");
+            await OnUiAsync(() => item.SetPreview(null, "预览加载失败"));
+        }
         finally { _thumbnailSlots.Release(); }
     }
 

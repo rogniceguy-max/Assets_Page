@@ -17,24 +17,35 @@
     <TransferAgentRoot>$(MSBuildProjectDirectory)\..\..\transfer</TransferAgentRoot>
     <TransferAgentManifest>$(TransferAgentRoot)\Cargo.toml</TransferAgentManifest>
     <TransferAgentCargoTarget>x86_64-pc-windows-msvc</TransferAgentCargoTarget>
+    <TransferAgentCargoExecutable Condition="'$(CARGO_HOME)' != '' and Exists('$(CARGO_HOME)\bin\cargo.exe')">$(CARGO_HOME)\bin\cargo.exe</TransferAgentCargoExecutable>
+    <TransferAgentCargoExecutable Condition="'$(TransferAgentCargoExecutable)' == '' and Exists('$(USERPROFILE)\.cargo\bin\cargo.exe')">$(USERPROFILE)\.cargo\bin\cargo.exe</TransferAgentCargoExecutable>
+    <TransferAgentCargoExecutable Condition="'$(TransferAgentCargoExecutable)' == ''">cargo</TransferAgentCargoExecutable>
     <TransferAgentBinary>$(TransferAgentRoot)\target\$(TransferAgentCargoTarget)\release\MuYingDrive_TransferAgent.exe</TransferAgentBinary>
     <BuildTransferAgent Condition="'$(BuildTransferAgent)' == ''">true</BuildTransferAgent>
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="MuYingDrive.NativeWpf.FeedbackTests" />
     <ProjectReference Include="..\MuYingDrive.UpdateCore\MuYingDrive.UpdateCore.csproj" />
     <ProjectReference Include="..\MuYingDrive.ProjectWorkbooks\MuYingDrive.ProjectWorkbooks.csproj" />
     <None Update="Assets\Demo\*.jpg" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Assets\Demo\*.mp4" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Assets\Demo\README.md" CopyToOutputDirectory="PreserveNewest" />
     <None Update="nas-client.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\MuYingDrive.ProjectWorkbooks\THIRD-PARTY-NOTICES.md" Link="THIRD-PARTY-NOTICES.md"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="$(TransferAgentBinary)" Link="transfer\MuYingDrive.TransferAgent.exe"
           CopyToPublishDirectory="PreserveNewest" Condition="'$(BuildTransferAgent)' == 'true'" />
+    <!-- The bundled WebP codec is built with the dynamic MSVC runtime. Ship the app-local
+         Microsoft runtime so thumbnails also decode on PCs without VC++ Redistributable. -->
+    <None Include="$(SystemRoot)\System32\vcruntime140.dll" Link="vcruntime140.dll"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"
+          Condition="'$(RuntimeIdentifier)' == 'win-x64' and Exists('$(SystemRoot)\System32\vcruntime140.dll')" />
   </ItemGroup>
 
   <Target Name="BuildRustTransferAgent" BeforeTargets="PrepareForBuild" Condition="'$(BuildTransferAgent)' == 'true'">
     <Error Condition="!Exists('$(TransferAgentManifest)')" Text="Rust transfer agent sources are missing: $(TransferAgentManifest)" />
-    <Exec Command="cargo build --locked --manifest-path &quot;$(TransferAgentManifest)&quot; --package muying-transfer-agent --bin MuYingDrive_TransferAgent --target $(TransferAgentCargoTarget) --release"
+    <Exec Command="&quot;$(TransferAgentCargoExecutable)&quot; build --locked --manifest-path &quot;$(TransferAgentManifest)&quot; --package muying-transfer-agent --bin MuYingDrive_TransferAgent --target $(TransferAgentCargoTarget) --release"
           WorkingDirectory="$(TransferAgentRoot)" />
   </Target>
   <Target Name="StageRustTransferAgent" AfterTargets="Build" Condition="'$(BuildTransferAgent)' == 'true'">
@@ -45,5 +56,13 @@
   <Target Name="VerifyPublishedRustTransferAgent" AfterTargets="Publish" Condition="'$(BuildTransferAgent)' == 'true'">
     <Error Condition="!Exists('$(PublishDir)transfer\MuYingDrive.TransferAgent.exe')"
            Text="The published client is missing transfer\MuYingDrive.TransferAgent.exe." />
+  </Target>
+  <Target Name="VerifyPublishedWebPRuntime" AfterTargets="Publish" Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+    <Error Condition="!Exists('$(PublishDir)vcruntime140.dll')"
+           Text="The published client is missing app-local vcruntime140.dll, required by the bundled WebP decoder." />
+    <Error Condition="!Exists('$(PublishDir)libwebp.dll')"
+           Text="The published client is missing libwebp.dll, required by the bundled WebP decoder." />
+    <Error Condition="!Exists('$(PublishDir)libsharpyuv.dll')"
+           Text="The published client is missing libsharpyuv.dll, required by the bundled WebP decoder." />
   </Target>
 </Project>

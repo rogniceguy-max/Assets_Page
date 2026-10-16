@@ -119,6 +119,15 @@ public sealed class RustTransferAgentClient : IAsyncDisposable
     public async Task<JsonElement> ListTasksAsync(CancellationToken cancellationToken = default) =>
         await RequestAsync("list_tasks", new { }, cancellationToken).ConfigureAwait(false);
 
+    public async Task<JsonElement> ListTasksForUpdateAsync(CancellationToken cancellationToken = default) =>
+        await RequestAsync("list_tasks_for_update", new { }, cancellationToken).ConfigureAwait(false);
+
+    public async Task<JsonElement> GetTaskAsync(string operationId, CancellationToken cancellationToken = default) =>
+        await RequestAsync("get_task", new { task_id = operationId }, cancellationToken).ConfigureAwait(false);
+
+    public async Task<JsonElement> ResumeShutdownPausedTaskAsync(string operationId, CancellationToken cancellationToken = default) =>
+        await RequestAsync("resume_shutdown_paused", new { task_id = operationId }, cancellationToken).ConfigureAwait(false);
+
     public async Task StopWatchingAsync(CancellationToken cancellationToken = default) =>
         _ = await RequestAsync("stop_watching", new { }, cancellationToken).ConfigureAwait(false);
 

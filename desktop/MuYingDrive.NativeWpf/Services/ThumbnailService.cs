@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media.Imaging;
+using MuYingDrive.ProjectWorkbooks;
 
 namespace MuYingDrive.NativeWpf.Services;
 
@@ -14,13 +15,14 @@ namespace MuYingDrive.NativeWpf.Services;
 public static class ThumbnailService
 {
     private const int MaximumCachedThumbnails = 256;
+    private static readonly SemaphoreSlim DecodeSlots = new(2, 2);
     private static readonly ConcurrentDictionary<string, Lazy<Task<BitmapSource>>> Cache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentQueue<string> CacheOrder = new();
 
     public static async Task<BitmapSource> LoadAsync(string path)
     {
         var candidate = new Lazy<Task<BitmapSource>>(
-            () => Task.Run(() => Load(path)), LazyThreadSafetyMode.ExecutionAndPublication);
+            () => LoadThrottledAsync(path), LazyThreadSafetyMode.ExecutionAndPublication);
         var cached = Cache.GetOrAdd(path, candidate);
         if (ReferenceEquals(candidate, cached))
         {
@@ -41,6 +43,13 @@ public static class ThumbnailService
         }
     }
 
+    private static async Task<BitmapSource> LoadThrottledAsync(string path)
+    {
+        await DecodeSlots.WaitAsync().ConfigureAwait(false);
+        try { return await Task.Run(() => Load(path)).ConfigureAwait(false); }
+        finally { DecodeSlots.Release(); }
+    }
+
     private static BitmapSource Load(string path)
     {
         if (path.StartsWith("\\\\", StringComparison.Ordinal))
@@ -48,6 +57,14 @@ public static class ThumbnailService
         if (IsVideo(path))
         {
             return LoadShellThumbnail(path);
+        }
+
+        if (string.Equals(Path.GetExtension(path), ".webp", StringComparison.OrdinalIgnoreCase))
+        {
+            var info = new FileInfo(path);
+            if (info.Length > 64 * 1024 * 1024)
+                throw new InvalidDataException("WebP 缩略图超过允许大小。");
+            return WebPBitmapDecoder.Decode(File.ReadAllBytes(path), decodePixelWidth: 640);
         }
 
         return LoadBitmapFromStream(path, 640);

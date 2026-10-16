@@ -13,6 +13,7 @@ using MuYingDrive.NativeWpf.ViewModels;
 using System.Net.Http;
 using MuYingDrive.ProjectWorkbooks;
 using MuYingDrive.NativeWpf.Views;
+using Imazen.WebP;
 
 internal static class Program
 {
@@ -24,12 +25,45 @@ internal static class Program
         try
         {
             var application = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+            if (args.Contains("--webp-smoke", StringComparer.Ordinal))
+            {
+                VerifyWebPDecode();
+                Console.WriteLine("PASS: bundled WebP decoder returns a frozen, WPF-ready BGRA bitmap.");
+                application.Shutdown();
+                return 0;
+            }
+            if (args.Contains("--thumbnail-cache-smoke", StringComparer.Ordinal))
+            {
+                var cacheSettings = new NasClientSettings(new Uri("https://thumbnail-test.invalid"), new string('0', 64));
+                var cacheApi = new V2ApiClient(new V2ApiClientOptions(cacheSettings.ApiBaseUri, cacheSettings.CertificateSha256));
+                var cacheSession = new DriveSession(
+                    new V2UserSession { Id = 0, UserName = "访客", Department = "缩略图测试", GroupType = "visitor" },
+                    "thumbnail-cache-test-token");
+                var cacheAgent = new RustTransferAgentClient(
+                    FileClientIdentity.GetVisitorAgentNamespace(cacheSettings.ApiBaseUri, "thumbnail-cache-test-token"),
+                    userSid: "S-1-5-21-thumbnail-smoke");
+                var cacheTransfers = new TransferViewModel(cacheApi, cacheSession, cacheSettings, cacheAgent,
+                    Guid.NewGuid().ToString("D"));
+                try
+                {
+                    VerifyBrokenThumbnailCacheRecovery(new FileThumbnailProvider(cacheApi, cacheSession, cacheTransfers,
+                        Guid.NewGuid().ToString("D"))).GetAwaiter().GetResult();
+                }
+                finally
+                {
+                    cacheTransfers.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                    cacheApi.Dispose();
+                }
+                application.Shutdown();
+                return 0;
+            }
             var bindingErrors = new BindingErrors();
             PresentationTraceSources.DataBindingSource.Listeners.Add(bindingErrors);
             PresentationTraceSources.DataBindingSource.Switch.Level = SourceLevels.Error;
             var output = args.Length > 0 ? args[0] : Path.Combine(Path.GetTempPath(), "muying-feedback-render");
             Directory.CreateDirectory(output);
             var settings = new NasClientSettings(new Uri("https://feedback-test.invalid"), new string('0', 64));
+            VerifyWebPDecode();
             Assert(TransferTaskStateProjection.Label("committing") == "提交中", "Rust commit state must have a distinct inline label.");
             Assert(TransferTaskStateProjection.Label("linking") == "等待关联", "Transfer completion must not be confused with business linking.");
             Assert(TransferTaskStateProjection.Progress(150, 100, "transferring") == 100,
@@ -143,6 +177,10 @@ internal static class Program
                 .SetValue(files, new LogicalFileScope("project:project-fixture", "project-fixture"));
             typeof(FilesViewModel).GetField("_isRecycleBin", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .SetValue(files, true);
+            // The workspace constructor starts an asynchronous directory load. This
+            // assertion tests role/scope permission, so model a settled recycle-bin view.
+            typeof(FilesViewModel).GetField("_isLoading", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(files, false);
             Assert(files.IsRecycleBin && files.CanRestore,
                 "An employee must be able to restore a soft-deleted file from a project scope.");
             workspace.NavigateCommand.Execute("反馈");
@@ -221,6 +259,8 @@ internal static class Program
             var visitorAgent = new RustTransferAgentClient(visitorNamespace, userSid: "S-1-5-21-render-harness");
             var visitorTransfers = new TransferViewModel(visitorApi, visitorSession, settings, visitorAgent,
                 Guid.NewGuid().ToString("D"));
+            VerifyBrokenThumbnailCacheRecovery(new FileThumbnailProvider(visitorApi, visitorSession,
+                visitorTransfers, Guid.NewGuid().ToString("D"))).GetAwaiter().GetResult();
             var visitor = new FilesViewModel(visitorApi, visitorSession, visitorTransfers, visitorAgent,
                 Guid.NewGuid().ToString("D"));
             var readOnlyWorkspace = WorkspaceViewModel.ForSession(main, visitorSession, settings);
@@ -233,8 +273,9 @@ internal static class Program
             Assert(readOnlyWorkspace.NavigationItems.Where(item => item.Key is "图片" or "视频" or "传输")
                     .All(item => item.IsEnabled),
                 "A read-only session can browse shared media and monitor its own transfers.");
+            var selectionBeforeDisabledNavigation = readOnlyWorkspace.SelectedNavigation;
             readOnlyWorkspace.NavigateCommand.Execute("同步");
-            Assert(readOnlyWorkspace.SelectedNavigation == "图片",
+            Assert(readOnlyWorkspace.SelectedNavigation == selectionBeforeDisabledNavigation,
                 "Invoking a disabled read-only navigation item has no effect.");
             typeof(FilesViewModel).GetField("_scope", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .SetValue(visitor, new LogicalFileScope("project:project-fixture", "project-fixture"));
@@ -379,6 +420,95 @@ internal static class Program
         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using var stream = File.Create(path); encoder.Save(stream);
         border.Child = null;
+    }
+
+    private static void VerifyWebPDecode()
+    {
+        var rgba = new byte[]
+        {
+            255, 0, 0, 255, 0, 255, 0, 255,
+            0, 0, 255, 255, 255, 255, 255, 255
+        };
+        var webp = WebPEncoder.Encode(rgba, 2, 2, 8, WebPPixelFormat.Rgba, quality: -1);
+        var decodedWebp = WebPBitmapDecoder.Decode(webp);
+        var decodedPixels = new byte[rgba.Length];
+        decodedWebp.CopyPixels(decodedPixels, 8, 0);
+        Assert(decodedWebp.PixelWidth == 2 && decodedWebp.PixelHeight == 2 &&
+               decodedWebp.IsFrozen && decodedPixels.SequenceEqual(new byte[]
+               {
+                   0, 0, 255, 255, 0, 255, 0, 255,
+                   255, 0, 0, 255, 255, 255, 255, 255
+               }),
+            "Bundled WebP decoding must produce a frozen, WPF-ready BGRA bitmap without relying on a Windows codec.");
+    }
+
+    private static async Task VerifyBrokenThumbnailCacheRecovery(FileThumbnailProvider provider)
+    {
+        var malformedWebp = new byte[]
+        {
+            (byte)'R', (byte)'I', (byte)'F', (byte)'F', 0, 0, 0, 0,
+            (byte)'W', (byte)'E', (byte)'B', (byte)'P'
+        };
+        var fileId = "thumbnail-cache-fixture-" + Guid.NewGuid().ToString("N");
+        var revisionId = "revision-" + Guid.NewGuid().ToString("N");
+        var cachePath = provider.GetCachePath(fileId, revisionId);
+        var stalePath = string.Empty;
+        Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
+
+        try
+        {
+            File.WriteAllBytes(cachePath, malformedWebp);
+            Assert(string.Equals(await provider.GetThumbnailPathAsync(fileId, revisionId), cachePath,
+                    StringComparison.OrdinalIgnoreCase),
+                "A legacy RIFF/WEBP cache entry is found before actual decoding validates it.");
+            try
+            {
+                WebPBitmapDecoder.Decode(malformedWebp, decodePixelWidth: 640);
+                throw new Exception("A header-only WebP cache fixture must fail real decoding.");
+            }
+            catch (InvalidDataException) { }
+
+            Assert(provider.TryCaptureCacheFileStamp(fileId, revisionId, cachePath, out var firstStamp),
+                "The failing cache generation can be captured before decode.");
+            Assert(provider.InvalidateAfterDecodeFailure(fileId, revisionId, cachePath, firstStamp) &&
+                   !File.Exists(cachePath),
+                "The first actual decode failure deletes that cached file and permits one refresh.");
+
+            File.WriteAllBytes(cachePath, malformedWebp);
+            Assert(provider.TryCaptureCacheFileStamp(fileId, revisionId, cachePath, out var refreshedStamp),
+                "The refreshed cache has a distinct generation stamp.");
+            Assert(!provider.InvalidateAfterDecodeFailure(fileId, revisionId, cachePath, refreshedStamp) &&
+                   !File.Exists(cachePath),
+                "A second decode failure evicts the replacement and enters a bounded retry cooldown.");
+            Assert(await provider.GetThumbnailPathAsync(fileId, revisionId) is null,
+                "The cooldown suppresses an immediate repeated thumbnail download.");
+
+            var staleFileId = "thumbnail-cache-stale-fixture-" + Guid.NewGuid().ToString("N");
+            var staleRevisionId = "revision-" + Guid.NewGuid().ToString("N");
+            stalePath = provider.GetCachePath(staleFileId, staleRevisionId);
+            File.WriteAllBytes(stalePath, malformedWebp);
+            Assert(provider.TryCaptureCacheFileStamp(staleFileId, staleRevisionId, stalePath, out var staleStamp),
+                "A cache generation can be stamped before a concurrent replacement.");
+            File.WriteAllBytes(stalePath, [.. malformedWebp, 0]);
+            Assert(!provider.InvalidateAfterDecodeFailure(staleFileId, staleRevisionId, stalePath, staleStamp) &&
+                   File.Exists(stalePath),
+                "A stale decode failure cannot delete a newer cache file at the same path.");
+            File.Delete(stalePath);
+        }
+        finally
+        {
+            try { File.Delete(cachePath); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            if (!string.IsNullOrWhiteSpace(stalePath))
+            {
+                try { File.Delete(stalePath); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+        }
+
+        Console.WriteLine("PASS: invalid WebP thumbnail cache eviction, one coalesced refresh window, cooldown, and stale-generation protection.");
     }
 
     private sealed class BindingErrors : TraceListener

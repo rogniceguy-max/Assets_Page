@@ -1181,6 +1181,9 @@ public sealed class ProjectWorkbooksViewModel : ObservableModel, IDisposable
 
     public static BitmapSource Decode(byte[] bytes, bool thumbnail = false)
     {
+        if (WebPBitmapDecoder.IsWebP(bytes))
+            return WebPBitmapDecoder.Decode(bytes, thumbnail ? 320 : 0);
+
         using var stream = new MemoryStream(bytes, writable: false);
         var image = new BitmapImage(); image.BeginInit(); image.CacheOption = BitmapCacheOption.OnLoad;
         if (thumbnail) image.DecodePixelWidth = 320;

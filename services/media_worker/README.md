@@ -12,6 +12,8 @@ Required environment variables:
 | --- | --- |
 | `MUYING_V2_API_BASE_URI` | V2 API HTTPS origin, for example `https://nas.example.invalid` |
 | `MUYING_V2_MEDIA_WORKER_TOKEN` | Worker-only bearer token; inject it from a protected local launch configuration or secret store. Never commit it. |
+| `MUYING_V2_CERT_SHA256` | Exact SHA-256 fingerprint of the NAS API TLS leaf certificate; must match the Windows client pin. |
+| `MUYING_V2_CA_FILE` | Path to the bundled `nas-root-ca.pem` file. The worker validates hostname and certificate chains for API and transfer endpoints; it also checks the exact leaf pin for API requests, without installing the CA into macOS system trust. |
 
 Optional variables:
 
@@ -38,6 +40,6 @@ The upload manifest uses `object_kind: "thumbnail"`, `media_type: "image/webp"`,
 
 ## launchd
 
-`com.muying.mediaworker.plist` is a non-secret template. Copy it to the Mac, replace `__DEPLOYMENT_HOME__`, and set `MUYING_V2_API_BASE_URI` and `MUYING_V2_MEDIA_WORKER_TOKEN` in the local copy. Protect the deployed plist or secret source from other users; do not add the populated file to this repository. `start.sh` also accepts the required variables from a protected shell environment for a manual run.
+`com.muying.mediaworker.plist` is a non-secret template. Copy it and `nas-root-ca.pem` to the Mac, replace `__DEPLOYMENT_HOME__`, and set the API origin, worker token, and leaf certificate fingerprint in the local plist. Protect the deployed plist (mode `0600`) because it contains the worker token; never add the populated file to this repository. `start.sh` also accepts the required variables from a protected shell environment for a manual run.
 
-Logs are JSON lines at `~/Library/Logs/media_worker.log`, rotated at 10 MB with three backups. Logs include file/revision IDs and operation state, but never bearer tokens, transfer tickets, download URLs, source paths, or credentials.
+Worker events are JSON lines at `~/Library/Logs/media_worker.log`, rotated at 10 MB with three backups. The launchd template sends standard output to `/dev/null` so it cannot write around the rotating handler; startup errors remain in `~/Library/Logs/media_worker_error.log`. Logs include file/revision IDs and operation state, but never bearer tokens, transfer tickets, download URLs, source paths, or credentials.

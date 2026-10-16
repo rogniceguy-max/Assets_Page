@@ -19,9 +19,13 @@
         <string></string>
         <key>MUYING_V2_MEDIA_WORKER_TOKEN</key>
         <string></string>
+        <key>MUYING_V2_CERT_SHA256</key>
+        <string></string>
+        <key>MUYING_V2_CA_FILE</key>
+        <string>__DEPLOYMENT_HOME__/media_worker/nas-root-ca.pem</string>
     </dict>
     <key>StandardOutPath</key>
-    <string>__DEPLOYMENT_HOME__/Library/Logs/media_worker.log</string>
+    <string>/dev/null</string>
     <key>StandardErrorPath</key>
     <string>__DEPLOYMENT_HOME__/Library/Logs/media_worker_error.log</string>
 </dict>

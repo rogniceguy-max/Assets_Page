@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Data;
@@ -22,6 +23,10 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
     private readonly RustTransferAgentClient _agent;
     private readonly string _clientId;
     private readonly FileThumbnailProvider _thumbnailProvider;
+    private readonly ConcurrentDictionary<string, byte> _pendingFileOpens = new(StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<string, VerifiedOpenFileStamp> VerifiedOpenFiles =
+        new(StringComparer.OrdinalIgnoreCase);
+    private const int MaximumVerifiedOpenFileStamps = 512;
     private readonly WindowsFilePickerService _filePicker = new();
     private string _searchText = string.Empty;
     private bool _isGridView = true;
@@ -121,6 +126,7 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
     private bool CanWriteOrRestoreProjectFiles => !_session.IsReadOnly && (_scope.CanWrite || _scope.ProjectId is not null);
     public bool CanShowRecycleBin => !_session.IsReadOnly && !_scope.Flatten && _scope.ScopeId != "all";
     public bool IsRecycleBin { get => _isRecycleBin; private set { if (SetProperty(ref _isRecycleBin, value)) { OnPropertyChanged(nameof(IsReadOnly)); OnPropertyChanged(nameof(CanUpload)); OnPropertyChanged(nameof(CanModify)); OnPropertyChanged(nameof(CanRestore)); OnPropertyChanged(nameof(RecycleBinButtonLabel)); RefreshCommandStates(); } } }
+    private bool IsMediaView => _scope.MediaKind is "image" or "video";
     public string RecycleBinButtonLabel => IsRecycleBin ? "返回文件" : "回收站";
     public string TruncationNotice { get => _truncationNotice; private set => SetProperty(ref _truncationNotice, value); }
     public bool IsLoading { get => _isLoading; private set { if (SetProperty(ref _isLoading, value)) { OnPropertyChanged(nameof(IsEmpty)); RefreshCommandStates(); } } }
@@ -238,18 +244,39 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
             _ = LoadCurrentDirectoryAsync();
             return;
         }
-        _ = OpenFileAsync(item);
+        _ = OpenFileAsync(item, showInlineStatus: !IsMediaView);
     }
 
-    private async Task OpenFileAsync(DriveFileItem item)
+    private async Task OpenFileAsync(DriveFileItem item, bool showInlineStatus)
     {
         if (string.IsNullOrWhiteSpace(item.FileId)) return;
-        if (item.HasInlineTransfer && (item.InlineTransferCanCancel ||
-            item.InlineTransferStatus is "正在准备下载" or "排队中" or "下载中" or "正在校验")) return;
+        var openKey = $"{item.ScopeId}\0{item.ProjectId}\0{item.FileId}\0{item.RevisionId}";
+        if (!_pendingFileOpens.TryAdd(openKey, 0)) return;
+        var handedOffToTransfer = false;
         var operationId = Guid.NewGuid().ToString("D");
         try
         {
-            item.BeginInlineTransfer(operationId, "正在准备下载");
+            // Files listed by the API include the current revision hash. If its verified
+            // app-owned cache already exists, open it immediately without waiting for a new
+            // download ticket or showing transfer state on the media page.
+            if (!string.IsNullOrWhiteSpace(item.RevisionId) &&
+                item.Sha256 is { Length: 64 } cachedHash && cachedHash.All(Uri.IsHexDigit) && item.SizeBytes >= 0)
+            {
+                var cacheCandidates = new[]
+                {
+                    GetOpenCachePath(item, item.RevisionId),
+                    GetOpenCachePath(item, item.RevisionId, item.Sha256)
+                };
+                foreach (var cachedPath in cacheCandidates.Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    if (!await MatchesTicketAsync(cachedPath, item.SizeBytes, item.Sha256))
+                        continue;
+                    StartLocalFile(cachedPath, item, showInlineStatus);
+                    return;
+                }
+            }
+
+            if (showInlineStatus) item.BeginInlineTransfer(operationId, "正在准备下载");
             var ticket = await _api.CreateFileDownloadTicketAsync(_session.SessionToken, item.FileId, _clientId, item.RevisionId);
             if (ticket.FileId != item.FileId || (item.RevisionId is { Length: > 0 } revision && ticket.RevisionId != revision)
                 || ticket.Size < 0 || ticket.Sha256.Length != 64 || !ticket.Sha256.All(Uri.IsHexDigit))
@@ -266,8 +293,8 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
             {
                 if (existing.State == "completed" && await MatchesTicketAsync(existingPath, ticket.Size, ticket.Sha256))
                 {
-                    item.SetInlineTransferStatus("已验证的下载缓存可用。");
-                    StartLocalFile(existingPath, item);
+                    if (showInlineStatus) item.SetInlineTransferStatus("已验证的下载缓存可用。");
+                    StartLocalFile(existingPath, item, showInlineStatus);
                     return;
                 }
                 if (IsTransferActive(existing.State) || existing.Retryable && !File.Exists(existingPath))
@@ -277,9 +304,10 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
                     if (existing.Retryable && !IsTransferActive(existing.State) &&
                         !await _transfers.RetryOperationAsync(existing.OperationId))
                         throw new IOException("失败的下载任务无法安全重试。");
-                    item.BeginInlineTransfer(existing.OperationId, "排队中", canCancel: true);
-                    await _transfers.RefreshTasksAsync().ConfigureAwait(true);
-                    _ = OpenWhenDownloadedAsync(existing.OperationId, existingPath, item, ticket.Size, ticket.Sha256);
+                    if (showInlineStatus) item.BeginInlineTransfer(existing.OperationId, "排队中", canCancel: true);
+                    handedOffToTransfer = true;
+                    _ = OpenWhenDownloadedAsync(existing.OperationId, existingPath, item, ticket.Size, ticket.Sha256,
+                        openKey, showInlineStatus);
                     return;
                 }
             }
@@ -287,8 +315,8 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
             var localPath = GetOpenCachePath(item, ticket.RevisionId);
             if (await MatchesTicketAsync(localPath, ticket.Size, ticket.Sha256))
             {
-                item.SetInlineTransferStatus("本地缓存已通过文件版本和 SHA-256 校验。");
-                StartLocalFile(localPath, item);
+                if (showInlineStatus) item.SetInlineTransferStatus("本地缓存已通过文件版本和 SHA-256 校验。");
+                StartLocalFile(localPath, item, showInlineStatus);
                 return;
             }
             if (File.Exists(localPath))
@@ -296,8 +324,8 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
                 localPath = GetOpenCachePath(item, ticket.RevisionId, ticket.Sha256);
                 if (await MatchesTicketAsync(localPath, ticket.Size, ticket.Sha256))
                 {
-                    item.SetInlineTransferStatus("本地缓存已通过文件版本和 SHA-256 校验。");
-                    StartLocalFile(localPath, item);
+                    if (showInlineStatus) item.SetInlineTransferStatus("本地缓存已通过文件版本和 SHA-256 校验。");
+                    StartLocalFile(localPath, item, showInlineStatus);
                     return;
                 }
                 for (var suffix = 1; File.Exists(localPath); suffix++)
@@ -308,22 +336,29 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
                 scopeId: item.ScopeId, projectId: item.ProjectId);
             if (operation is null)
             {
-                item.SetInlineTransferError(string.IsNullOrWhiteSpace(_transfers.OperationErrorMessage)
+                ReportOpenFailure(item, showInlineStatus, string.IsNullOrWhiteSpace(_transfers.OperationErrorMessage)
                     ? "无法将文件加入下载队列。" : _transfers.OperationErrorMessage);
                 return;
             }
-            item.BeginInlineTransfer(operation, "排队中", canCancel: true);
-            await _transfers.RefreshTasksAsync().ConfigureAwait(true);
-            _ = OpenWhenDownloadedAsync(operation, localPath, item, ticket.Size, ticket.Sha256);
+            if (showInlineStatus) item.BeginInlineTransfer(operation, "排队中", canCancel: true);
+            handedOffToTransfer = true;
+            _ = OpenWhenDownloadedAsync(operation, localPath, item, ticket.Size, ticket.Sha256,
+                openKey, showInlineStatus);
         }
-        catch (Exception exception) when (exception is V2ApiException or IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException)
+        catch (Exception exception) when (exception is V2ApiException or IOException or InvalidDataException or
+            UnauthorizedAccessException or InvalidOperationException or TransferAgentException or TimeoutException or
+            System.Security.SecurityException)
         {
-            item.SetInlineTransferError(exception.Message);
+            ReportOpenFailure(item, showInlineStatus, exception.Message);
+        }
+        finally
+        {
+            if (!handedOffToTransfer) _pendingFileOpens.TryRemove(openKey, out _);
         }
     }
 
     private async Task OpenWhenDownloadedAsync(string operationId, string localPath, DriveFileItem item,
-        long expectedSize, string expectedHash)
+        long expectedSize, string expectedHash, string openKey, bool showInlineStatus)
     {
         try
         {
@@ -332,35 +367,54 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
                 throw new InvalidDataException("下载任务完成，但本地文件未通过 SHA-256 校验。");
             var dispatcher = Application.Current?.Dispatcher;
             if (dispatcher is null) return;
-            if (dispatcher.CheckAccess()) StartLocalFile(localPath, item);
-            else await dispatcher.InvokeAsync(() => StartLocalFile(localPath, item));
+            if (dispatcher.CheckAccess()) StartLocalFile(localPath, item, showInlineStatus);
+            else await dispatcher.InvokeAsync(() => StartLocalFile(localPath, item, showInlineStatus));
         }
-        catch (Exception exception) when (exception is IOException or InvalidDataException or InvalidOperationException or TimeoutException or OperationCanceledException or UnauthorizedAccessException or System.Security.SecurityException)
+        catch (Exception exception) when (exception is IOException or InvalidDataException or InvalidOperationException or TimeoutException or OperationCanceledException or UnauthorizedAccessException or TransferAgentException or System.Security.SecurityException)
         {
             var dispatcher = Application.Current?.Dispatcher;
             if (dispatcher is null) return;
-            if (dispatcher.CheckAccess()) item.SetInlineTransferError(exception.Message);
-            else await dispatcher.InvokeAsync(() => item.SetInlineTransferError(exception.Message));
+            if (dispatcher.CheckAccess()) ReportOpenFailure(item, showInlineStatus, exception.Message);
+            else await dispatcher.InvokeAsync(() => ReportOpenFailure(item, showInlineStatus, exception.Message));
+        }
+        finally
+        {
+            _pendingFileOpens.TryRemove(openKey, out _);
         }
     }
 
-    private static void StartLocalFile(string path, DriveFileItem? item = null)
+    private void StartLocalFile(string path, DriveFileItem? item = null, bool showInlineStatus = true)
     {
         try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
-        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException)
-        { item?.SetInlineTransferError($"文件已下载，但无法通过默认程序打开：{exception.Message}"); }
+        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception or
+            IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            ReportOpenFailure(item, showInlineStatus, $"文件已下载，但无法通过默认程序打开：{exception.Message}");
+        }
+    }
+
+    private void ReportOpenFailure(DriveFileItem? item, bool showInlineStatus, string message)
+    {
+        if (showInlineStatus && item is not null)
+            item.SetInlineTransferError(message);
+        else
+            _transfers.ReportOperationError(message);
     }
 
     private async Task DownloadItemAsync(DriveFileItem? item)
     {
         if (item is null || item.IsDirectory || string.IsNullOrWhiteSpace(item.FileId)) return;
         if (item.HasInlineTransfer && item.InlineTransferCanCancel) return;
+        var showInlineStatus = !IsMediaView;
         var destination = _filePicker.PickDownloadDestination(item.Name);
         if (string.IsNullOrWhiteSpace(destination)) return;
         var operationId = Guid.NewGuid().ToString("D");
-        item.BeginInlineTransfer(operationId, "正在准备下载");
+        if (showInlineStatus) item.BeginInlineTransfer(operationId, "正在准备下载");
         if (File.Exists(destination) || Directory.Exists(destination))
-        { item.SetInlineTransferError("本机目标位置已有同名项目，下载未覆盖任何内容。请选择其他位置后重试。"); return; }
+        {
+            ReportOpenFailure(item, showInlineStatus, "本机目标位置已有同名项目，下载未覆盖任何内容。请选择其他位置后重试。");
+            return;
+        }
         try
         {
             var ticket = await _api.CreateFileDownloadTicketAsync(_session.SessionToken, item.FileId, _clientId, item.RevisionId);
@@ -369,29 +423,69 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
                 scopeId: item.ScopeId, projectId: item.ProjectId);
             if (queued is null)
             {
-                item.SetInlineTransferError(string.IsNullOrWhiteSpace(_transfers.OperationErrorMessage)
+                ReportOpenFailure(item, showInlineStatus, string.IsNullOrWhiteSpace(_transfers.OperationErrorMessage)
                     ? "无法将文件加入下载队列。" : _transfers.OperationErrorMessage);
                 return;
             }
-            item.BeginInlineTransfer(queued, "排队中", canCancel: true);
-            await _transfers.RefreshTasksAsync().ConfigureAwait(true);
+            if (showInlineStatus) item.BeginInlineTransfer(queued, "排队中", canCancel: true);
+            try { await _transfers.RefreshTasksAsync().ConfigureAwait(true); }
+            catch (Exception exception) when (exception is IOException or TimeoutException or ObjectDisposedException or TransferAgentException)
+            {
+                App.Record(exception, "FilesViewModel.DownloadItem.RefreshTransferTasks");
+                _transfers.ReportOperationError($"文件已加入传输队列，但任务状态刷新失败（{exception.GetType().Name}）：{exception.Message}");
+            }
         }
-        catch (Exception exception) when (exception is V2ApiException or IOException or UnauthorizedAccessException or InvalidOperationException)
-        { item.SetInlineTransferError(exception.Message); }
+        catch (Exception exception) when (exception is V2ApiException or IOException or UnauthorizedAccessException or
+            InvalidOperationException or TransferAgentException or TimeoutException or System.Security.SecurityException)
+        { ReportOpenFailure(item, showInlineStatus, exception.Message); }
     }
 
     private static async Task<bool> MatchesTicketAsync(string path, long expectedSize, string expectedHash)
     {
         if (!File.Exists(path)) return false;
-        var info = new FileInfo(path);
+        var fullPath = Path.GetFullPath(path);
+        var info = new FileInfo(fullPath);
         if (info.Length != expectedSize || expectedHash.Length != 64 || !expectedHash.All(Uri.IsHexDigit)) return false;
-        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+        if ((File.GetAttributes(fullPath) & FileAttributes.ReparsePoint) != 0)
             throw new InvalidDataException("本地文件缓存是链接路径，已拒绝打开。");
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
+
+        var cacheRoot = Path.GetFullPath(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "MuYingDrive", "OpenFiles"));
+        var appDirectory = Directory.GetParent(cacheRoot)?.FullName;
+        var pathComparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (appDirectory is null || !string.Equals(Path.GetDirectoryName(fullPath), cacheRoot, pathComparison))
+            throw new UnauthorizedAccessException("本地文件不在应用管理的打开缓存目录中。");
+        if ((File.GetAttributes(appDirectory) & FileAttributes.ReparsePoint) != 0 ||
+            (File.GetAttributes(cacheRoot) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("打开文件缓存目录包含链接路径，已拒绝读取。");
+
+        var stamp = new VerifiedOpenFileStamp(expectedSize, info.LastWriteTimeUtc.Ticks, expectedHash.ToUpperInvariant());
+        if (VerifiedOpenFiles.TryGetValue(fullPath, out var verified) && verified == stamp)
+            return true;
+
+        await using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read,
             128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
         var actual = await System.Security.Cryptography.SHA256.HashDataAsync(stream);
-        return Convert.ToHexString(actual).Equals(expectedHash, StringComparison.OrdinalIgnoreCase);
+        var after = new FileInfo(fullPath);
+        var matches = after.Exists && after.Length == expectedSize &&
+            after.LastWriteTimeUtc.Ticks == info.LastWriteTimeUtc.Ticks &&
+            Convert.ToHexString(actual).Equals(expectedHash, StringComparison.OrdinalIgnoreCase);
+        if (!matches)
+        {
+            VerifiedOpenFiles.TryRemove(fullPath, out _);
+            return false;
+        }
+
+        VerifiedOpenFiles[fullPath] = stamp;
+        if (VerifiedOpenFiles.Count > MaximumVerifiedOpenFileStamps)
+        {
+            foreach (var stalePath in VerifiedOpenFiles.Keys.Take(VerifiedOpenFiles.Count - MaximumVerifiedOpenFileStamps))
+                VerifiedOpenFiles.TryRemove(stalePath, out _);
+        }
+        return true;
     }
+
+    private sealed record VerifiedOpenFileStamp(long Size, long LastWriteUtcTicks, string Sha256);
 
     private static bool IsTransferActive(string state) => state is "queued" or "waiting_stable" or "hashing"
         or "transferring" or "verifying" or "staged" or "committing" or "paused" or "waiting_network" or "offline";
@@ -749,6 +843,7 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
         }
 
         if (snapshot.Source == "wpf" && snapshot.Kind.Contains("download", StringComparison.OrdinalIgnoreCase) &&
+            !IsMediaView &&
             !string.IsNullOrWhiteSpace(snapshot.FileId) && snapshot.ScopeId is not null)
         {
             foreach (var item in Files.Where(file => file.FileId == snapshot.FileId && file.RevisionId == snapshot.RevisionId
@@ -996,7 +1091,7 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
             Files.Clear();
             foreach (var entry in items)
                 Files.Add(ToDriveFileItem(entry));
-            ApplyExistingDownloadSnapshots();
+            if (!IsMediaView) ApplyExistingDownloadSnapshots();
             RemoveCommittedInlineUploads();
             ItemsView.Refresh();
             OnPropertyChanged(nameof(IsEmpty)); OnPropertyChanged(nameof(EmptyMessage));
@@ -1049,6 +1144,7 @@ public sealed class FilesViewModel : ObservableObject, IFileBrowser, IDisposable
             IsDirectory = entry.IsDirectory,
             IsReadOnly = entry.DeletedAt.HasValue,
             FileId = entry.FileId,
+            Sha256 = entry.Sha256,
             DirectoryId = entry.DirectoryId,
             ScopeId = entry.ScopeId,
             ProjectId = entry.ProjectId,

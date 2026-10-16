@@ -189,11 +189,14 @@ async fn handle_request(
         "configure" => configure(state, &request.payload).await,
         "get_state" => state_snapshot(state).await,
         "list_tasks" => task_list(state),
+        "list_tasks_for_update" => update_task_list(state),
+        "get_task" => task_by_id(state, &request.payload),
         "enqueue_upload" => enqueue_upload(state, &request.payload),
         "enqueue_batch" => enqueue_batch(state, &request.payload),
         "enqueue_download" => enqueue_download(state, &request.payload),
         "pause" => set_task_state(state, &request.payload, TaskState::Paused),
         "pause_for_shutdown" => pause_for_shutdown(state, &request.payload),
+        "resume_shutdown_paused" => resume_shutdown_paused(state, &request.payload),
         "resume" => set_task_state(state, &request.payload, TaskState::Queued),
         "resume_sync_roots" => resume_sync_roots(state, &request.payload),
         "resume_project_asset_downloads" => resume_project_asset_downloads(state, &request.payload),
@@ -305,6 +308,24 @@ async fn state_snapshot(state: &AgentState) -> Result<Value, (String, String, bo
 fn task_list(state: &AgentState) -> Result<Value, (String, String, bool)> {
     let tasks = state.queue.list_tasks().map_err(db_error)?;
     Ok(json!({"tasks":tasks}))
+}
+
+fn update_task_list(state: &AgentState) -> Result<Value, (String, String, bool)> {
+    let (total, tasks) = state.queue.list_tasks_for_update().map_err(db_error)?;
+    Ok(json!({"tasks":tasks,"total":total,"complete":total <= 1000}))
+}
+
+fn task_by_id(state: &AgentState, payload: &Value) -> Result<Value, (String, String, bool)> {
+    let payload: TaskIdPayload = serde_json::from_value(payload.clone()).map_err(|_| {
+        ("invalid_task_id".into(), "task_id is required".into(), false)
+    })?;
+    let task_id = Uuid::parse_str(&payload.task_id).map_err(|_| {
+        ("invalid_task_id".into(), "task_id must be a UUID".into(), false)
+    })?.to_string();
+    let task = state.queue.task_record(&task_id).map_err(db_error)?.ok_or_else(|| {
+        ("task_not_found".into(), "the task does not exist".into(), false)
+    })?;
+    Ok(json!({"task":task.snapshot}))
 }
 
 fn upload_task(
@@ -631,6 +652,29 @@ fn pause_for_shutdown(
         payload: json!({"state":"paused","reason":"shutdown"}),
     });
     Ok(json!({"task_id":task_id,"state":"paused","reason":"shutdown"}))
+}
+
+fn resume_shutdown_paused(
+    state: &AgentState,
+    payload: &Value,
+) -> Result<Value, (String, String, bool)> {
+    let payload: TaskIdPayload = serde_json::from_value(payload.clone()).map_err(|_| {
+        ("invalid_task_id".into(), "task_id is required".into(), false)
+    })?;
+    let task_id = Uuid::parse_str(&payload.task_id).map_err(|_| {
+        ("invalid_task_id".into(), "task_id must be a UUID".into(), false)
+    })?.to_string();
+    let resumed = state.queue.resume_shutdown_paused(&task_id).map_err(db_error)?;
+    if resumed {
+        state.emit(AgentEvent {
+            event: "task_state".into(),
+            seq: 0,
+            task_id: Some(task_id.clone()),
+            operation_id: Some(task_id.clone()),
+            payload: json!({"state":"queued","reason":"update_aborted"}),
+        });
+    }
+    Ok(json!({"task_id":task_id,"resumed":resumed}))
 }
 
 fn resume_sync_roots(state: &AgentState, payload: &Value) -> Result<Value, (String, String, bool)> {
