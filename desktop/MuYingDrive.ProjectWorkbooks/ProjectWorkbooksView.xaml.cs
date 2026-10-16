@@ -80,9 +80,14 @@ public partial class ProjectWorkbooksView : UserControl
     // replaced the draft it would be asking about is already gone.
     private void OnModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName != nameof(ProjectWorkbooksViewModel.Document)) return;
-        HideScenePanel();
-        HideAssetPanel();
+        if (e.PropertyName == nameof(ProjectWorkbooksViewModel.Document))
+        {
+            HideScenePanel();
+            HideAssetPanel();
+            return;
+        }
+        if (e.PropertyName == nameof(ProjectWorkbooksViewModel.VisibleAssets))
+            ScheduleViewport();
     }
     private void AdoptHostTheme()
     {
@@ -306,7 +311,9 @@ public partial class ProjectWorkbooksView : UserControl
             .Where(m => m.Success)
             .Select(m => int.Parse(m.Groups[1].Value))
             .ToList();
-        var nextNumber = matchNumbers.Count > 0 ? matchNumbers.Max() + 1 : 1;
+        var hasFirstEpisode = Model.Sheets.Any(s => s.IsScene && (s.Name is "第一集" or "节拍表"));
+        var highestNumber = matchNumbers.Count > 0 ? matchNumbers.Max() : 0;
+        var nextNumber = Math.Max(highestNumber, hasFirstEpisode ? 1 : 0) + 1;
         var defaultName = $"第{nextNumber}集";
         var sheetName = WorkflowDialogs.Prompt(Window.GetWindow(this), Resources, "新增集数", "请输入集数名称（如：第1集、第2集）：", defaultName, false);
         if (string.IsNullOrWhiteSpace(sheetName)) return;
@@ -391,6 +398,20 @@ public partial class ProjectWorkbooksView : UserControl
 
     private async Task UploadAssetPathsAsync(AssetRowItem row, IReadOnlyList<string> paths, bool selectedTarget,
         WorkbookUploadCard? retryCard = null)
+    {
+        try
+        {
+            await UploadAssetPathsCoreAsync(row, paths, selectedTarget, retryCard);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException
+            and not StackOverflowException and not AccessViolationException)
+        {
+            Model.ReportInlineStatus($"图片导入失败：{exception.Message}");
+        }
+    }
+
+    private async Task UploadAssetPathsCoreAsync(AssetRowItem row, IReadOnlyList<string> paths, bool selectedTarget,
+        WorkbookUploadCard? retryCard)
     {
         if (paths.Count == 0) return;
         if (selectedTarget && paths.Count != 1)
@@ -515,12 +536,6 @@ public partial class ProjectWorkbooksView : UserControl
         if (Row(sender) is { } row && ((FrameworkElement)sender).DataContext is ImageItem image)
             await Model.ExecuteAsync(() => Model.UpdateImagesAsync(row, row.Row.SelectedImage?.Id, row.Row.CandidateImages.Where(a => a.Id != image.Asset.Id).Select(a => a.Id)));
     }
-    private async void OnPreviewSelected(object sender, RoutedEventArgs e)
-    {
-        if (Row(sender) is not { } row) return;
-        if (row.Selected != null) await ReviewAsync(row, row.Selected);
-        else if (row.Row.CanEdit) await PickSelectedCandidateAsync(row);
-    }
     private async void OnPreviewCandidate(object sender, RoutedEventArgs e)
     {
         if (Row(sender) is not { } row || ((FrameworkElement)sender).DataContext is not ImageItem image) return;
@@ -541,20 +556,6 @@ public partial class ProjectWorkbooksView : UserControl
             MessageBox.Show(Window.GetWindow(this), $"无法打开图片：{ex.Message}", "打开失败", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
-    private async void OnOpenCandidateReview(object sender, RoutedEventArgs e)
-    { if (Row(sender) is { } row && ((FrameworkElement)sender).DataContext is ImageItem image) await ReviewAsync(row, image); }
-    private Task ReviewAsync(AssetRowItem row, ImageItem image) => Model.ExecuteAsync(async () =>
-    {
-        if (Model.Document is not { } document) return;
-        var fileId = document.File.Id;
-        var window = new ReviewWindow(new ReviewViewModel(Model.Service, fileId, row.Row.Id, image,
-            isReadOnly: Model.IsReadOnly))
-            { Owner = Window.GetWindow(this) };
-        window.Resources.MergedDictionaries.Add(Resources);
-        window.ShowDialog();
-        await Model.RefreshReviewSummariesAsync(fileId, row);
-    });
-
     private string RequireProject() => Model.SelectedProject?.Id ?? throw new InvalidDataException("请先选择项目。");
     private async Task<ProjectFile> SubmitPendingAsync()
     {
@@ -706,12 +707,14 @@ public partial class ProjectWorkbooksView : UserControl
 
     private async void OnAssetFieldLostFocus(object sender, RoutedEventArgs e)
     {
+        if (Model.IsReadOnly) return;
         if (Row(sender) is not { } row) return;
         await Model.ExecuteInlineAsync(() => Model.UpdateAssetFieldsAsync(row));
     }
 
     private async void OnAssetFieldKeyDown(object sender, KeyEventArgs e)
     {
+        if (Model.IsReadOnly) return;
         if (e.Key != Key.Enter) return;
         if (Row(sender) is not { } row) return;
         e.Handled = true;
@@ -758,12 +761,14 @@ public partial class ProjectWorkbooksView : UserControl
 
     private async void OnSceneFieldLostFocus(object sender, RoutedEventArgs e)
     {
+        if (Model.IsReadOnly) return;
         if (Scene(sender) is not { } row) return;
         await Model.ExecuteInlineAsync(() => Model.UpdateSceneFieldsAsync(row));
     }
 
     private async void OnSceneFieldKeyDown(object sender, KeyEventArgs e)
     {
+        if (Model.IsReadOnly) return;
         if (e.Key != Key.Enter) return;
         if (sender is TextBox { AcceptsReturn: true }) return;
         if (Scene(sender) is not { } row) return;
@@ -774,7 +779,7 @@ public partial class ProjectWorkbooksView : UserControl
 
     private async void OnSceneLevelSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!_loaded || Model.Busy) return;
+        if (Model.IsReadOnly || !_loaded || Model.Busy) return;
         if (Scene(sender) is not { } row) return;
         await Model.ExecuteInlineAsync(() => Model.UpdateSceneFieldsAsync(row));
     }
@@ -915,7 +920,7 @@ public partial class ProjectWorkbooksView : UserControl
         var picker = new OpenFileDialog
         {
             Title = "选择关联视频",
-            Filter = "视频文件 (*.mp4;*.mov;*.mkv;*.avi;*.webm)|*.mp4;*.mov;*.mkv;*.avi;*.webm|所有文件 (*.*)|*.*",
+            Filter = "视频文件 (*.mp4;*.mov;*.mkv;*.avi;*.webm;*.flv;*.wmv)|*.mp4;*.mov;*.mkv;*.avi;*.webm;*.flv;*.wmv|所有文件 (*.*)|*.*",
             Multiselect = true
         };
         if (picker.ShowDialog(Window.GetWindow(this)) != true) return;
@@ -1014,6 +1019,14 @@ public partial class ProjectWorkbooksView : UserControl
     private bool _viewportScheduled;
     private void OnWorkbookScroll(object sender, ScrollChangedEventArgs e) => ScheduleViewport();
     private void OnRowLoaded(object sender, RoutedEventArgs e) => ScheduleViewport();
+    private async void OnRetryThumbnail(object sender, RoutedEventArgs e)
+    {
+        var element = sender as FrameworkElement;
+        var image = element?.Tag as ImageItem ?? element?.DataContext as ImageItem;
+        if (image == null) return;
+        image.ClearError();
+        await Model.EnsureThumbnailAsync(image);
+    }
     private void ScheduleViewport()
     {
         if (_viewportScheduled) return; _viewportScheduled = true;
@@ -1021,16 +1034,17 @@ public partial class ProjectWorkbooksView : UserControl
         {
             _viewportScheduled = false;
             if (Model.Document is not { } document) return;
-            var work = new List<Task>(); var assets = new HashSet<AssetRowItem>(); var scenes = new HashSet<SceneRowItem>();
+            var work = new List<Task>(); var assets = new HashSet<AssetRowItem>(); var images = new HashSet<ImageItem>(); var scenes = new HashSet<SceneRowItem>();
             foreach (var element in Descendants(WorkbookScroll))
             {
                 if (!InViewport(element, WorkbookScroll)) continue;
                 if (element.DataContext is AssetRowItem asset && assets.Add(asset))
                 {
-                    if (asset.Selected != null) work.Add(Model.EnsureThumbnailAsync(asset.Selected));
-                    foreach (var candidate in asset.Candidates) work.Add(Model.EnsureThumbnailAsync(candidate));
+                    if (asset.Selected != null && images.Add(asset.Selected)) work.Add(Model.EnsureThumbnailAsync(asset.Selected));
                     if (!asset.SummaryLoaded) work.Add(Model.RefreshReviewSummariesAsync(document.File.Id, asset));
                 }
+                if (element.DataContext is ImageItem image && images.Add(image))
+                    work.Add(Model.EnsureThumbnailAsync(image));
                 if (element.DataContext is SceneRowItem scene && !scene.SummaryLoaded && scenes.Add(scene))
                     work.Add(Model.RefreshSceneSummaryAsync(document.File.Id, scene));
             }

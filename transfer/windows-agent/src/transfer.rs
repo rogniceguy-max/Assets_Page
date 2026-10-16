@@ -36,6 +36,23 @@ const MAX_CLAIMED_BATCH_ITEMS: usize = 64;
 const MAX_AUTO_RETRIES: u32 = 5;
 const FILE_STABLE_CHECK_MS: u64 = 400;
 
+fn transfer_resource_url(collection_url: &str, resource_id: &str) -> String {
+    format!(
+        "{}/{}",
+        collection_url.trim_end_matches('/'),
+        urlencoding::encode(resource_id)
+    )
+}
+
+fn transfer_resource_action_url(collection_url: &str, resource_id: &str, action: &str) -> String {
+    format!(
+        "{}/{}/{}",
+        collection_url.trim_end_matches('/'),
+        urlencoding::encode(resource_id),
+        action
+    )
+}
+
 pub async fn run_workers(state: Arc<AgentState>) {
     let _ = state.queue.recover_interrupted();
     loop {
@@ -430,11 +447,7 @@ async fn upload_one(
             file.read_exact(&mut chunk).await?;
             let chunk_sha = hex::encode(Sha256::digest(&chunk));
             let end = start + remaining - 1;
-            let chunk_url = format!(
-                "{}/{}/chunks",
-                transfer_url.trim_end_matches("/uploads"),
-                init.upload_id
-            );
+            let chunk_url = transfer_resource_action_url(&init_url, &init.upload_id, "chunks");
             let response = state
                 .api
                 .put(&chunk_url)
@@ -494,11 +507,7 @@ async fn upload_one(
             .clear_commit_started_before_send(&current.snapshot.operation_id);
         return Err(error);
     }
-    let commit_url = format!(
-        "{}/{}/commit",
-        transfer_url.trim_end_matches("/uploads"),
-        init.upload_id
-    );
+    let commit_url = transfer_resource_action_url(&init_url, &init.upload_id, "commit");
     let response = state
         .api
         .post(&commit_url)
@@ -1060,11 +1069,7 @@ async fn download_one(state: &Arc<AgentState>, task: &mut TaskRecord) -> Result<
     while current < download.size {
         ensure_task_active(state, &task.snapshot.operation_id).await?;
         let end = (current + download.chunk_size - 1).min(download.size - 1);
-        let url = format!(
-            "{}/{}",
-            init_url.trim_end_matches("/downloads"),
-            download.download_id
-        );
+        let url = transfer_resource_url(&init_url, &download.download_id);
         let response = state
             .api
             .get(url)
@@ -1559,4 +1564,36 @@ fn is_definitive_http_rejection(error: &anyhow::Error) -> bool {
                 })
                 .is_some_and(|status| (400..500).contains(&status))
         })
+}
+
+#[cfg(test)]
+mod transfer_url_tests {
+    use super::{transfer_resource_action_url, transfer_resource_url};
+
+    #[test]
+    fn upload_resource_urls_keep_the_uploads_prefix() {
+        let endpoint = "https://nas.example/transfer/v1/uploads/";
+        let upload_id = "upload-123";
+
+        assert_eq!(
+            transfer_resource_action_url(endpoint, upload_id, "chunks"),
+            "https://nas.example/transfer/v1/uploads/upload-123/chunks"
+        );
+        assert_eq!(
+            transfer_resource_action_url(endpoint, upload_id, "commit"),
+            "https://nas.example/transfer/v1/uploads/upload-123/commit"
+        );
+        assert_eq!(
+            transfer_resource_action_url(endpoint, upload_id, "abort"),
+            "https://nas.example/transfer/v1/uploads/upload-123/abort"
+        );
+    }
+
+    #[test]
+    fn download_resource_url_keeps_the_downloads_prefix() {
+        assert_eq!(
+            transfer_resource_url("https://nas.example/transfer/v1/downloads/", "download-456"),
+            "https://nas.example/transfer/v1/downloads/download-456"
+        );
+    }
 }

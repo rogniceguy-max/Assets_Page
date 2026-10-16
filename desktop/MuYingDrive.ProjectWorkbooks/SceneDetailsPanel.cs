@@ -96,6 +96,7 @@ public sealed class SceneDetailsPanel : UserControl
 
     private void CommitChanges()
     {
+        if (_model.IsReadOnly) return;
         var planText = _plan.Text;
         var dirty = !string.Equals(planText, _item.BreakdownPlanDraft, StringComparison.Ordinal);
         if (!dirty) return;

@@ -164,7 +164,7 @@ pub struct QueueStore {
 
 impl QueueStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let connection = Connection::open(path).context("open local transfer queue")?;
+        let mut connection = Connection::open(path).context("open local transfer queue")?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "synchronous", "NORMAL")?;
         connection.execute_batch(
@@ -299,6 +299,40 @@ impl QueueStore {
                 "ALTER TABLE tasks ADD COLUMN retry_at INTEGER NOT NULL DEFAULT 0",
                 [],
             )?;
+        }
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS agent_schema_migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at INTEGER NOT NULL
+            );",
+        )?;
+        let legacy_transfer_404_migration_applied: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM agent_schema_migrations WHERE version=1)",
+            [],
+            |row| row.get(0),
+        )?;
+        if !legacy_transfer_404_migration_applied {
+            let transaction = connection.transaction()?;
+            transaction.execute(
+                "UPDATE tasks SET retryable=1
+                 WHERE state='failed'
+                    AND kind='upload'
+                    AND source='wpf'
+                    AND error_code='transfer_failed'
+                    AND message LIKE 'transfer_http_404:%'
+                    AND bytes_done=0
+                    AND commit_started=0
+                    AND EXISTS (
+                        SELECT 1 FROM upload_checkpoints c
+                        WHERE c.operation_id=tasks.operation_id AND c.received_bytes=0
+                    )",
+                [],
+            )?;
+            transaction.execute(
+                "INSERT INTO agent_schema_migrations(version,applied_at) VALUES(1,?1)",
+                [unix_now()],
+            )?;
+            transaction.commit()?;
         }
         Ok(Self {
             connection: Mutex::new(connection),
@@ -1373,6 +1407,263 @@ mod tests {
             replace_if_hash: None,
             batch_parent_id: None,
         }
+    }
+
+    #[test]
+    fn legacy_transfer_404_tasks_become_retryable_once() {
+        let path = std::env::temp_dir().join(format!("transfer-queue-{}.sqlite", Uuid::new_v4()));
+        let retryable_404 = Uuid::new_v4().to_string();
+        let sync_404 = Uuid::new_v4().to_string();
+        let missing_checkpoint_404 = Uuid::new_v4().to_string();
+        let partial_404 = Uuid::new_v4().to_string();
+        let non_upload_404 = Uuid::new_v4().to_string();
+        let unrelated_error = Uuid::new_v4().to_string();
+        {
+            let queue = QueueStore::open(&path).unwrap();
+            queue
+                .enqueue(&upload_task(retryable_404.clone(), "wpf", None))
+                .unwrap();
+            queue
+                .enqueue(&upload_task(sync_404.clone(), "sync", None))
+                .unwrap();
+            queue
+                .enqueue(&upload_task(missing_checkpoint_404.clone(), "wpf", None))
+                .unwrap();
+            queue
+                .enqueue(&upload_task(partial_404.clone(), "wpf", None))
+                .unwrap();
+            let mut delete_task = upload_task(non_upload_404.clone(), "wpf", None);
+            delete_task.kind = TaskKind::Delete;
+            queue.enqueue(&delete_task).unwrap();
+            queue
+                .enqueue(&upload_task(unrelated_error.clone(), "wpf", None))
+                .unwrap();
+            queue
+                .save_checkpoint(&retryable_404, "upload-target", 1024, 0, "[]")
+                .unwrap();
+            queue
+                .save_checkpoint(&sync_404, "upload-sync", 1024, 0, "[]")
+                .unwrap();
+            queue
+                .save_checkpoint(&partial_404, "upload-partial", 1024, 3, "[]")
+                .unwrap();
+            queue
+                .update_worker_state(
+                    &retryable_404,
+                    TaskState::Failed,
+                    Some(0),
+                    Some("transfer_failed"),
+                    Some("transfer_http_404: old upload route"),
+                    false,
+                    0,
+                )
+                .unwrap();
+            queue
+                .update_worker_state(
+                    &sync_404,
+                    TaskState::Failed,
+                    Some(0),
+                    Some("transfer_failed"),
+                    Some("transfer_http_404: sync source"),
+                    false,
+                    0,
+                )
+                .unwrap();
+            queue
+                .update_worker_state(
+                    &missing_checkpoint_404,
+                    TaskState::Failed,
+                    Some(0),
+                    Some("transfer_failed"),
+                    Some("transfer_http_404: no upload checkpoint"),
+                    false,
+                    0,
+                )
+                .unwrap();
+            queue
+                .update_worker_state(
+                    &partial_404,
+                    TaskState::Failed,
+                    Some(3),
+                    Some("transfer_failed"),
+                    Some("transfer_http_404: partial transfer"),
+                    false,
+                    0,
+                )
+                .unwrap();
+            queue
+                .update_worker_state(
+                    &non_upload_404,
+                    TaskState::Failed,
+                    Some(0),
+                    Some("transfer_failed"),
+                    Some("transfer_http_404: unrelated delete"),
+                    false,
+                    0,
+                )
+                .unwrap();
+            queue
+                .update_worker_state(
+                    &unrelated_error,
+                    TaskState::Failed,
+                    Some(0),
+                    Some("transfer_failed"),
+                    Some("transfer_http_500: server error"),
+                    false,
+                    0,
+                )
+                .unwrap();
+        }
+
+        // Simulate a queue created before this migration was introduced.
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute("DELETE FROM agent_schema_migrations WHERE version=1", [])
+                .unwrap();
+        }
+
+        {
+            let queue = QueueStore::open(&path).unwrap();
+            let tasks = queue.list_tasks().unwrap();
+            let retryable = tasks
+                .iter()
+                .find(|task| task.operation_id == retryable_404)
+                .unwrap();
+            let sync = tasks
+                .iter()
+                .find(|task| task.operation_id == sync_404)
+                .unwrap();
+            let no_checkpoint = tasks
+                .iter()
+                .find(|task| task.operation_id == missing_checkpoint_404)
+                .unwrap();
+            let partial = tasks
+                .iter()
+                .find(|task| task.operation_id == partial_404)
+                .unwrap();
+            let delete = tasks
+                .iter()
+                .find(|task| task.operation_id == non_upload_404)
+                .unwrap();
+            let server_error = tasks
+                .iter()
+                .find(|task| task.operation_id == unrelated_error)
+                .unwrap();
+            assert!(retryable.retryable);
+            assert!(!sync.retryable);
+            assert!(!no_checkpoint.retryable);
+            assert!(!partial.retryable);
+            assert!(!delete.retryable);
+            assert!(!server_error.retryable);
+        }
+
+        // A subsequent restart must not re-enable a task after it fails again.
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute(
+                    "UPDATE tasks SET retryable=0 WHERE operation_id=?1",
+                    [&retryable_404],
+                )
+                .unwrap();
+        }
+        {
+            let queue = QueueStore::open(&path).unwrap();
+            let task = queue
+                .list_tasks()
+                .unwrap()
+                .into_iter()
+                .find(|task| task.operation_id == retryable_404)
+                .unwrap();
+            assert!(!task.retryable);
+        }
+
+        remove_test_db(&path);
+    }
+
+    #[test]
+    fn legacy_transfer_404_migration_runs_after_commit_started_column_upgrade() {
+        let path = std::env::temp_dir().join(format!("transfer-queue-{}.sqlite", Uuid::new_v4()));
+        let operation_id = Uuid::new_v4().to_string();
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE tasks (
+                        task_id TEXT PRIMARY KEY,
+                        operation_id TEXT NOT NULL UNIQUE,
+                        kind TEXT NOT NULL,
+                        state TEXT NOT NULL,
+                        source_path TEXT,
+                        destination_path TEXT,
+                        logical_path TEXT,
+                        scope_id TEXT,
+                        project_id TEXT,
+                        display_name TEXT NOT NULL,
+                        folder_group TEXT NOT NULL,
+                        file_id TEXT,
+                        revision_id TEXT,
+                        object_id TEXT,
+                        expected_version INTEGER,
+                        media_type TEXT,
+                        source TEXT NOT NULL DEFAULT 'wpf',
+                        transfer_url TEXT NOT NULL,
+                        ticket TEXT NOT NULL,
+                        bytes_total INTEGER,
+                        replace_if_hash TEXT,
+                        bytes_done INTEGER NOT NULL DEFAULT 0,
+                        attempt INTEGER NOT NULL DEFAULT 0,
+                        retryable INTEGER NOT NULL DEFAULT 0,
+                        error_code TEXT,
+                        message TEXT,
+                        batch_parent_id TEXT,
+                        root_id TEXT,
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    );
+                    CREATE TABLE upload_checkpoints (
+                        operation_id TEXT PRIMARY KEY,
+                        upload_id TEXT NOT NULL,
+                        chunk_size INTEGER NOT NULL,
+                        received_bytes INTEGER NOT NULL DEFAULT 0,
+                        missing_ranges_json TEXT NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    );",
+                )
+                .unwrap();
+            let now = unix_now();
+            connection
+                .execute(
+                    "INSERT INTO tasks(
+                        task_id,operation_id,kind,state,source_path,logical_path,display_name,folder_group,
+                        source,transfer_url,ticket,bytes_total,bytes_done,retryable,error_code,message,created_at,updated_at
+                     ) VALUES(?1,?1,'upload','failed','C:\\episode\\cut.mp4','episode/cut.mp4','cut.mp4','episode',
+                        'wpf','https://nas.example/transfer/v1','ticket',4096,0,0,'transfer_failed',
+                        'transfer_http_404: old chunk URL',?2,?2)",
+                    params![operation_id, now],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO upload_checkpoints(operation_id,upload_id,chunk_size,received_bytes,missing_ranges_json,updated_at)
+                     VALUES(?1,'existing-upload',1024,0,'[]',?2)",
+                    params![operation_id, now],
+                )
+                .unwrap();
+        }
+
+        let queue = QueueStore::open(&path).unwrap();
+        let task = queue
+            .list_tasks()
+            .unwrap()
+            .into_iter()
+            .find(|task| task.operation_id == operation_id)
+            .unwrap();
+        assert!(task.retryable);
+        assert!(!task.commit_started);
+        drop(queue);
+        remove_test_db(&path);
     }
 
     #[test]

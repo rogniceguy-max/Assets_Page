@@ -249,7 +249,7 @@ fn validate_upload_claims(
 }
 
 async fn acquire_slot(
-    semaphore: &Semaphore,
+    semaphore: &Arc<Semaphore>,
     queue_name: &'static str,
 ) -> Result<tokio::sync::OwnedSemaphorePermit, ApiError> {
     semaphore.clone().try_acquire_owned().map_err(|_| {

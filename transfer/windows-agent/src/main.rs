@@ -1,6 +1,7 @@
 mod api;
 mod ipc;
 mod queue;
+mod tls;
 mod transfer;
 mod watcher;
 
@@ -99,10 +100,7 @@ async fn run_windows() -> Result<()> {
         queue,
         events,
         watcher_commands,
-        api: reqwest::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(120))
-            .build()?,
+        api: tls::build_nas_client()?,
         next_event_seq: std::sync::atomic::AtomicU64::new(1),
         shutting_down: std::sync::atomic::AtomicBool::new(false),
         shutdown_notify: tokio::sync::Notify::new(),

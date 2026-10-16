@@ -64,8 +64,12 @@ public partial class MainWindow : Window
             {
                 canClose = await _viewModel.PrepareForShutdownAsync();
             }
-            catch
+            catch (Exception exception)
             {
+                App.Record(exception, "MainWindow.PrepareForShutdown");
+                MessageBox.Show(
+                    $"更新关闭准备失败，沐影盘仍保持打开。{Environment.NewLine}{exception.GetType().Name}: {exception.Message}",
+                    "暂时无法更新", MessageBoxButton.OK, MessageBoxImage.Warning);
                 canClose = false;
             }
 
@@ -74,6 +78,36 @@ public partial class MainWindow : Window
                 if (!string.IsNullOrWhiteSpace(_viewModel.UpdateCloseErrorMessage))
                     MessageBox.Show(_viewModel.UpdateCloseErrorMessage, "暂时无法关闭", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
+            }
+
+            if (_viewModel.HasPreparedUpdateHandoff)
+            {
+                try
+                {
+                    await _viewModel.StopAgentForUpdateAsync();
+                }
+                catch (Exception exception)
+                {
+                    App.Record(exception, "MainWindow.Update.StopAgent");
+                    try { await _viewModel.AbortPreparedUpdateCloseAsync(); }
+                    catch (Exception resumeException) { App.Record(resumeException, "MainWindow.Update.ResumeAfterStopFailure"); }
+                    MessageBox.Show(
+                        $"更新已取消，沐影盘仍保持打开。传输代理未能安全停止。{Environment.NewLine}{exception.GetType().Name}: {exception.Message}",
+                        "无法安全关闭传输代理", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
+                if (!_viewModel.LaunchPreparedUpdater())
+                {
+                    try { await _viewModel.AbortPreparedUpdateCloseAsync(); }
+                    catch (Exception exception) { App.Record(exception, "MainWindow.Update.ResumeAfterLaunchFailure"); }
+                    MessageBox.Show(
+                        string.IsNullOrWhiteSpace(_viewModel.UpdateCloseErrorMessage)
+                            ? "无法启动独立更新程序。本次更新已取消，沐影盘仍保持打开。"
+                            : _viewModel.UpdateCloseErrorMessage,
+                        "暂时无法更新", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
             }
 
             try
@@ -100,12 +134,14 @@ public partial class MainWindow : Window
                     $"沐影盘即将关闭，但传输代理未能确认完全停止。{Environment.NewLine}{_viewModel.AgentShutdownWarning}",
                     "传输代理未完全关闭", MessageBoxButton.OK, MessageBoxImage.Warning);
 
-            if (_viewModel.HasPreparedUpdateHandoff)
-                _viewModel.LaunchPreparedUpdater();
             shouldClose = true;
         }
-        catch
+        catch (Exception exception)
         {
+            App.Record(exception, "MainWindow.OnClosing");
+            MessageBox.Show(
+                $"关闭时遇到问题，沐影盘仍保持打开。{Environment.NewLine}{exception.GetType().Name}: {exception.Message}",
+                "暂时无法关闭", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         finally
         {

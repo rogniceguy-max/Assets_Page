@@ -76,7 +76,7 @@ public sealed class AgentProjectImageFileTransfer : IProjectFileTransfer
             queuedOperationId = await _transfers.QueueUploadAsync(localPath, $"project:{projectId}", projectId,
                 logicalPath, displayName: Path.GetFileNameWithoutExtension(fileName),
                 cancellationToken: cancellationToken, operationId: resolvedOperationId,
-                source: "project_workbook").ConfigureAwait(false);
+                source: "wpf").ConfigureAwait(false);
         }
         if (queuedOperationId is null)
             throw new IOException(string.IsNullOrWhiteSpace(_transfers.OperationErrorMessage)

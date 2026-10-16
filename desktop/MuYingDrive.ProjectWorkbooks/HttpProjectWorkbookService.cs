@@ -84,6 +84,12 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
     {
         if (mediaType is not ("image/png" or "image/jpeg" or "image/webp")) throw new InvalidDataException("不支持该图片类型。");
     }
+    private static void VideoType(string mediaType)
+    {
+        if (mediaType is not ("video/mp4" or "video/quicktime" or "video/x-matroska" or "video/webm"
+            or "video/x-msvideo" or "video/x-flv" or "video/x-ms-wmv"))
+            throw new InvalidDataException("不支持该视频类型。");
+    }
     private static string? LimitedText(string? value, int max, bool nonEmpty = false)
     {
         if (nonEmpty && string.IsNullOrWhiteSpace(value)) throw new InvalidDataException("请填写处理说明。");
@@ -353,7 +359,7 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
     public async Task<ProjectFileTransferResult> UploadProjectFileAsync(string projectId, string fileName,
         string mediaType, string localPath, string logicalPath, CancellationToken ct = default, string? operationId = null)
     {
-        ImageType(mediaType);
+        VideoType(mediaType);
         _ = Id(projectId);
         if (_imageTransfer is null)
             throw new WorkbookApiException(409, "TRANSFER_REQUIRED", "项目文件必须通过本地传输代理上传。");

@@ -45,7 +45,8 @@
   </Style>
   <DataTemplate x:Key="WorkbookUploadCardTemplate">
    <Border Background="{DynamicResource Brush.Surface.Panel}" BorderBrush="{DynamicResource Brush.Border.Subtle}"
-           BorderThickness="1" CornerRadius="4" Padding="7" Margin="0,5,5,0">
+           BorderThickness="1" CornerRadius="4" Padding="7" Margin="0,5,5,0"
+           Visibility="{Binding HasError, Converter={StaticResource BoolVisibility}}">
     <Grid>
      <Grid.ColumnDefinitions><ColumnDefinition Width="38"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
      <Border Width="32" Height="32" Background="{DynamicResource Brush.Surface.Canvas}" ClipToBounds="True" VerticalAlignment="Top">
@@ -59,22 +60,12 @@
      <StackPanel Grid.Column="1">
       <TextBlock Text="{Binding DisplayName}" FontSize="11" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding LocalPath}"/>
       <TextBlock Text="{Binding State}" FontSize="10" Foreground="{DynamicResource Brush.Text.Secondary}"/>
-      <TextBlock Text="{Binding ProgressLabel}" FontSize="9" Foreground="{DynamicResource Brush.Text.Secondary}"
-                 Visibility="{Binding HasProgress, Converter={StaticResource BoolVisibility}}"/>
-      <ProgressBar Height="3" Maximum="100" Value="{Binding Progress}"
-                   Visibility="{Binding HasProgress, Converter={StaticResource BoolVisibility}}"/>
-      <ProgressBar Height="3" IsIndeterminate="True"
-                   Visibility="{Binding IsBusy, Converter={StaticResource BoolVisibility}}"/>
       <TextBlock Text="{Binding Error}" FontSize="10" Foreground="{DynamicResource Brush.Status.Danger}"
                  TextWrapping="Wrap" Visibility="{Binding HasError, Converter={StaticResource BoolVisibility}}"/>
       <TextBlock Text="{Binding FileId, StringFormat=文件 ID：{0}}" FontSize="9" Foreground="{DynamicResource Brush.Text.Secondary}"
                  Visibility="{Binding HasFileId, Converter={StaticResource BoolVisibility}}"/>
-      <StackPanel Orientation="Horizontal">
-       <Button Content="重试" Padding="5,1" HorizontalAlignment="Left" Click="OnRetryUploadCard"
-               Visibility="{Binding CanRetry, Converter={StaticResource BoolVisibility}}"/>
-       <Button Content="取消" Padding="5,1" Margin="4,0,0,0" HorizontalAlignment="Left" Click="OnCancelUploadCard"
-               Visibility="{Binding CanCancel, Converter={StaticResource BoolVisibility}}"/>
-      </StackPanel>
+      <Button Content="重试" Padding="5,1" HorizontalAlignment="Left" Click="OnRetryUploadCard"
+              Visibility="{Binding CanRetry, Converter={StaticResource BoolVisibility}}"/>
      </StackPanel>
     </Grid>
    </Border>
@@ -273,23 +264,12 @@
               <TextBlock Grid.Column="1" Text="▶" FontSize="9" Margin="4,0,0,0"
                          Foreground="{DynamicResource Brush.Text.Secondary}" VerticalAlignment="Center"/>
              </Grid>
-             <StackPanel Margin="0,5,0,0" Visibility="{Binding HasDownloadStatus, Converter={StaticResource BoolVisibility}}">
-              <TextBlock Text="{Binding DownloadStatus}" FontSize="10"
-                         Foreground="{DynamicResource Brush.Text.Secondary}"/>
+             <StackPanel Margin="0,5,0,0" Visibility="{Binding HasDownloadError, Converter={StaticResource BoolVisibility}}">
               <TextBlock Text="{Binding DownloadError}" FontSize="10" TextWrapping="Wrap"
                          Foreground="{DynamicResource Brush.Status.Danger}"
                          Visibility="{Binding HasDownloadError, Converter={StaticResource BoolVisibility}}"/>
-              <ProgressBar Height="4" Margin="0,3,0,0" Minimum="0" Maximum="100" Value="{Binding Progress}"
-                           Visibility="{Binding HasProgress, Converter={StaticResource BoolVisibility}}"/>
-              <TextBlock Text="{Binding ProgressLabel}" FontSize="9"
-                         Foreground="{DynamicResource Brush.Text.Secondary}"
-                         Visibility="{Binding HasProgress, Converter={StaticResource BoolVisibility}}"/>
-              <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
-               <Button Content="重试" Padding="6,1" FontSize="10" Click="OnPlayVideoDirectly"
-                       Visibility="{Binding CanRetry, Converter={StaticResource BoolVisibility}}"/>
-               <Button Content="取消下载" Padding="6,1" Margin="4,0,0,0" FontSize="10" Click="OnCancelVideoDownload"
-                       Visibility="{Binding CanCancel, Converter={StaticResource BoolVisibility}}"/>
-              </StackPanel>
+              <Button Content="重试" Padding="6,1" FontSize="10" Click="OnPlayVideoDirectly"
+                      Visibility="{Binding CanRetry, Converter={StaticResource BoolVisibility}}"/>
              </StackPanel>
             </StackPanel>
            </Border>
@@ -365,7 +345,6 @@
           <ContextMenu>
            <MenuItem Header="更换图片" Tag="selected" Click="OnPickSelectedCandidate" IsEnabled="{Binding Row.CanEdit}"
                      Visibility="{Binding Row.CanEdit, Converter={StaticResource BoolVisibility}}"/>
-           <MenuItem Header="查看大图与评价" Click="OnPreviewSelected"/>
            <Separator/>
            <MenuItem Header="从选定清空" Click="OnClearSelected" IsEnabled="{Binding Row.CanEdit}"
                      Visibility="{Binding Row.CanEdit, Converter={StaticResource BoolVisibility}}"/>
@@ -374,7 +353,18 @@
                      Visibility="{Binding Row.CanEdit, Converter={StaticResource BoolVisibility}}"/>
           </ContextMenu>
          </Grid.ContextMenu>
-         <Image Source="{Binding Selected.Preview}" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          <Image Source="{Binding Selected.Preview}" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"
+                 Loaded="OnRowLoaded"/>
+          <TextBlock Text="正在加载缩略图…" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}"
+                     HorizontalAlignment="Center" VerticalAlignment="Center"
+                     Panel.ZIndex="2" Visibility="{Binding Selected.IsLoading, Converter={StaticResource BoolVisibility}}"/>
+          <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="220" Panel.ZIndex="2"
+                      Visibility="{Binding Selected.HasError, Converter={StaticResource BoolVisibility}}">
+           <TextBlock Text="{Binding Selected.Error}" FontSize="10" Foreground="{DynamicResource Brush.Status.Danger}"
+                      TextWrapping="Wrap" TextAlignment="Center"/>
+           <Button Content="重试缩略图" Padding="6,2" Margin="0,5,0,0" Tag="{Binding Selected}"
+                   Click="OnRetryThumbnail" HorizontalAlignment="Center"/>
+          </StackPanel>
          <Border Background="#88000000" Cursor="Hand" Tag="selected" MouseLeftButtonUp="OnPickSelectedCandidate" ToolTip="点击更换图片"
                  Visibility="{Binding Row.CanEdit, Converter={StaticResource BoolVisibility}}">
           <Border.Style>
@@ -427,7 +417,6 @@
              <MenuItem Header="设为选定图片" Click="OnUseCandidate"
                        Visibility="{Binding PlacementTarget.Tag.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolVisibility}}"/>
              <MenuItem Header="使用系统默认程序打开" Click="OnPreviewCandidate"/>
-             <MenuItem Header="查看大图与评价" Click="OnOpenCandidateReview"/>
              <Separator/>
              <MenuItem Header="从备选移除" Click="OnRemoveCandidate"
                        Visibility="{Binding PlacementTarget.Tag.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolVisibility}}"/>
@@ -437,13 +426,21 @@
                        Visibility="{Binding PlacementTarget.Tag.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolVisibility}}"/>
             </ContextMenu>
            </Border.ContextMenu>
-           <Grid Width="64" Height="64">
+             <Grid Width="64" Height="64">
             <Button Click="OnPreviewCandidate" Padding="0" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" ToolTip="点击使用系统默认程序打开（右键菜单更多操作）">
-             <Image Source="{Binding Preview}" Stretch="Uniform"/>
+              <Image Source="{Binding Preview}" Stretch="Uniform" Loaded="OnRowLoaded"/>
             </Button>
-            <Button Content="✕" Click="OnRemoveCandidate" HorizontalAlignment="Right" VerticalAlignment="Top" Width="16" Height="16" Padding="0" FontSize="9"
-                    Opacity="0.8" ToolTip="移除备选" IsEnabled="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
-                    Visibility="{Binding DataContext.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ItemsControl}, Converter={StaticResource BoolVisibility}}"/>
+             <TextBlock Text="加载中…" FontSize="9" Foreground="{DynamicResource Brush.Text.Secondary}"
+                        HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"
+                        Visibility="{Binding IsLoading, Converter={StaticResource BoolVisibility}}"/>
+             <Border Background="#E6101113" Padding="2" IsHitTestVisible="True"
+                     Visibility="{Binding HasError, Converter={StaticResource BoolVisibility}}">
+              <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+               <TextBlock Text="缩略图失败" FontSize="8" Foreground="{DynamicResource Brush.Status.Danger}"
+                          TextAlignment="Center" ToolTip="{Binding Error}"/>
+               <Button Content="重试" Padding="2,0" FontSize="8" Tag="{Binding}" Click="OnRetryThumbnail"/>
+              </StackPanel>
+             </Border>
            </Grid>
           </Border>
          </DataTemplate>
@@ -465,7 +462,6 @@
       </StackPanel>
      </Border>
     </local:ResponsiveColumnsPanel>
-    <ItemsControl ItemsSource="{Binding TransferCards}" ItemTemplate="{StaticResource WorkbookUploadCardTemplate}" Margin="10,0,10,8"/>
     </StackPanel>
    </Border>
   </DataTemplate>
@@ -550,7 +546,7 @@
      <WrapPanel Margin="0,0,0,12"><ComboBox ItemsSource="{Binding Sheets}" SelectedItem="{Binding SelectedSheet}" MinWidth="140" MaxWidth="280" Margin="0,0,12,0">
        <ComboBox.ItemTemplate>
         <DataTemplate>
-         <TextBlock Text="{Binding Name}"/>
+         <TextBlock Text="{Binding DisplayName}"/>
         </DataTemplate>
        </ComboBox.ItemTemplate>
       </ComboBox>

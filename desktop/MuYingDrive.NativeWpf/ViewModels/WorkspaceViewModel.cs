@@ -390,6 +390,7 @@ public sealed class WorkspaceViewModel : ObservableObject
             {
                 if (key == "反馈" && feedback is not null) _ = feedback.EnsureLoadedAsync();
                 else if (key == "同步" && sync is not null) _ = sync.InitializeAsync();
+                else if (key == "传输" && transfers is not null) _ = transfers.InitializeAsync();
             });
 
         workspace._projectWorkbooksPage = projectWorkbooks;
@@ -701,7 +702,10 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     public async Task InitializeAsync()
     {
-        if (_transfers is not null) await _transfers.InitializeAsync().ConfigureAwait(true);
+        // A local transfer agent is an optional subsystem. Its pipe/process may fail even
+        // when the authenticated NAS session is valid, so login and session restoration
+        // must not wait for it. Start the agent when the transfer page is opened or a
+        // transfer operation requests it.
         if (Files is not null) await Files.InitializeAsync().ConfigureAwait(true);
     }
 

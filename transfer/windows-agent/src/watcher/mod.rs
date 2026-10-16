@@ -86,7 +86,7 @@ mod common;
 mod events;
 mod feed;
 mod reconcile;
-use events::run;
+pub(crate) use events::run;
 
 #[cfg(test)]
 mod path_safety_tests {

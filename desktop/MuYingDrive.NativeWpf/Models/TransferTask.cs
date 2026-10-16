@@ -22,6 +22,7 @@ public sealed class TransferTask : ObservableObject
     private string? _errorMessage;
     private bool _isFolderTransfer;
     private bool? _canRetryOverride;
+    private bool? _canCancelOverride;
     private bool _commitStarted;
     private string? _agentState;
     private long _lastRevision = -1;
@@ -106,7 +107,9 @@ public sealed class TransferTask : ObservableObject
     public bool CanResume => State == TransferState.Paused;
     public bool CanRetry => _canRetryOverride ?? State is TransferState.Failed or TransferState.Conflict;
     public bool CanCancel => !CommitOutcomeUnknown &&
-        (State is TransferState.Queued or TransferState.Running or TransferState.Paused or TransferState.Failed);
+        (_canCancelOverride ?? (_agentState is not null
+            ? TransferTaskStateProjection.CanCancel(_agentState, _commitStarted)
+            : State is TransferState.Queued or TransferState.Running or TransferState.Paused));
 
     public string StateLabel => _agentState is not null
         ? TransferTaskStateProjection.Label(_agentState)
@@ -151,12 +154,17 @@ public sealed class TransferTask : ObservableObject
     }
 
     public void UpdateManual(long totalBytes, long bytesTransferred, TransferState state, string? error = null,
-        bool? canRetry = null)
+        bool? canRetry = null, bool? canCancel = null)
     {
         if (_canRetryOverride != canRetry)
         {
             _canRetryOverride = canRetry;
             OnPropertyChanged(nameof(CanRetry));
+        }
+        if (canCancel is not null && _canCancelOverride != canCancel)
+        {
+            _canCancelOverride = canCancel;
+            OnPropertyChanged(nameof(CanCancel));
         }
         TotalBytes = totalBytes;
         Size = FormatSize(totalBytes);
@@ -220,7 +228,7 @@ public sealed class TransferTask : ObservableObject
         FileName = string.IsNullOrWhiteSpace(snapshot.DisplayName) ? snapshot.LogicalPath ?? Id : snapshot.DisplayName;
         Direction = snapshot.Kind.Contains("download", StringComparison.OrdinalIgnoreCase) ? "下载" : "上传";
         IsFolderTransfer = snapshot.Kind.Contains("batch", StringComparison.OrdinalIgnoreCase) ||
-            !string.IsNullOrWhiteSpace(snapshot.FolderGroup);
+            TransferTaskStateProjection.HasFolderGroup(snapshot.FolderGroup);
         Location = snapshot.LogicalPath ?? string.Empty;
         TotalBytes = Math.Max(0, snapshot.BytesTotal ?? 0);
         Size = FormatSize(TotalBytes);

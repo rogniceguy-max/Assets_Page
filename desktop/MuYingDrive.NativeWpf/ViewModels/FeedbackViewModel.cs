@@ -11,6 +11,7 @@ public sealed class FeedbackViewModel : ObservableObject, IDisposable
     private readonly string _token;
     private readonly CancellationTokenSource _lifetime = new();
     private bool _busy, _canManage, _hasMore, _loaded;
+    private bool _pendingReviewSubmitted;
     private int _page = 1;
     private string _query = "", _kind = "all", _scope = "public", _message = "";
     private FeedbackItem? _detail;
@@ -34,8 +35,19 @@ public sealed class FeedbackViewModel : ObservableObject, IDisposable
         Draft = new FeedbackDraftViewModel(_api, _token, _lifetime.Token);
         Draft.Submitted += (_, result) =>
         {
-            _submissionMessage = result.PendingReview ? "已提交。截图经维护人员检查后，反馈将公开给团队。" : "已提交，团队成员现在可以查看。";
+            _pendingReviewSubmitted = result.PendingReview;
+            _submissionMessage = result.PendingReview
+                ? CanManage
+                    ? "已提交，已进入待审核列表。"
+                    : "已提交并进入待审核；审核通过后会显示在公开列表。"
+                : "已提交，团队成员现在可以查看。";
             Message = _submissionMessage;
+            _kind = "all";
+            Query = string.Empty;
+            _page = 1;
+            _scope = result.PendingReview && CanManage ? "pending" : "public";
+            OnPropertyChanged(nameof(PageLabel));
+            OnPropertyChanged(nameof(FilterLabel));
             _loaded = false;
         };
         RefreshCommand = new AsyncRelayCommand(_ => RunAsync(async () => await LoadAsync()), _ => !IsBusy);
@@ -107,8 +119,27 @@ public sealed class FeedbackViewModel : ObservableObject, IDisposable
     public Task EnsureLoadedAsync() => _loaded ? Task.CompletedTask : RunAsync(async () =>
     {
         CanManage = (await _api.FeedbackCapabilitiesAsync(_token, _lifetime.Token)).CanManage;
+        if (_pendingReviewSubmitted && CanManage)
+        {
+            _scope = "pending";
+            OnPropertyChanged(nameof(FilterLabel));
+        }
         await LoadAsync();
+        if (_loaded) _pendingReviewSubmitted = false;
     });
+
+    public async Task RefreshAfterSubmissionAsync()
+    {
+        try
+        {
+            while (IsBusy && !_lifetime.IsCancellationRequested)
+                await Task.Delay(50, _lifetime.Token);
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
+        if (_lifetime.IsCancellationRequested) return;
+        _loaded = false;
+        await EnsureLoadedAsync();
+    }
 
     private async Task LoadAsync()
     {

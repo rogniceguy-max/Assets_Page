@@ -8,5 +8,6 @@
   <ItemGroup>
     <EmbeddedResource Include="Trust\trusted-update-publisher.pem" />
     <EmbeddedResource Include="Trust\trusted-code-signing-thumbprint.txt" />
+    <EmbeddedResource Include="Trust\nas-root-ca.pem" />
   </ItemGroup>
 </Project>

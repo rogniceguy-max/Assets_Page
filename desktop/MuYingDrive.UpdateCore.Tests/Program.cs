@@ -99,7 +99,7 @@ Console.WriteLine("ClientConfigurationMerge.TryRefreshConnectionFields");
             "https://old-nas:8443/", new string('1', 64), out var unchanged));
     // Byte-identical means the caller can skip writing the file entirely, which keeps an
     // ordinary reinstall from touching a file the client reads at every start.
-    Check("a no-op leaves the text byte-identical", ReferenceEquals(unchanged, existing));
+    Check("a no-op leaves the text byte-identical", ReferenceEquals(unchanged, current));
 
     Check("unknown fields are preserved",
         ClientConfigurationMerge.TryRefreshConnectionFields(

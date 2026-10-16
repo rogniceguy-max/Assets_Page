@@ -3,6 +3,11 @@ namespace MuYingDrive.NativeWpf.Models;
 /// <summary>One shared, truthful label for Rust task states in file cards and sync summaries.</summary>
 public static class TransferTaskStateProjection
 {
+    public static bool HasFolderGroup(string? folderGroup) =>
+        !string.IsNullOrWhiteSpace(folderGroup) &&
+        !string.Equals(folderGroup, "files", StringComparison.OrdinalIgnoreCase) &&
+        !string.Equals(folderGroup, "downloads", StringComparison.OrdinalIgnoreCase);
+
     public static string Label(string? state) => state?.ToLowerInvariant() switch
     {
         "queued" => "排队中",

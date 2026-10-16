@@ -101,8 +101,14 @@
                 Background="{DynamicResource Brush.Surface.Panel}"
                 BorderBrush="{DynamicResource Brush.Status.Danger}" BorderThickness="1"
                 Visibility="{Binding HasOperationError, Converter={StaticResource BoolToVisibility}}">
-            <TextBlock Text="{Binding OperationErrorMessage}" Foreground="{DynamicResource Brush.Status.Danger}"
-                       TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+            <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{Binding OperationErrorMessage}" Foreground="{DynamicResource Brush.Status.Danger}"
+                           TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" VerticalAlignment="Center" />
+                <Button Grid.Column="1" Content="重连代理" Margin="12,0,0,0"
+                        Command="{Binding RetryAgentInitializationCommand}"
+                        Visibility="{Binding CanRetryAgentInitialization, Converter={StaticResource BoolToVisibility}}" />
+            </Grid>
         </Border>
         <Grid Grid.Row="1">
             <ListBox ItemsSource="{Binding Tasks}" ItemTemplate="{StaticResource TransferTaskTemplate}"

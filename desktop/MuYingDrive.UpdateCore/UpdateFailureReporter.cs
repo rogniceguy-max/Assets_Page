@@ -1,7 +1,5 @@
 using System.Net;
 using System.Net.Http.Headers;
-using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
@@ -249,30 +247,9 @@ public static class UpdateFailureReporter
         var handler = new HttpClientHandler
         {
             AllowAutoRedirect = false,
-            ServerCertificateCustomValidationCallback = (_, certificate, chain, errors) => ValidateCertificate(certificate, chain, errors, pin)
+            ServerCertificateCustomValidationCallback = (_, certificate, chain, errors) =>
+                CertificatePin.IsTrusted(certificate, chain, errors, pin)
         };
         return new HttpClient(handler, disposeHandler: true) { Timeout = TimeSpan.FromSeconds(5) };
-    }
-
-    private static bool ValidateCertificate(X509Certificate2? certificate, X509Chain? chain,
-        System.Net.Security.SslPolicyErrors errors, byte[] pin)
-    {
-        if (certificate is null ||
-            (errors & (System.Net.Security.SslPolicyErrors.RemoteCertificateNotAvailable |
-                       System.Net.Security.SslPolicyErrors.RemoteCertificateNameMismatch)) != 0)
-            return false;
-        try
-        {
-            var now = DateTime.UtcNow;
-            if (now < certificate.NotBefore.ToUniversalTime() || now > certificate.NotAfter.ToUniversalTime()) return false;
-            var chainErrors = System.Net.Security.SslPolicyErrors.RemoteCertificateChainErrors;
-            if ((errors & ~chainErrors) != System.Net.Security.SslPolicyErrors.None) return false;
-            if ((errors & chainErrors) != 0 &&
-                (chain is null || chain.ChainStatus.Any(status =>
-                    (status.Status & ~X509ChainStatusFlags.UntrustedRoot) != X509ChainStatusFlags.NoError)))
-                return false;
-            return CryptographicOperations.FixedTimeEquals(certificate.GetCertHash(HashAlgorithmName.SHA256), pin);
-        }
-        catch (CryptographicException) { return false; }
     }
 }

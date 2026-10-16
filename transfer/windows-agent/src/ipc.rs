@@ -1,19 +1,23 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
-use anyhow::{Context, Result, anyhow};
+#[cfg(not(windows))]
+use anyhow::anyhow;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::broadcast,
 };
-use tracing::{debug, warn};
+use tracing::debug;
+#[cfg(not(windows))]
+use tracing::warn;
 use uuid::Uuid;
 
 use crate::{
-    AGENT_VERSION, AgentConfig, AgentEvent, AgentState, SyncRoot,
     queue::{NewTask, TaskKind, TaskState},
     watcher::WatcherCommand,
+    AgentConfig, AgentEvent, AgentState, AGENT_VERSION,
 };
 
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
@@ -101,7 +105,9 @@ struct DownloadTaskPayload {
     project_id: Option<String>,
 }
 
-fn default_wpf_source() -> String { "wpf".into() }
+fn default_wpf_source() -> String {
+    "wpf".into()
+}
 
 #[derive(Debug, Deserialize)]
 struct BatchPayload {
@@ -358,7 +364,7 @@ fn upload_task(
         scope_id: task.scope_id,
         project_id: task.project_id,
         display_name,
-        folder_group: task.folder_group.unwrap_or_else(|| "files".into()),
+        folder_group: task.folder_group.unwrap_or_default(),
         file_id: task.file_id,
         revision_id: None,
         object_id: task.object_id,
@@ -506,7 +512,7 @@ fn enqueue_download(state: &AgentState, payload: &Value) -> Result<Value, (Strin
         scope_id: task.scope_id,
         project_id: task.project_id,
         display_name: task.display_name.unwrap_or_else(|| "Download".into()),
-        folder_group: task.folder_group.unwrap_or_else(|| "downloads".into()),
+        folder_group: task.folder_group.unwrap_or_default(),
         file_id: Some(task.file_id),
         revision_id: task.revision_id,
         object_id: task.object_id,
@@ -586,20 +592,42 @@ fn set_task_state(
     Ok(json!({"task_id":task_id,"state":state_name}))
 }
 
-fn pause_for_shutdown(state: &AgentState, payload: &Value) -> Result<Value, (String, String, bool)> {
+fn pause_for_shutdown(
+    state: &AgentState,
+    payload: &Value,
+) -> Result<Value, (String, String, bool)> {
     let payload: TaskIdPayload = serde_json::from_value(payload.clone()).map_err(|_| {
-        ("invalid_task_id".into(), "task_id is required".into(), false)
+        (
+            "invalid_task_id".into(),
+            "task_id is required".into(),
+            false,
+        )
     })?;
     let task_id = Uuid::parse_str(&payload.task_id)
-        .map_err(|_| ("invalid_task_id".into(), "task_id must be a UUID".into(), false))?
+        .map_err(|_| {
+            (
+                "invalid_task_id".into(),
+                "task_id must be a UUID".into(),
+                false,
+            )
+        })?
         .to_string();
-    if !state.queue.set_shutdown_paused(&task_id).map_err(db_error)? {
-        return Err(("task_state_changed".into(),
-            "task is no longer active and could not be paused for shutdown".into(), false));
+    if !state
+        .queue
+        .set_shutdown_paused(&task_id)
+        .map_err(db_error)?
+    {
+        return Err((
+            "task_state_changed".into(),
+            "task is no longer active and could not be paused for shutdown".into(),
+            false,
+        ));
     }
     state.emit(AgentEvent {
-        event: "task_state".into(), seq: 0,
-        task_id: Some(task_id.clone()), operation_id: Some(task_id.clone()),
+        event: "task_state".into(),
+        seq: 0,
+        task_id: Some(task_id.clone()),
+        operation_id: Some(task_id.clone()),
         payload: json!({"state":"paused","reason":"shutdown"}),
     });
     Ok(json!({"task_id":task_id,"state":"paused","reason":"shutdown"}))
@@ -607,12 +635,27 @@ fn pause_for_shutdown(state: &AgentState, payload: &Value) -> Result<Value, (Str
 
 fn resume_sync_roots(state: &AgentState, payload: &Value) -> Result<Value, (String, String, bool)> {
     let payload: RootIdsPayload = serde_json::from_value(payload.clone()).map_err(|_| {
-        ("invalid_root_ids".into(), "root_ids must be an array of sync root IDs".into(), false)
+        (
+            "invalid_root_ids".into(),
+            "root_ids must be an array of sync root IDs".into(),
+            false,
+        )
     })?;
-    if payload.root_ids.iter().any(|root_id| root_id.trim().is_empty() || root_id.len() > 256) {
-        return Err(("invalid_root_ids".into(), "sync root ID is invalid".into(), false));
+    if payload
+        .root_ids
+        .iter()
+        .any(|root_id| root_id.trim().is_empty() || root_id.len() > 256)
+    {
+        return Err((
+            "invalid_root_ids".into(),
+            "sync root ID is invalid".into(),
+            false,
+        ));
     }
-    let resumed = state.queue.resume_shutdown_paused_sync_tasks(&payload.root_ids).map_err(db_error)?;
+    let resumed = state
+        .queue
+        .resume_shutdown_paused_sync_tasks(&payload.root_ids)
+        .map_err(db_error)?;
     Ok(json!({"resumed":resumed}))
 }
 
@@ -621,14 +664,26 @@ fn resume_project_asset_downloads(
     payload: &Value,
 ) -> Result<Value, (String, String, bool)> {
     let payload: ProjectIdPayload = serde_json::from_value(payload.clone()).map_err(|_| {
-        ("invalid_project_id".into(), "project_id is required".into(), false)
+        (
+            "invalid_project_id".into(),
+            "project_id is required".into(),
+            false,
+        )
     })?;
-    if payload.project_id.trim().is_empty() || payload.project_id.len() > 512
+    if payload.project_id.trim().is_empty()
+        || payload.project_id.len() > 512
         || payload.project_id.chars().any(char::is_control)
     {
-        return Err(("invalid_project_id".into(), "project_id is invalid".into(), false));
+        return Err((
+            "invalid_project_id".into(),
+            "project_id is invalid".into(),
+            false,
+        ));
     }
-    let resumed = state.queue.resume_shutdown_paused_asset_downloads(&payload.project_id).map_err(db_error)?;
+    let resumed = state
+        .queue
+        .resume_shutdown_paused_asset_downloads(&payload.project_id)
+        .map_err(db_error)?;
     Ok(json!({"resumed":resumed}))
 }
 
@@ -692,69 +747,60 @@ async fn cancel_task(
             payload: json!({"state":"cancelled"}),
         });
     }
+    let mut remote_cleanup_error = None;
     if matches!(task.snapshot.kind.as_str(), "upload" | "batch_upload") && task.object_id.is_some()
     {
-        let config = state.config.read().await.clone().ok_or_else(|| {
-            (
-                "agent_not_configured".into(),
-                "API credentials are unavailable to cancel this upload".into(),
-                true,
-            )
-        })?;
-        let expected_state = task.control_state.as_deref().unwrap_or("receiving");
-        let abort =
-            crate::api::abort_upload(&state.api, &config, &operation_id, expected_state).await;
-        match abort {
-            Ok(abort) if abort.state == "aborted" => {}
-            Ok(abort) => {
-                return Err((
-                    "abort_state_unexpected".into(),
-                    format!("API returned state '{}' while cancelling", abort.state),
-                    false,
-                ));
-            }
-            Err(error) => {
-                let message = error.to_string();
-                let code = if message.starts_with("conflict:") {
-                    "operation_state_changed"
-                } else {
-                    "abort_failed"
-                };
-                return Err((code.into(), message, true));
-            }
-        };
-        if !task.ticket.is_empty() && !task.transfer_url.is_empty() {
-            match crate::api::abort_transfer_upload(
-                &state.api,
-                &task.transfer_url,
-                &operation_id,
-                &task.ticket,
-            )
-            .await
+        if let Some(config) = state.config.read().await.clone() {
+            let expected_state = task.control_state.as_deref().unwrap_or("receiving");
+            match crate::api::abort_upload(&state.api, &config, &operation_id, expected_state).await
             {
-                Ok(result)
-                    if result.upload_id == operation_id
-                        && matches!(result.state.as_str(), "aborted" | "expired") => {}
-                Ok(result) => {
-                    return Err((
-                        "transfer_abort_state_unexpected".into(),
-                        format!("transfer service returned state '{}' while cancelling", result.state),
-                        false,
+                Ok(abort) if abort.state == "aborted" => {}
+                Ok(abort) => {
+                    remote_cleanup_error = Some(format!(
+                        "API returned state '{}' while cancelling",
+                        abort.state
                     ));
                 }
-                Err(error) => {
-                    let message = error.to_string();
-                    let code = if message.starts_with("conflict:") {
-                        "transfer_abort_state_changed"
-                    } else {
-                        "transfer_abort_failed"
-                    };
-                    return Err((code.into(), message, true));
+                Err(error) => remote_cleanup_error = Some(error.to_string()),
+            }
+            if remote_cleanup_error.is_none()
+                && !task.ticket.is_empty()
+                && !task.transfer_url.is_empty()
+            {
+                match crate::api::abort_transfer_upload(
+                    &state.api,
+                    &task.transfer_url,
+                    &operation_id,
+                    &task.ticket,
+                )
+                .await
+                {
+                    Ok(result)
+                        if result.upload_id == operation_id
+                            && matches!(result.state.as_str(), "aborted" | "expired") => {}
+                    Ok(result) => {
+                        remote_cleanup_error = Some(format!(
+                            "transfer service returned state '{}' while cancelling",
+                            result.state
+                        ));
+                    }
+                    Err(error) => remote_cleanup_error = Some(error.to_string()),
                 }
             }
+        } else {
+            remote_cleanup_error =
+                Some("API credentials are unavailable to clean up this upload".into());
         }
     }
-    Ok(json!({"task_id":operation_id,"state":"cancelled"}))
+    // The durable local queue state has already been changed to cancelled. Report
+    // remote cleanup separately so a transient API failure cannot leave the UI
+    // believing that its local cancellation failed.
+    Ok(json!({
+        "task_id":operation_id,
+        "state":"cancelled",
+        "remote_cleanup_succeeded":remote_cleanup_error.is_none(),
+        "remote_cleanup_error":remote_cleanup_error
+    }))
 }
 
 async fn rescan(state: &AgentState, payload: &Value) -> Result<Value, (String, String, bool)> {
@@ -860,25 +906,21 @@ async fn write_frame<W: AsyncWrite + Unpin, T: Serialize>(writer: &mut W, value:
 
 #[cfg(windows)]
 pub async fn run_pipe_server(pipe_name: String, state: Arc<AgentState>) -> Result<()> {
-    use std::os::windows::io::FromRawHandle;
     use tokio::net::windows::named_pipe::NamedPipeServer;
     use windows_sys::Win32::{
-        Foundation::INVALID_HANDLE_VALUE,
+        Foundation::{LocalFree, INVALID_HANDLE_VALUE},
         Security::{
             Authorization::{
                 ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
             },
             SECURITY_ATTRIBUTES,
         },
-        System::{
-            Memory::LocalFree,
-            Pipes::{
-                CreateNamedPipeW, PIPE_ACCESS_DUPLEX, PIPE_READMODE_BYTE,
-                PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
-            },
+        Storage::FileSystem::{FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX},
+        System::Pipes::{
+            CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE,
+            PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
         },
     };
-    const FILE_FLAG_OVERLAPPED: u32 = 0x40000000;
     const PIPE_BUFFER: u32 = 64 * 1024;
     let mut connections = tokio::task::JoinSet::new();
     let wide_name: Vec<u16> = pipe_name.encode_utf16().chain(std::iter::once(0)).collect();
@@ -929,9 +971,8 @@ pub async fn run_pipe_server(pipe_name: String, state: Arc<AgentState>) -> Resul
         if handle == INVALID_HANDLE_VALUE {
             anyhow::bail!("CreateNamedPipeW failed");
         }
-        let server = unsafe { NamedPipeServer::from_raw_handle(handle.cast()) };
-        let shutdown_wait = state.shutdown_notify.notified();
-        tokio::pin!(shutdown_wait);
+        let server = unsafe { NamedPipeServer::from_raw_handle(handle.cast()) }
+            .context("wrap named pipe server handle")?;
         if state
             .shutting_down
             .load(std::sync::atomic::Ordering::Acquire)
@@ -940,33 +981,54 @@ pub async fn run_pipe_server(pipe_name: String, state: Arc<AgentState>) -> Resul
             while connections.join_next().await.is_some() {}
             return Ok(());
         }
-        let (connected, shutting_down) = tokio::select! {
-            result = server.connect() => {
-                result.context("wait for agent pipe client")?;
-                (Some(server), false)
-            },
-            joined = connections.join_next(), if !connections.is_empty() => {
-                if let Some(Err(error)) = joined {
-                    debug!(%error,"agent pipe connection task failed");
-                }
-                (None, false)
-            },
-            _ = &mut shutdown_wait => (None, true),
-        };
-        if shutting_down {
-            connections.abort_all();
-            while let Some(result) = connections.join_next().await {
-                if let Err(error) = result {
-                    debug!(%error,"agent pipe connection task failed during shutdown");
+        // Keep this listener's connect future alive while reaping completed
+        // requests. Dropping it whenever a request finishes can break a client
+        // that is connecting concurrently (including list_tasks and cancel).
+        let accepted = {
+            let connect = server.connect();
+            tokio::pin!(connect);
+            loop {
+                tokio::select! {
+                    result = &mut connect => {
+                        result.context("wait for agent pipe client")?;
+                        break true;
+                    },
+                    joined = connections.join_next(), if !connections.is_empty() => {
+                        if let Some(result) = joined {
+                            match result {
+                                Ok(true) => {
+                                    // The shutdown handler has completed its reply write and has
+                                    // returned from the connection task. Only now notify workers
+                                    // and abort the other long-lived IPC connections.
+                                    state
+                                        .shutting_down
+                                        .store(true, std::sync::atomic::Ordering::Release);
+                                    state.shutdown_notify.notify_waiters();
+                                    connections.abort_all();
+                                    while let Some(result) = connections.join_next().await {
+                                        if let Err(error) = result {
+                                            debug!(%error,"agent pipe connection task failed during shutdown");
+                                        }
+                                    }
+                                    return Ok(());
+                                }
+                                Ok(false) => {}
+                                Err(error) => debug!(%error,"agent pipe connection task failed"),
+                            }
+                        }
+                    },
                 }
             }
-            return Ok(());
-        }
-        if let Some(connected) = connected {
+        };
+        if accepted {
             let connected_state = state.clone();
             connections.spawn(async move {
-                if let Err(error) = serve_connection(connected, connected_state).await {
-                    debug!(%error,"agent pipe connection closed");
+                match serve_connection(server, connected_state).await {
+                    Ok(shutdown) => shutdown,
+                    Err(error) => {
+                        debug!(%error,"agent pipe connection closed");
+                        false
+                    }
                 }
             });
         }
@@ -977,9 +1039,9 @@ pub async fn run_pipe_server(pipe_name: String, state: Arc<AgentState>) -> Resul
 async fn serve_connection(
     mut stream: tokio::net::windows::named_pipe::NamedPipeServer,
     state: Arc<AgentState>,
-) -> Result<()> {
+) -> Result<bool> {
     let Some(frame) = read_frame(&mut stream).await? else {
-        return Ok(());
+        return Ok(false);
     };
     let request: RequestEnvelope =
         serde_json::from_slice(&frame).context("decode agent pipe request")?;
@@ -988,11 +1050,7 @@ async fn serve_connection(
     let (reply, subscribe, shutdown) = handle_request(&state, request).await;
     write_frame(&mut stream, &reply).await?;
     if shutdown {
-        state
-            .shutting_down
-            .store(true, std::sync::atomic::Ordering::Release);
-        state.shutdown_notify.notify_waiters();
-        return Ok(());
+        return Ok(true);
     }
     if subscribe {
         loop {
@@ -1022,7 +1080,7 @@ async fn serve_connection(
         }
     }
     let _ = id;
-    Ok(())
+    Ok(false)
 }
 
 #[cfg(not(windows))]

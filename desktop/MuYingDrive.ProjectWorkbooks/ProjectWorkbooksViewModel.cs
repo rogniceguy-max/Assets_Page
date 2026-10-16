@@ -29,8 +29,30 @@ public sealed class ImageItem(ImageAsset asset, ImageSource? preview, string? er
         Asset.Version > 1 ? $"版本 {Asset.Version}" : null
     }.Where(s => !string.IsNullOrWhiteSpace(s)));
     private string? _error = error;
-    public string? Error { get => _error; private set { _error = value; Changed(); } }
-    internal bool Loading { get; set; }
+    public string? Error
+    {
+        get => _error;
+        private set
+        {
+            if (_error == value) return;
+            _error = value;
+            Changed(); Changed(nameof(HasError));
+        }
+    }
+    private int _loading;
+    public bool IsLoading => Volatile.Read(ref _loading) != 0;
+    public bool HasError => !string.IsNullOrWhiteSpace(Error);
+    internal bool TryBeginLoading()
+    {
+        if (Preview != null || Interlocked.CompareExchange(ref _loading, 1, 0) != 0) return false;
+        Changed(nameof(IsLoading));
+        return true;
+    }
+    internal void EndLoading()
+    {
+        if (Interlocked.Exchange(ref _loading, 0) != 0) Changed(nameof(IsLoading));
+    }
+    internal void ClearError() => Error = null;
     public void SetPreview(ImageSource? source, string? error = null) { Preview = source; Error = error; }
     public void UpdateAsset(ImageAsset asset)
     {
@@ -171,8 +193,8 @@ public sealed class AssetRowItem(AssetRow row, ImageItem? selected, IReadOnlyLis
     public void UpdateFrom(AssetRow row)
     {
         Row = row;
-        Selected = row.SelectedImage == null ? null : new ImageItem(row.SelectedImage, null);
-        Candidates = row.CandidateImages.Select(asset => new ImageItem(asset, null)).ToList();
+        Selected = ReuseImage(Selected, row.SelectedImage);
+        Candidates = ReuseImages(Candidates, row.CandidateImages);
         Changed(nameof(Selected)); Changed(nameof(Candidates));
         Changed(nameof(HasSelected)); Changed(nameof(HasNoSelected));
         Changed(nameof(HasCandidates)); Changed(nameof(HasNoCandidates));
@@ -196,8 +218,8 @@ public sealed class AssetRowItem(AssetRow row, ImageItem? selected, IReadOnlyLis
         {
             CategoryDraft = categoryDraft; NameDraft = nameDraft;
         }
-        Selected = row.SelectedImage == null ? null : new ImageItem(row.SelectedImage, null);
-        Candidates = row.CandidateImages.Select(asset => new ImageItem(asset, null)).ToList();
+        Selected = ReuseImage(Selected, row.SelectedImage);
+        Candidates = ReuseImages(Candidates, row.CandidateImages);
         Changed(nameof(Row)); Changed(nameof(Selected)); Changed(nameof(Candidates));
         Changed(nameof(HasSelected)); Changed(nameof(HasNoSelected));
         Changed(nameof(HasCandidates)); Changed(nameof(HasNoCandidates));
@@ -234,6 +256,24 @@ public sealed class AssetRowItem(AssetRow row, ImageItem? selected, IReadOnlyLis
         Changed(nameof(HasReviews));
         Changed(nameof(ReviewCountText));
         Changed(nameof(ReviewSnippetText));
+    }
+
+    private static ImageItem? ReuseImage(ImageItem? current, ImageAsset? asset)
+    {
+        if (asset == null) return null;
+        if (current != null && current.Asset.Id == asset.Id &&
+            string.Equals(current.Asset.CurrentRevisionId, asset.CurrentRevisionId, StringComparison.Ordinal))
+        {
+            current.UpdateAsset(asset);
+            return current;
+        }
+        return new ImageItem(asset, null);
+    }
+
+    private static IReadOnlyList<ImageItem> ReuseImages(IReadOnlyList<ImageItem> current, IReadOnlyList<ImageAsset> assets)
+    {
+        var byId = current.ToDictionary(image => image.Asset.Id, StringComparer.Ordinal);
+        return assets.Select(asset => ReuseImage(byId.GetValueOrDefault(asset.Id), asset)!).ToList();
     }
 }
 public sealed class ProjectFileItem : ObservableModel
@@ -471,9 +511,12 @@ public sealed class SheetItem(WorkbookSheet sheet)
 {
     public WorkbookSheet Sheet { get; } = sheet;
     public string Name => Sheet.Name;
-    public override string ToString() => Name;
     public bool IsAsset => Sheet.Kind == "asset_review";
     public bool IsScene => Sheet.Kind == "scene_beats";
+    public string DisplayName => IsScene && string.Equals(Name, "节拍表", StringComparison.Ordinal)
+        ? "第一集"
+        : Name;
+    public override string ToString() => DisplayName;
     public ObservableCollection<AssetRowItem> Assets { get; } = [];
     public ObservableCollection<SceneRowItem> Scenes { get; } = new(sheet.SceneRows.Select(row => new SceneRowItem(row)));
 }
@@ -702,6 +745,7 @@ public sealed class ProjectWorkbooksViewModel : ObservableModel, IDisposable
         string.Join(" ", item.Row.Category, item.Row.Name, item.Row.Variant, item.Row.Appearance).Contains(Search, StringComparison.OrdinalIgnoreCase));
     private readonly SemaphoreSlim _thumbnailGate = new(4);
     private readonly Dictionary<string, ImageSource> _thumbnailCache = new(StringComparer.Ordinal);
+    private readonly object _thumbnailCacheLock = new();
     private CancellationTokenSource? _liveUpdatesCts;
     private Task? _liveUpdatesTask;
     private TaskCompletionSource<bool>? _liveUpdatesReady;
@@ -794,14 +838,6 @@ public sealed class ProjectWorkbooksViewModel : ObservableModel, IDisposable
         RestoreVideoDownloadStatuses();
         if (Document.File.ProjectId == file.ProjectId && _lastEventSequence != sequenceBeforeLoad)
             await RefreshCurrentDocumentAsync(CancellationToken.None);
-        if (SelectedSheet is { IsAsset: true } assetSheet)
-        {
-            foreach (var asset in assetSheet.Assets.Take(20))
-            {
-                if (asset.Selected != null) _ = EnsureThumbnailAsync(asset.Selected);
-                foreach (var candidate in asset.Candidates) _ = EnsureThumbnailAsync(candidate);
-            }
-        }
         if (file.TemplateKind == "scene_beats")
         {
             _ = LoadProjectAssetsAsync();
@@ -1097,24 +1133,36 @@ public sealed class ProjectWorkbooksViewModel : ObservableModel, IDisposable
     }
     public async Task EnsureThumbnailAsync(ImageItem image, CancellationToken ct = default)
     {
-        if (image.Preview != null || image.Loading) return;
-        image.Loading = true;
+        if (image.HasError || !image.TryBeginLoading()) return;
         var entered = false;
         try
         {
             await _thumbnailGate.WaitAsync(ct); entered = true;
             var cacheKey = ThumbnailCacheKey(image.Asset);
-            if (!_thumbnailCache.TryGetValue(cacheKey, out var preview))
+            ImageSource? preview;
+            lock (_thumbnailCacheLock) _thumbnailCache.TryGetValue(cacheKey, out preview);
+            if (preview == null)
             {
-                preview = Decode(await Service.GetImageContentAsync(image.Asset.Id, true, ct), thumbnail: true);
-                if (_thumbnailCache.Count >= 128) _thumbnailCache.Remove(_thumbnailCache.Keys.First());
-                _thumbnailCache[cacheKey] = preview;
+                var bytes = await Service.GetImageContentAsync(image.Asset.Id, true, ct);
+                preview = await Task.Run(() => Decode(bytes, thumbnail: true), ct);
+                lock (_thumbnailCacheLock)
+                {
+                    if (_thumbnailCache.TryGetValue(cacheKey, out var cached)) preview = cached;
+                    else
+                    {
+                        if (_thumbnailCache.Count >= 128) _thumbnailCache.Remove(_thumbnailCache.Keys.First());
+                        _thumbnailCache[cacheKey] = preview;
+                    }
+                }
             }
             ct.ThrowIfCancellationRequested(); image.SetPreview(preview);
         }
         catch (OperationCanceledException) { }
-        catch { image.SetPreview(null, "缩略图暂不可用；点击图片仍可重试大图。"); }
-        finally { image.Loading = false; if (entered) _thumbnailGate.Release(); }
+        catch (Exception exception)
+        {
+            image.SetPreview(null, $"缩略图加载失败：{exception.Message}");
+        }
+        finally { image.EndLoading(); if (entered) _thumbnailGate.Release(); }
     }
 
     private static string ThumbnailCacheKey(ImageAsset asset) =>
@@ -1124,10 +1172,11 @@ public sealed class ProjectWorkbooksViewModel : ObservableModel, IDisposable
     {
         var prefix = asset.Id + "\0";
         var currentKey = ThumbnailCacheKey(asset);
-        foreach (var staleKey in _thumbnailCache.Keys
-                     .Where(key => key.StartsWith(prefix, StringComparison.Ordinal) && key != currentKey)
-                     .ToArray())
-            _thumbnailCache.Remove(staleKey);
+        lock (_thumbnailCacheLock)
+            foreach (var staleKey in _thumbnailCache.Keys
+                         .Where(key => key.StartsWith(prefix, StringComparison.Ordinal) && key != currentKey)
+                         .ToArray())
+                _thumbnailCache.Remove(staleKey);
     }
 
     public static BitmapSource Decode(byte[] bytes, bool thumbnail = false)
@@ -1176,10 +1225,10 @@ public sealed class ProjectWorkbooksViewModel : ObservableModel, IDisposable
     public void AssetChanged() => Changed(nameof(VisibleAssets));
     public async Task UpdateImagesAsync(AssetRowItem item, string? selectedId, IEnumerable<string> candidateIds)
     {
-        if (IsReadOnly) throw new InvalidDataException("访客只能查看项目工作簿。");
         if (Document == null) return;
-        if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行图片的权限。");
         var ids = candidateIds.Distinct(StringComparer.Ordinal).ToList();
+        if (IsReadOnly) throw new InvalidDataException("访客账号为只读，无法修改工作簿内容。");
+        if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行图片的权限。");
         if (ids.Count > 100) throw new InvalidDataException("每行最多保留 100 张备选图片。");
         var gate = _assetLinkGates.GetOrAdd(item.Row.Id, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync();
@@ -1192,7 +1241,7 @@ public sealed class ProjectWorkbooksViewModel : ObservableModel, IDisposable
 
     public async Task LinkUploadedImageAsync(AssetRowItem item, ImageAsset image, bool selectedTarget)
     {
-        if (IsReadOnly) throw new InvalidDataException("访客只能查看项目工作簿。");
+        if (IsReadOnly) throw new InvalidDataException("访客账号为只读，无法修改工作簿内容。");
         if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行图片的权限。");
         var gate = _assetLinkGates.GetOrAdd(item.Row.Id, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync();
@@ -1222,10 +1271,10 @@ public sealed class ProjectWorkbooksViewModel : ObservableModel, IDisposable
     }
     public async Task UpdateStoryContentAsync(SceneRowItem item)
     {
-        if (IsReadOnly) throw new InvalidDataException("访客只能查看项目工作簿。");
         if (Document == null) return;
-        if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行的权限。");
         if (item.IsSaving || string.Equals(item.StoryContentDraft, item.Row.StoryContent, StringComparison.Ordinal)) return;
+        if (IsReadOnly) throw new InvalidDataException("访客账号为只读，无法修改工作簿内容。");
+        if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行的权限。");
         var fileId = Document.File.Id;
         var current = item.Row;
         item.IsSaving = true;
@@ -1239,11 +1288,11 @@ public sealed class ProjectWorkbooksViewModel : ObservableModel, IDisposable
     }
     public async Task UpdateAssetFieldsAsync(AssetRowItem item)
     {
-        if (IsReadOnly) throw new InvalidDataException("访客只能查看项目工作簿。");
         if (Document == null) return;
-        if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行的权限。");
         if (item.IsSaving || (string.Equals(item.CategoryDraft, item.Row.Category, StringComparison.Ordinal)
             && string.Equals(item.NameDraft, item.Row.Name, StringComparison.Ordinal))) return;
+        if (IsReadOnly) throw new InvalidDataException("访客账号为只读，无法修改工作簿内容。");
+        if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行的权限。");
         var fileId = Document.File.Id;
         item.IsSaving = true;
         try
@@ -1269,7 +1318,7 @@ public sealed class ProjectWorkbooksViewModel : ObservableModel, IDisposable
 
     public async Task RenameWorkbookAsync(ProjectFileItem item, string newName)
     {
-        if (IsReadOnly) throw new InvalidDataException("访客只能查看项目工作簿。");
+        if (IsReadOnly) throw new InvalidDataException("访客账号为只读，无法修改工作簿内容。");
         var trimmed = newName?.Trim() ?? "";
         if (string.IsNullOrWhiteSpace(trimmed) || string.Equals(trimmed, item.Name, StringComparison.Ordinal))
         {
@@ -1290,7 +1339,7 @@ public sealed class ProjectWorkbooksViewModel : ObservableModel, IDisposable
 
     public async Task DeleteWorkbookAsync(ProjectFileItem item)
     {
-        if (IsReadOnly) throw new InvalidDataException("访客只能查看项目工作簿。");
+        if (IsReadOnly) throw new InvalidDataException("访客账号为只读，无法修改工作簿内容。");
         await ExecuteAsync(async () =>
         {
             await Service.DeleteWorkbookAsync(item.Id);
@@ -1304,9 +1353,7 @@ public sealed class ProjectWorkbooksViewModel : ObservableModel, IDisposable
 
     public async Task UpdateSceneFieldsAsync(SceneRowItem item)
     {
-        if (IsReadOnly) throw new InvalidDataException("访客只能查看项目工作簿。");
         if (Document == null) return;
-        if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行的权限。");
         var sceneChanged = !string.Equals(item.SceneNumberDraft, item.Row.SceneNumber, StringComparison.Ordinal);
         var beatChanged = !string.Equals(item.BeatNumberDraft, item.Row.BeatNumber, StringComparison.Ordinal);
         var storyChanged = !string.Equals(item.StoryContentDraft, item.Row.StoryContent, StringComparison.Ordinal);
@@ -1320,6 +1367,9 @@ public sealed class ProjectWorkbooksViewModel : ObservableModel, IDisposable
 
         if (!sceneChanged && !beatChanged && !storyChanged && !planChanged && !noteChanged && !levelChanged)
             return;
+
+        if (IsReadOnly) throw new InvalidDataException("访客账号为只读，无法修改工作簿内容。");
+        if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行的权限。");
 
         if (item.IsSaving) return;
         item.IsSaving = true;
@@ -1348,7 +1398,7 @@ public sealed class ProjectWorkbooksViewModel : ObservableModel, IDisposable
 
     public async Task UpdateSceneVideoAsync(SceneRowItem item, string action, VideoItem? video = null, string? videoId = null, string? videoName = null)
     {
-        if (IsReadOnly) throw new InvalidDataException("访客只能查看项目工作簿。");
+        if (IsReadOnly) throw new InvalidDataException("访客账号为只读，无法修改工作簿内容。");
         var document = Document;
         if (document == null) return;
         if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行的权限。");
@@ -1382,7 +1432,7 @@ public sealed class ProjectWorkbooksViewModel : ObservableModel, IDisposable
     private async Task AttachVideoFileCoreAsync(SceneRowItem item, string sourceLocalPath, string? operationId,
         WorkbookUploadCard? uploadCard)
     {
-        if (IsReadOnly) throw new InvalidDataException("访客只能查看项目工作簿。");
+        if (IsReadOnly) throw new InvalidDataException("访客账号为只读，无法修改工作簿内容。");
         if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行的权限。");
         var document = Document ?? throw new InvalidOperationException("请先打开节拍表。");
         var project = SelectedProject ?? throw new InvalidOperationException("请先选择项目。");
@@ -1467,6 +1517,8 @@ public sealed class ProjectWorkbooksViewModel : ObservableModel, IDisposable
                     ".mkv" => "video/x-matroska",
                     ".webm" => "video/webm",
                     ".avi" => "video/x-msvideo",
+                    ".flv" => "video/x-flv",
+                    ".wmv" => "video/x-ms-wmv",
                     _ => "video/mp4"
                 };
                 uploaded = await Service.UploadProjectFileAsync(project.Id, fileName, mediaType, sourcePath, logicalPath,

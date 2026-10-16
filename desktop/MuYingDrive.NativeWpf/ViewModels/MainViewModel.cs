@@ -19,8 +19,10 @@ public sealed class MainViewModel : ObservableObject
     private UpdateCoordinator? _updateCoordinator;
     private bool _installUpdateOnExit;
     private bool _shutdownComplete;
+    private bool _agentStoppedForUpdate;
     private string? _preparedHandoffPath;
     private string? _preparedUpdaterPath;
+    private Process? _preparedUpdaterProcess;
     private string _updateCloseErrorMessage = string.Empty;
     private string _agentShutdownWarning = string.Empty;
 
@@ -160,13 +162,15 @@ public sealed class MainViewModel : ObservableObject
         }
         catch (V2ApiException exception)
         {
+            App.Record(exception, "MainViewModel.RestoreSession.Api");
             if (CurrentPage is LoginViewModel currentLogin)
                 currentLogin.ErrorMessage = exception.Message;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
+            App.Record(exception, "MainViewModel.RestoreSession");
             if (CurrentPage is LoginViewModel currentLogin)
-                currentLogin.ErrorMessage = "无法恢复登录状态，请重新登录或检查 NAS 连接。";
+                currentLogin.ErrorMessage = $"无法恢复登录状态（{exception.GetType().Name}）：{exception.Message}";
         }
         finally
         {
@@ -193,8 +197,11 @@ public sealed class MainViewModel : ObservableObject
                 var paused = await transfers.PauseAllAsync();
                 var loggedOut = await transfers.LogoutAgentAsync();
                 try { await transfers.StopAgentAsync(); }
-                catch (Exception exception) when (exception is IOException or TimeoutException or InvalidOperationException)
-                { agentWarning = exception.Message; }
+                catch (Exception exception)
+                {
+                    App.Record(exception, "MainViewModel.SignOut.StopAgent");
+                    agentWarning = $"{exception.GetType().Name}: {exception.Message}";
+                }
                 if (!paused || !loggedOut)
                     agentWarning ??= string.IsNullOrWhiteSpace(transfers.OperationErrorMessage)
                         ? "退出前未能确认所有传输任务已暂停。"
@@ -262,8 +269,10 @@ public sealed class MainViewModel : ObservableObject
             {
                 if (_installUpdateOnExit)
                 {
-                    // The update handoff requires a confirmed stop before replacing the install tree.
-                    await transfers.StopAgentAsync();
+                    // The update path stops the agent before starting its updater. Keep this
+                    // guard for callers that shut down without going through MainWindow.
+                    if (!_agentStoppedForUpdate)
+                        await transfers.StopAgentAsync();
                 }
                 else
                 {
@@ -272,8 +281,11 @@ public sealed class MainViewModel : ObservableObject
                     var paused = await transfers.PauseAllAsync();
                     var loggedOut = await transfers.LogoutAgentAsync();
                     try { await transfers.StopAgentAsync(); }
-                    catch (Exception exception) when (exception is IOException or TimeoutException or InvalidOperationException)
-                    { AgentShutdownWarning = exception.Message; }
+                    catch (Exception exception)
+                    {
+                        App.Record(exception, "MainViewModel.Shutdown.StopAgent");
+                        AgentShutdownWarning = $"{exception.GetType().Name}: {exception.Message}";
+                    }
                     if (!paused || !loggedOut)
                     {
                         if (string.IsNullOrWhiteSpace(AgentShutdownWarning))
@@ -298,8 +310,15 @@ public sealed class MainViewModel : ObservableObject
     public async Task<bool> PrepareForShutdownAsync()
     {
         UpdateCloseErrorMessage = string.Empty;
-        if (!_installUpdateOnExit || !IsUpdateReady)
+        if (!_installUpdateOnExit)
             return true;
+
+        if (!IsUpdateReady)
+        {
+            UpdateCloseErrorMessage = "更新已不再可用。本次更新已取消，沐影盘仍保持打开。";
+            await AbortPreparedUpdateCloseAsync();
+            return false;
+        }
 
         if (CurrentPage is WorkspaceViewModel { Transfers: { } transfers } && !await transfers.PrepareForUpdateAsync())
         {
@@ -312,25 +331,46 @@ public sealed class MainViewModel : ObservableObject
             await PrepareHandoffAsync();
             return true;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or
-            System.Security.Cryptography.CryptographicException or JsonException)
+        catch (Exception exception)
         {
-            _installUpdateOnExit = false;
-            _preparedHandoffPath = null;
-            _preparedUpdaterPath = null;
-            UpdateCloseErrorMessage = exception switch
-            {
-                UnauthorizedAccessException => "当前用户无权更新此安装目录。本次更新已取消，沐影盘将按常规方式关闭。",
-                System.Security.Cryptography.CryptographicException => "更新签名配置或更新包验证失败。本次更新已取消，沐影盘将按常规方式关闭。",
-                _ => "无法安全准备独立更新程序。本次更新已取消，沐影盘将按常规方式关闭。"
-            };
-            return true;
+            App.Record(exception, "MainViewModel.Update.PrepareHandoff");
+            UpdateCloseErrorMessage = $"无法安全准备更新，本次更新已取消，沐影盘仍保持打开。{Environment.NewLine}{exception.GetType().Name}: {exception.Message}";
+            await AbortPreparedUpdateCloseAsync();
+            return false;
         }
+    }
+
+    public async Task StopAgentForUpdateAsync()
+    {
+        if (!_installUpdateOnExit || !HasPreparedUpdateHandoff)
+            throw new InvalidOperationException("更新交接尚未准备完成，不能停止传输代理。");
+
+        if (CurrentPage is WorkspaceViewModel { Transfers: { } transfers })
+            await transfers.StopAgentAsync();
+        _agentStoppedForUpdate = true;
     }
 
     public async Task AbortPreparedUpdateCloseAsync()
     {
+        if (_preparedUpdaterProcess is { } updater)
+        {
+            try
+            {
+                if (!updater.HasExited)
+                    updater.Kill(entireProcessTree: true);
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                App.Record(exception, "MainViewModel.Update.StopUncommittedUpdater");
+            }
+            finally
+            {
+                updater.Dispose();
+                _preparedUpdaterProcess = null;
+            }
+        }
         _installUpdateOnExit = false;
+        _agentStoppedForUpdate = false;
         _preparedHandoffPath = null;
         _preparedUpdaterPath = null;
         if (CurrentPage is WorkspaceViewModel { Transfers: { } transfers })
@@ -359,10 +399,18 @@ public sealed class MainViewModel : ObservableObject
             };
             start.ArgumentList.Add("--request");
             start.ArgumentList.Add(_preparedHandoffPath);
-            return Process.Start(start) is not null;
+            _preparedUpdaterProcess = Process.Start(start);
+            if (_preparedUpdaterProcess is not null)
+                return true;
+
+            UpdateCloseErrorMessage = "Windows 未能启动独立更新程序。本次更新已取消，沐影盘仍保持打开。";
+            App.Record(new InvalidOperationException(UpdateCloseErrorMessage), "MainViewModel.Update.LaunchUpdater");
+            return false;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        catch (Exception exception)
         {
+            App.Record(exception, "MainViewModel.Update.LaunchUpdater");
+            UpdateCloseErrorMessage = $"无法启动独立更新程序。本次更新已取消，沐影盘仍保持打开。{Environment.NewLine}{exception.GetType().Name}: {exception.Message}";
             return false;
         }
     }
@@ -455,16 +503,10 @@ public sealed class MainViewModel : ObservableObject
         }
         catch
         {
-            // Keep the login/register page active so its caller can present the failure. A
-            // partially started agent is best-effort logged out and stopped before its client
-            // objects are disposed.
-            if (workspace.Transfers is { } transfers)
-            {
-                try { await transfers.PauseAllAsync(); } catch { }
-                try { await transfers.LogoutAgentAsync(); } catch { }
-                try { await transfers.StopAgentAsync(); } catch { }
-            }
-            try { await workspace.DisposeAsync(); } catch { }
+            // Workspace initialization loads the file view only. The optional transfer agent
+            // starts on demand, so do not launch it while cleaning up a failed login restore.
+            try { await workspace.DisposeAsync(); }
+            catch (Exception exception) { App.Record(exception, "MainViewModel.EnterWorkspace.Dispose"); }
             throw;
         }
         CurrentPage = workspace;

@@ -59,6 +59,7 @@ public sealed class RustTransferAgentClient : IAsyncDisposable
     }
 
     public event EventHandler<TransferAgentEventArgs>? EventReceived;
+    public event Action<Exception>? ConnectionFaulted;
 
     public async Task EnsureConnectedAsync(CancellationToken cancellationToken = default)
     {
@@ -128,71 +129,152 @@ public sealed class RustTransferAgentClient : IAsyncDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        _subscriptionCancellation?.Cancel();
-        if (_subscriptionTask is not null)
+        var cancellation = _subscriptionCancellation;
+        var subscription = _subscriptionTask;
+        cancellation?.Cancel();
+        var subscriptionStopped = subscription is null;
+        if (subscription is not null)
         {
-            try { await _subscriptionTask.ConfigureAwait(false); } catch { }
+            try
+            {
+                await subscription.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+                subscriptionStopped = true;
+            }
+            catch (TimeoutException)
+            {
+                // Cancellation should release the pipe read. If it does not, closing the
+                // client window must still finish; the continuation releases the CTS later.
+                _ = subscription.ContinueWith(_ => cancellation?.Dispose(),
+                    CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            }
+            catch { subscriptionStopped = true; }
         }
-        _subscriptionCancellation?.Dispose();
+        if (subscriptionStopped) cancellation?.Dispose();
         _subscriptionCancellation = null;
         _subscriptionTask = null;
         _process?.Dispose();
         _process = null;
-        _lifecycle.Dispose();
     }
 
     public async Task StopAgentAsync(CancellationToken cancellationToken = default)
     {
         _stopRequested = true;
         _subscriptionCancellation?.Cancel();
+        Exception? eventStopFailure = null;
         if (_subscriptionTask is not null)
         {
             try { await _subscriptionTask.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false); }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch (TimeoutException) { throw new IOException("Rust 传输代理事件连接未能关闭。"); }
-            catch { }
+            catch (TimeoutException exception)
+            {
+                eventStopFailure = exception;
+            }
+            catch (Exception exception) { eventStopFailure = exception; }
         }
 
-        var serverWasAvailable = await IsPipeAvailableAsync(cancellationToken).ConfigureAwait(false);
-        if (serverWasAvailable)
+        // Serialize stop against startup. Otherwise the pipe probe can race with the
+        // process launch and skip shutdown while a newly started agent is still coming up.
+        await _lifecycle.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            try { _ = await RequestOnNewConnectionAsync("shutdown", new { }, cancellationToken).ConfigureAwait(false); }
-            catch (Exception exception) when (exception is IOException or TimeoutException or ObjectDisposedException)
+            var serverWasAvailable = await IsPipeAvailableAsync(cancellationToken).ConfigureAwait(false);
+            if (!serverWasAvailable && _process is { HasExited: false })
             {
-                if (_process is { HasExited: false } ||
-                    await IsPipeAvailableAsync(cancellationToken).ConfigureAwait(false))
-                    throw new IOException("未能向 Rust 传输代理确认关闭。", exception);
+                var readinessDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+                while (!serverWasAvailable && DateTime.UtcNow < readinessDeadline)
+                {
+                    await Task.Delay(150, cancellationToken).ConfigureAwait(false);
+                    serverWasAvailable = await IsPipeAvailableAsync(cancellationToken).ConfigureAwait(false);
+                }
             }
-        }
 
-        if (_process is { } process)
-        {
-            try
+            var shutdownAcknowledged = false;
+            Exception? shutdownFailure = null;
+            var shutdownCompleted = false;
+            if (serverWasAvailable)
             {
-                await process.WaitForExitAsync(cancellationToken).WaitAsync(TimeSpan.FromSeconds(10), cancellationToken)
-                    .ConfigureAwait(false);
+                for (var attempt = 0; attempt < 2 && !shutdownAcknowledged; attempt++)
+                {
+                    try
+                    {
+                        var reply = await RequestOnNewConnectionAsync("shutdown", new { }, cancellationToken)
+                            .ConfigureAwait(false);
+                        shutdownAcknowledged = reply.ValueKind == JsonValueKind.Object &&
+                            reply.TryGetProperty("stopping", out var stopping) && stopping.ValueKind == JsonValueKind.True;
+                        if (!shutdownAcknowledged)
+                            shutdownFailure = new InvalidDataException("Rust 传输代理的关闭响应缺少 stopping=true。");
+                    }
+                    catch (Exception exception) when (exception is IOException or TimeoutException or
+                        ObjectDisposedException or InvalidDataException)
+                    {
+                        shutdownFailure = exception;
+                    }
+
+                    if (!shutdownAcknowledged && attempt == 0 &&
+                        await IsPipeAvailableAsync(cancellationToken).ConfigureAwait(false))
+                        await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+                }
             }
-            catch (TimeoutException)
+
+            if (_process is { } process)
             {
                 try
                 {
-                    if (!process.HasExited) process.Kill(entireProcessTree: true);
-                    await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+                    await process.WaitForExitAsync(cancellationToken).WaitAsync(TimeSpan.FromSeconds(10), cancellationToken)
+                        .ConfigureAwait(false);
+                    shutdownCompleted = true;
+                    if (serverWasAvailable)
+                        await WaitForPipeUnavailableAsync(cancellationToken).ConfigureAwait(false);
                 }
-                catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
+                catch (TimeoutException)
                 {
-                    throw new IOException("Rust 传输代理仍在运行，无法安全替换安装目录。", exception);
+                    if (process.HasExited)
+                    {
+                        shutdownCompleted = true;
+                        if (serverWasAvailable)
+                            await WaitForPipeUnavailableAsync(cancellationToken).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        var details = new List<string>();
+                        if (shutdownAcknowledged) details.Add("代理已确认收到关闭请求");
+                        else if (shutdownFailure is not null)
+                            details.Add($"关闭请求异常：{shutdownFailure.GetType().Name}: {shutdownFailure.Message}");
+                        else details.Add("未收到有效的关闭确认");
+                        if (eventStopFailure is not null)
+                            details.Add($"事件通道关闭异常：{eventStopFailure.GetType().Name}: {eventStopFailure.Message}");
+                        throw new IOException(
+                            $"Rust 传输代理进程（PID {process.Id}）在 10 秒内未退出。{string.Join("；", details)}。未强制结束进程。",
+                            shutdownFailure ?? eventStopFailure ?? new TimeoutException("等待传输代理进程退出超时。"));
+                    }
                 }
             }
+            else if (serverWasAvailable)
+            {
+                await WaitForPipeUnavailableAsync(cancellationToken).ConfigureAwait(false);
+                shutdownCompleted = true;
+            }
+
+            if (shutdownCompleted && (eventStopFailure is not null || (!shutdownAcknowledged && shutdownFailure is not null)))
+            {
+                var details = new List<string>();
+                if (shutdownFailure is not null)
+                    details.Add($"关闭响应异常：{shutdownFailure.GetType().Name}: {shutdownFailure.Message}");
+                if (eventStopFailure is not null)
+                    details.Add($"事件通道关闭异常：{eventStopFailure.GetType().Name}: {eventStopFailure.Message}");
+                App.Record(new IOException(
+                    $"Rust 传输代理已停止，但关闭期间出现 IPC 异常：{string.Join("；", details)}。{(shutdownAcknowledged ? "收到有效关闭确认。" : "本次按进程退出结果确认关闭。")}",
+                    shutdownFailure ?? eventStopFailure), "RustTransferAgent.StopAgent.ClosedWithIpcWarning");
+            }
+
+            if (eventStopFailure is not null && serverWasAvailable && !shutdownAcknowledged && !shutdownCompleted)
+            {
+                throw new IOException(
+                    $"Rust 传输代理事件连接关闭异常（{eventStopFailure.GetType().Name}）：{eventStopFailure.Message}",
+                    eventStopFailure);
+            }
         }
-        else if (serverWasAvailable)
-        {
-            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-            while (DateTime.UtcNow < deadline && await IsPipeAvailableAsync(cancellationToken).ConfigureAwait(false))
-                await Task.Delay(200, cancellationToken).ConfigureAwait(false);
-            if (await IsPipeAvailableAsync(cancellationToken).ConfigureAwait(false))
-                throw new IOException("Rust 传输代理仍在运行，无法安全替换安装目录。");
-        }
+        finally { _lifecycle.Release(); }
     }
 
     public async Task ResumeAfterFailedStopAsync(CancellationToken cancellationToken = default)
@@ -292,6 +374,7 @@ public sealed class RustTransferAgentClient : IAsyncDisposable
     private async Task SubscribeEventsLoopAsync(CancellationToken cancellationToken)
     {
         var retrySeconds = 1;
+        var faultReported = false;
         while (!cancellationToken.IsCancellationRequested)
         {
             try
@@ -310,6 +393,7 @@ public sealed class RustTransferAgentClient : IAsyncDisposable
                     throw new InvalidDataException("Rust 传输代理未建立事件订阅。");
 
                 retrySeconds = 1;
+                faultReported = false;
                 EventReceived?.Invoke(this, new TransferAgentEventArgs("connected", 0, null, null, EmptyObject()));
                 while (!cancellationToken.IsCancellationRequested)
                 {
@@ -324,6 +408,11 @@ public sealed class RustTransferAgentClient : IAsyncDisposable
             {
                 // A reconnect begins with a fresh subscribe_events request. TransferViewModel
                 // refreshes the durable task snapshot after the synthetic "connected" event.
+                if (!faultReported && !cancellationToken.IsCancellationRequested)
+                {
+                    faultReported = true;
+                    ConnectionFaulted?.Invoke(exception);
+                }
             }
 
             try { await Task.Delay(TimeSpan.FromSeconds(retrySeconds), cancellationToken).ConfigureAwait(false); }
@@ -412,6 +501,15 @@ public sealed class RustTransferAgentClient : IAsyncDisposable
         {
             return false;
         }
+    }
+
+    private async Task WaitForPipeUnavailableAsync(CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (DateTime.UtcNow < deadline && await IsPipeAvailableAsync(cancellationToken).ConfigureAwait(false))
+            await Task.Delay(200, cancellationToken).ConfigureAwait(false);
+        if (await IsPipeAvailableAsync(cancellationToken).ConfigureAwait(false))
+            throw new IOException("Rust 传输代理进程已退出，但命名管道仍可连接。仍有代理实例响应，无法安全完成更新。");
     }
 
     private void TryStartAgent()

@@ -11,7 +11,9 @@ public partial class FeedbackView : UserControl
     {
         if (DataContext is not FeedbackViewModel model) return;
         var dialog = new FeedbackCreateWindow(model.Draft) { Owner = Window.GetWindow(this) };
-        dialog.ShowDialog();
-        await model.EnsureLoadedAsync();
+        if (dialog.ShowDialog() == true)
+            await model.RefreshAfterSubmissionAsync();
+        else
+            await model.EnsureLoadedAsync();
     }
 }

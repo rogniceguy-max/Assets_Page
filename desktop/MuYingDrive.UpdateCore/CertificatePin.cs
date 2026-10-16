@@ -5,7 +5,7 @@ using System.Security.Cryptography.X509Certificates;
 namespace MuYingDrive.UpdateCore;
 
 /// <summary>
-/// Validation for the pinned self-signed TLS leaf the V2 API presents.
+/// Validation for the pinned NAS TLS leaf and the CA carried by this application.
 /// </summary>
 /// <remarks>
 /// Shared by the desktop client and the first-install bootstrap so both accept exactly
@@ -14,6 +14,12 @@ namespace MuYingDrive.UpdateCore;
 /// </remarks>
 public static class CertificatePin
 {
+    private const string NasRootCertificateResource =
+        "MuYingDrive.UpdateCore.Trust.nas-root-ca.pem";
+    private const string TlsServerAuthenticationOid = "1.3.6.1.5.5.7.3.1";
+    private static readonly Lazy<X509Certificate2> NasRootCertificate =
+        new(LoadNasRootCertificate, LazyThreadSafetyMode.ExecutionAndPublication);
+
     /// <summary>
     /// Converts a user-supplied SHA-256 fingerprint (with optional colons, hyphens or
     /// spaces) into the raw pin bytes.
@@ -42,12 +48,11 @@ public static class CertificatePin
 
     /// <summary>
     /// Accepts a certificate only when the name matches, the validity window covers now,
-    /// chain failures are limited to an untrusted root (the leaf is self-signed), and the
-    /// SHA-256 pin matches.
+    /// it chains to the NAS CA carried by this application, and the SHA-256 leaf pin matches.
     /// </summary>
     public static bool IsTrusted(
         X509Certificate2? certificate,
-        X509Chain? chain,
+        X509Chain? _,
         SslPolicyErrors errors,
         ReadOnlySpan<byte> expectedPin)
     {
@@ -67,9 +72,7 @@ public static class CertificatePin
             const SslPolicyErrors chainErrors = SslPolicyErrors.RemoteCertificateChainErrors;
             if ((errors & ~chainErrors) != SslPolicyErrors.None)
                 return false;
-            if ((errors & chainErrors) != 0 &&
-                (chain is null || chain.ChainStatus.Any(status =>
-                    (status.Status & ~X509ChainStatusFlags.UntrustedRoot) != X509ChainStatusFlags.NoError)))
+            if (!BuildsToEmbeddedNasRoot(certificate))
             {
                 return false;
             }
@@ -77,9 +80,31 @@ public static class CertificatePin
             return CryptographicOperations.FixedTimeEquals(
                 certificate.GetCertHash(HashAlgorithmName.SHA256), expectedPin);
         }
-        catch (CryptographicException)
+        catch (Exception exception) when (
+            exception is CryptographicException or InvalidOperationException or IOException or FormatException)
         {
             return false;
         }
+    }
+
+    private static bool BuildsToEmbeddedNasRoot(X509Certificate2 certificate)
+    {
+        using var chain = new X509Chain();
+        chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
+        chain.ChainPolicy.CustomTrustStore.Add(NasRootCertificate.Value);
+        chain.ChainPolicy.ApplicationPolicy.Add(new Oid(TlsServerAuthenticationOid));
+        // This private NAS CA does not publish an online revocation list. The pinned
+        // leaf hash, its validity window, and this app-scoped CA are the revocation anchor.
+        chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+        return chain.Build(certificate);
+    }
+
+    private static X509Certificate2 LoadNasRootCertificate()
+    {
+        using var stream = typeof(CertificatePin).Assembly
+            .GetManifestResourceStream(NasRootCertificateResource)
+            ?? throw new InvalidOperationException("The embedded NAS CA certificate is missing.");
+        using var reader = new StreamReader(stream);
+        return X509Certificate2.CreateFromPem(reader.ReadToEnd());
     }
 }
