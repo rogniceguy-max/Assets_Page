@@ -24,6 +24,7 @@ namespace MuYingDrive.NativeWpf.ViewModels;
 public interface IFileBrowser
 {
     ObservableCollection<DriveFileItem> Files { get; }
+    ObservableCollection<InlineUploadCard> InlineUploadCards { get; }
     ICollectionView ItemsView { get; }
 
     string SearchText { get; }
@@ -38,6 +39,9 @@ public interface IFileBrowser
 
     /// <summary>True when upload is offered here at all.</summary>
     bool CanUpload { get; }
+    bool CanAcceptFileDrop { get; }
+    bool IsDropTargetActive { get; }
+    string InlineUploadMessage { get; }
 
     /// <summary>True when file mutations are offered here at all.</summary>
     bool CanModify { get; }
@@ -67,6 +71,10 @@ public interface IFileBrowser
     ICommand RestoreCommand { get; }
     ICommand ToggleRecycleBinCommand { get; }
     ICommand DetailsCommand { get; }
+    ICommand RetryInlineUploadCommand { get; }
+    ICommand CancelInlineUploadCommand { get; }
+    ICommand RetryInlineDownloadCommand { get; }
+    ICommand CancelInlineDownloadCommand { get; }
 
     event Action<SelectionRequest>? SelectionRequested;
 
@@ -79,4 +87,6 @@ public interface IFileBrowser
     /// find out what it was.
     /// </remarks>
     void UpdateSelection(IReadOnlyList<DriveFileItem> items);
+    void SetDropTargetActive(bool active);
+    Task HandleFileDropAsync(IReadOnlyList<string> paths, DriveFileItem? targetFolder);
 }
