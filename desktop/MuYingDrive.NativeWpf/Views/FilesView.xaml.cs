@@ -3,6 +3,8 @@ using MuYingDrive.NativeWpf.ViewModels;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.IO;
 
 namespace MuYingDrive.NativeWpf.Views;
 
@@ -115,5 +117,64 @@ public partial class FilesView : UserControl
         }
 
         item.Focus();
+    }
+
+    private void Files_DragOver(object sender, DragEventArgs args)
+    {
+        var paths = args.Data.GetData(DataFormats.FileDrop) as string[] ?? [];
+        var target = FindDirectoryDropTarget(args.OriginalSource as DependencyObject);
+        var allowed = DataContext is IFileBrowser { CanAcceptFileDrop: true } && paths.Length > 0 &&
+                      paths.All(path => File.Exists(path) || Directory.Exists(path)) &&
+                      (target is null || target.IsDirectory) && !IsOverFileItem(args.OriginalSource as DependencyObject);
+        if (DataContext is IFileBrowser viewModel) viewModel.SetDropTargetActive(allowed);
+        args.Effects = allowed ? DragDropEffects.Copy : DragDropEffects.None;
+        args.Handled = true;
+    }
+
+    private void Files_DragLeave(object sender, DragEventArgs args)
+    {
+        if (DataContext is IFileBrowser viewModel && sender is FrameworkElement element && !element.IsMouseOver)
+            viewModel.SetDropTargetActive(false);
+    }
+
+    private async void Files_Drop(object sender, DragEventArgs args)
+    {
+        args.Handled = true;
+        if (DataContext is not IFileBrowser viewModel) return;
+        viewModel.SetDropTargetActive(false);
+        var paths = args.Data.GetData(DataFormats.FileDrop) as string[] ?? [];
+        if (paths.Length == 0 || IsOverFileItem(args.OriginalSource as DependencyObject)) return;
+        await viewModel.HandleFileDropAsync(paths, FindDirectoryDropTarget(args.OriginalSource as DependencyObject));
+    }
+
+    private static bool IsOverFileItem(DependencyObject? source)
+    {
+        while (source is not null)
+        {
+            if (source is ListBoxItem { DataContext: DriveFileItem { IsDirectory: false } }) return true;
+            if (source is FrameworkContentElement content) { source = content.Parent; continue; }
+            try { source = VisualTreeHelper.GetParent(source); }
+            catch (InvalidOperationException) { return false; }
+        }
+        return false;
+    }
+
+    private static DriveFileItem? FindDirectoryDropTarget(DependencyObject? source)
+    {
+        while (source is not null)
+        {
+            if (source is ListBoxItem { DataContext: DriveFileItem item })
+                return item.IsDirectory ? item : null;
+
+            if (source is FrameworkContentElement content)
+            {
+                source = content.Parent;
+                continue;
+            }
+
+            try { source = VisualTreeHelper.GetParent(source); }
+            catch (InvalidOperationException) { return null; }
+        }
+        return null;
     }
 }

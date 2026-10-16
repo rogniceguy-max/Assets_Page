@@ -43,6 +43,42 @@
   <Style x:Key="Cell" TargetType="Border"><Setter Property="Padding" Value="10"/>
    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Subtle}"/><Setter Property="BorderThickness" Value="0,0,1,0"/>
   </Style>
+  <DataTemplate x:Key="WorkbookUploadCardTemplate">
+   <Border Background="{DynamicResource Brush.Surface.Panel}" BorderBrush="{DynamicResource Brush.Border.Subtle}"
+           BorderThickness="1" CornerRadius="4" Padding="7" Margin="0,5,5,0">
+    <Grid>
+     <Grid.ColumnDefinitions><ColumnDefinition Width="38"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+     <Border Width="32" Height="32" Background="{DynamicResource Brush.Surface.Canvas}" ClipToBounds="True" VerticalAlignment="Top">
+      <Grid>
+       <Image Source="{Binding Preview}" Stretch="UniformToFill"/>
+       <TextBlock Text="▶" FontSize="17" HorizontalAlignment="Center" VerticalAlignment="Center"
+                  Foreground="{DynamicResource Brush.Text.Secondary}"
+                  Visibility="{Binding IsVideo, Converter={StaticResource BoolVisibility}}"/>
+      </Grid>
+     </Border>
+     <StackPanel Grid.Column="1">
+      <TextBlock Text="{Binding DisplayName}" FontSize="11" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding LocalPath}"/>
+      <TextBlock Text="{Binding State}" FontSize="10" Foreground="{DynamicResource Brush.Text.Secondary}"/>
+      <TextBlock Text="{Binding ProgressLabel}" FontSize="9" Foreground="{DynamicResource Brush.Text.Secondary}"
+                 Visibility="{Binding HasProgress, Converter={StaticResource BoolVisibility}}"/>
+      <ProgressBar Height="3" Maximum="100" Value="{Binding Progress}"
+                   Visibility="{Binding HasProgress, Converter={StaticResource BoolVisibility}}"/>
+      <ProgressBar Height="3" IsIndeterminate="True"
+                   Visibility="{Binding IsBusy, Converter={StaticResource BoolVisibility}}"/>
+      <TextBlock Text="{Binding Error}" FontSize="10" Foreground="{DynamicResource Brush.Status.Danger}"
+                 TextWrapping="Wrap" Visibility="{Binding HasError, Converter={StaticResource BoolVisibility}}"/>
+      <TextBlock Text="{Binding FileId, StringFormat=文件 ID：{0}}" FontSize="9" Foreground="{DynamicResource Brush.Text.Secondary}"
+                 Visibility="{Binding HasFileId, Converter={StaticResource BoolVisibility}}"/>
+      <StackPanel Orientation="Horizontal">
+       <Button Content="重试" Padding="5,1" HorizontalAlignment="Left" Click="OnRetryUploadCard"
+               Visibility="{Binding CanRetry, Converter={StaticResource BoolVisibility}}"/>
+       <Button Content="取消" Padding="5,1" Margin="4,0,0,0" HorizontalAlignment="Left" Click="OnCancelUploadCard"
+               Visibility="{Binding CanCancel, Converter={StaticResource BoolVisibility}}"/>
+      </StackPanel>
+     </StackPanel>
+    </Grid>
+   </Border>
+  </DataTemplate>
   <DataTemplate x:Key="SceneRowTemplate">
    <Border Loaded="OnRowLoaded" Focusable="True"
            BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1" Margin="0,0,0,8"
@@ -198,10 +234,12 @@
                 Background="Transparent" Padding="4,8" Cursor="Hand" MouseLeftButtonUp="OnPickVideo"
                 IsHitTestVisible="{Binding Row.CanEdit}"
                 ToolTip="点击选择或拖入视频文件 (.mp4, .mov, .mkv 等)">
-         <TextBlock Text="可拖入或点击关联视频..." FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}" Opacity="0.5"
-                    Visibility="{Binding Row.CanEdit, Converter={StaticResource BoolVisibility}}"/>
-         <TextBlock Text="暂无关联视频" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}" Opacity="0.5"
-                    Visibility="{Binding Row.CanEdit, Converter={StaticResource InverseBoolVisibility}}"/>
+         <StackPanel>
+          <TextBlock Text="可拖入或点击关联视频..." FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}" Opacity="0.5"
+                     Visibility="{Binding Row.CanEdit, Converter={StaticResource BoolVisibility}}"/>
+          <TextBlock Text="暂无关联视频" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}" Opacity="0.5"
+                     Visibility="{Binding Row.CanEdit, Converter={StaticResource InverseBoolVisibility}}"/>
+         </StackPanel>
         </Border>
         <!-- 已关联视频列表 (支持单beat多视频，点击默认程序播放，右键上下文操作) -->
         <ItemsControl ItemsSource="{Binding VideoItems}" Visibility="{Binding HasVideos, Converter={StaticResource BoolVisibility}}">
@@ -223,19 +261,37 @@
                         Visibility="{Binding PlacementTarget.Tag.Row.CanEdit, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolVisibility}}"/>
              </ContextMenu>
             </Border.ContextMenu>
-            <Grid Cursor="Hand" MouseLeftButtonUp="OnPlayVideoDirectly">
-             <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="Auto"/>
-             </Grid.ColumnDefinitions>
-             <!-- 视频名 -->
-             <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="11"
-                        Foreground="{DynamicResource Brush.Text.Primary}"
-                        TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-             <!-- 播放提示 -->
-             <TextBlock Grid.Column="1" Text="▶" FontSize="9" Margin="4,0,0,0"
-                        Foreground="{DynamicResource Brush.Text.Secondary}" VerticalAlignment="Center"/>
-            </Grid>
+            <StackPanel>
+             <Grid Cursor="Hand" MouseLeftButtonUp="OnPlayVideoDirectly">
+              <Grid.ColumnDefinitions>
+               <ColumnDefinition Width="*"/>
+               <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="11"
+                         Foreground="{DynamicResource Brush.Text.Primary}"
+                         TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+              <TextBlock Grid.Column="1" Text="▶" FontSize="9" Margin="4,0,0,0"
+                         Foreground="{DynamicResource Brush.Text.Secondary}" VerticalAlignment="Center"/>
+             </Grid>
+             <StackPanel Margin="0,5,0,0" Visibility="{Binding HasDownloadStatus, Converter={StaticResource BoolVisibility}}">
+              <TextBlock Text="{Binding DownloadStatus}" FontSize="10"
+                         Foreground="{DynamicResource Brush.Text.Secondary}"/>
+              <TextBlock Text="{Binding DownloadError}" FontSize="10" TextWrapping="Wrap"
+                         Foreground="{DynamicResource Brush.Status.Danger}"
+                         Visibility="{Binding HasDownloadError, Converter={StaticResource BoolVisibility}}"/>
+              <ProgressBar Height="4" Margin="0,3,0,0" Minimum="0" Maximum="100" Value="{Binding Progress}"
+                           Visibility="{Binding HasProgress, Converter={StaticResource BoolVisibility}}"/>
+              <TextBlock Text="{Binding ProgressLabel}" FontSize="9"
+                         Foreground="{DynamicResource Brush.Text.Secondary}"
+                         Visibility="{Binding HasProgress, Converter={StaticResource BoolVisibility}}"/>
+              <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+               <Button Content="重试" Padding="6,1" FontSize="10" Click="OnPlayVideoDirectly"
+                       Visibility="{Binding CanRetry, Converter={StaticResource BoolVisibility}}"/>
+               <Button Content="取消下载" Padding="6,1" Margin="4,0,0,0" FontSize="10" Click="OnCancelVideoDownload"
+                       Visibility="{Binding CanCancel, Converter={StaticResource BoolVisibility}}"/>
+              </StackPanel>
+             </StackPanel>
+            </StackPanel>
            </Border>
           </DataTemplate>
          </ItemsControl.ItemTemplate>
@@ -254,6 +310,7 @@
                 IsEnabled="{Binding Row.CanEdit}" Visibility="{Binding Row.CanEdit, Converter={StaticResource BoolVisibility}}"/>
      </ContextMenu>
     </Border.ContextMenu>
+    <StackPanel>
     <local:ResponsiveColumnsPanel Weights="0.8,1.2,0.8,160px,2.2,2.4" Breakpoint="760">
      <Border Style="{StaticResource Cell}">
       <StackPanel>
@@ -392,6 +449,7 @@
          </DataTemplate>
         </ItemsControl.ItemTemplate>
         </ItemsControl>
+        <ItemsControl ItemsSource="{Binding TransferCards}" ItemTemplate="{StaticResource WorkbookUploadCardTemplate}"/>
        </Grid>
       </StackPanel>
      </Border>
@@ -407,6 +465,8 @@
       </StackPanel>
      </Border>
     </local:ResponsiveColumnsPanel>
+    <ItemsControl ItemsSource="{Binding TransferCards}" ItemTemplate="{StaticResource WorkbookUploadCardTemplate}" Margin="10,0,10,8"/>
+    </StackPanel>
    </Border>
   </DataTemplate>
  </UserControl.Resources>
@@ -422,6 +482,8 @@
                 local:DelayedVisibility.IsBusy="{Binding Busy}"/>
    <TextBlock Text="{Binding Error}" Foreground="{DynamicResource Brush.Status.Danger}" Margin="0,0,0,8"
               Visibility="{Binding CanReload, Converter={StaticResource BoolVisibility}}"/>
+   <TextBlock Text="{Binding InlineStatusMessage}" Foreground="{DynamicResource Brush.Text.Secondary}" Margin="0,0,0,8"
+              Visibility="{Binding HasInlineStatus, Converter={StaticResource BoolVisibility}}"/>
    <Button Content="重新加载" Click="OnRefresh" HorizontalAlignment="Left" Margin="0,0,0,8" IsEnabled="{Binding Ready}"
            Visibility="{Binding CanReload, Converter={StaticResource BoolVisibility}}"/>
    <StackPanel Visibility="{Binding HasPendingOperation, Converter={StaticResource BoolVisibility}}" IsEnabled="{Binding Ready}" Margin="0,0,0,12">

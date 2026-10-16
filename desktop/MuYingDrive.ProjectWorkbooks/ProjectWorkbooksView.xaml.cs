@@ -345,22 +345,7 @@ public partial class ProjectWorkbooksView : UserControl
             };
             if (picker.ShowDialog(Window.GetWindow(this)) != true || picker.FileNames.Length == 0) return;
 
-            await Model.ExecuteAsync(async () =>
-            {
-                var assets = new List<ImageAsset>();
-                foreach (var path in picker.FileNames)
-                {
-                    await using var source = File.OpenRead(path);
-                    assets.Add(await Model.Service.UploadProjectImageAsync(
-                        Model.Document?.File.ProjectId ?? RequireProject(),
-                        Path.GetFileName(path),
-                        Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" : "image/jpeg",
-                        source,
-                        row.Row.AssetFolderPath ?? (string.IsNullOrEmpty(row.Row.Category) ? null : $"{row.Row.Category}/{row.Row.Name}")));
-                }
-                var allIds = row.Row.CandidateImages.Select(a => a.Id).Concat(assets.Select(a => a.Id)).ToList();
-                await Model.UpdateImagesAsync(row, assets.First().Id, allIds);
-            });
+            await UploadAssetPathsAsync(row, picker.FileNames, selectedTarget: false);
             return;
         }
 
@@ -392,22 +377,7 @@ public partial class ProjectWorkbooksView : UserControl
         };
         if (picker.ShowDialog(Window.GetWindow(this)) != true || picker.FileNames.Length == 0) return;
 
-        await Model.ExecuteAsync(async () =>
-        {
-            var assets = new List<ImageAsset>();
-            foreach (var path in picker.FileNames)
-            {
-                await using var source = File.OpenRead(path);
-                assets.Add(await Model.Service.UploadProjectImageAsync(
-                    Model.Document?.File.ProjectId ?? RequireProject(),
-                    Path.GetFileName(path),
-                    Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" : "image/jpeg",
-                    source,
-                    row.Row.AssetFolderPath ?? (string.IsNullOrEmpty(row.Row.Category) ? null : $"{row.Row.Category}/{row.Row.Name}")));
-            }
-            var allIds = row.Row.CandidateImages.Select(a => a.Id).Concat(assets.Select(a => a.Id)).ToList();
-            await Model.UpdateImagesAsync(row, row.Row.SelectedImage?.Id, allIds);
-        });
+        await UploadAssetPathsAsync(row, picker.FileNames, selectedTarget: false);
     }
 
     private async void OnImageDrop(object sender, DragEventArgs e)
@@ -416,25 +386,120 @@ public partial class ProjectWorkbooksView : UserControl
         if (Row(sender) is not { } row) return;
         if (!row.Row.CanEdit) return;
         var paths = Paths(e); var selected = Equals(((FrameworkElement)sender).Tag, "selected");
-        await Model.ExecuteAsync(async () =>
+        await UploadAssetPathsAsync(row, paths, selected);
+    }
+
+    private async Task UploadAssetPathsAsync(AssetRowItem row, IReadOnlyList<string> paths, bool selectedTarget,
+        WorkbookUploadCard? retryCard = null)
+    {
+        if (paths.Count == 0) return;
+        if (selectedTarget && paths.Count != 1)
         {
-            if (paths.Length == 0 || paths.Any(path => !IsImage(path))) throw new InvalidDataException("请拖入 PNG 或 JPEG 图片。");
-            if (selected && paths.Length != 1) throw new InvalidDataException("选定只接收一张图片，请将多张图片拖入备选区。");
-            if (!selected && row.Row.CandidateImages.Count + paths.Length > 100) throw new InvalidDataException("每行最多保留 100 张备选图片。");
-            var assets = new List<ImageAsset>();
+            Model.ReportInlineStatus("选定区一次只接受一张图片；请将多张图片拖入备选区。");
+            return;
+        }
+        if (!selectedTarget && row.Row.CandidateImages.Count + paths.Count > 100 && retryCard is null)
+        {
+            Model.ReportInlineStatus("每行最多保留 100 张备选图片；没有开始上传。");
+            return;
+        }
+
+        var cards = new List<WorkbookUploadCard>();
+        if (retryCard is not null)
+        {
+            cards.Add(retryCard);
+        }
+        else
+        {
             foreach (var path in paths)
             {
-                await using var source = File.OpenRead(path);
-                assets.Add(await Model.Service.UploadProjectImageAsync(
-                    Model.Document?.File.ProjectId ?? RequireProject(),
-                    Path.GetFileName(path),
-                    Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" : "image/jpeg",
-                    source,
-                    row.Row.AssetFolderPath ?? (string.IsNullOrEmpty(row.Row.Category) ? null : $"{row.Row.Category}/{row.Row.Name}")));
+                var card = new WorkbookUploadCard(path, isImage: true, assetRow: row)
+                {
+                    OperationId = Guid.NewGuid().ToString("D"),
+                    SelectedTarget = selectedTarget
+                };
+                row.TransferCards.Add(card);
+                cards.Add(card);
+                if (IsImage(path))
+                {
+                    try { Model.PersistPendingTransfer(card); }
+                    catch (Exception exception) when (exception is IOException or InvalidOperationException or InvalidDataException or UnauthorizedAccessException)
+                    {
+                        card.State = "上传失败，可重试";
+                        card.Error = exception.Message;
+                    }
+                }
+                else { card.State = "上传失败"; card.Error = "请拖入 PNG 或 JPEG 图片。"; }
             }
-            await Model.UpdateImagesAsync(row, selected ? assets.Single().Id : row.Row.SelectedImage?.Id,
-                selected ? row.Row.CandidateImages.Select(a => a.Id).Concat(new[] { assets.Single().Id }) : row.Row.CandidateImages.Select(a => a.Id).Concat(assets.Select(a => a.Id)));
-        });
+        }
+
+        using var concurrency = new SemaphoreSlim(3, 3);
+        await Task.WhenAll(cards.Select(async card =>
+        {
+            await concurrency.WaitAsync();
+            try
+            {
+                if (!IsImage(card.LocalPath))
+                {
+                    card.State = "上传失败";
+                    card.Error = "请拖入 PNG 或 JPEG 图片。";
+                    Model.ReportInlineStatus(card.Error);
+                    return;
+                }
+                card.Error = null;
+                card.State = "准备上传";
+                await LoadUploadPreviewAsync(card);
+
+                if (card.UploadedImage is null)
+                {
+                    Model.PersistPendingTransfer(card);
+                    card.State = "正在上传";
+                    await using var source = File.OpenRead(card.LocalPath);
+                    var asset = await Model.Service.UploadProjectImageAsync(
+                        Model.Document?.File.ProjectId ?? RequireProject(), card.DisplayName,
+                        Path.GetExtension(card.DisplayName).Equals(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" : "image/jpeg",
+                        source,
+                        row.Row.AssetFolderPath ?? (string.IsNullOrEmpty(row.Row.Category) ? null : $"{row.Row.Category}/{row.Row.Name}"),
+                        operationId: card.OperationId);
+                    card.UploadedImage = asset;
+                    card.FileId = asset.FileId;
+                    card.OperationId = asset.TransferOperationId ?? card.OperationId;
+                    Model.PersistPendingTransfer(card);
+                }
+
+                card.State = "正在关联";
+                Model.PersistPendingTransfer(card);
+                await Model.LinkUploadedImageAsync(row, card.UploadedImage, card.SelectedTarget);
+                card.State = "已完成";
+                card.Error = null;
+                Model.RemovePendingTransfer(card.OperationId!);
+            }
+            catch (Exception exception)
+            {
+                card.State = card.UploadedImage is null ? "上传失败，可重试" : "关联失败，可重试";
+                card.Error = card.UploadedImage is null
+                    ? exception.Message
+                    : $"图片已上传，但资产行关联未完成；文件 ID：{card.FileId}。重试只会重试关联。{Environment.NewLine}{exception.Message}";
+                Model.ReportInlineStatus(card.Error);
+                try { Model.PersistPendingTransfer(card); }
+                catch (Exception persistError) when (persistError is IOException or InvalidOperationException or InvalidDataException or UnauthorizedAccessException)
+                { Model.ReportInlineStatus($"{card.Error}；待恢复信息保存失败：{persistError.Message}"); }
+            }
+            finally { concurrency.Release(); }
+        }));
+    }
+
+    private static async Task LoadUploadPreviewAsync(WorkbookUploadCard card)
+    {
+        if (!card.IsImage || card.Preview is not null) return;
+        try
+        {
+            card.Preview = await Task.Run(() => ProjectWorkbooksViewModel.Decode(File.ReadAllBytes(card.LocalPath), thumbnail: true));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            // Keep the image placeholder and let the transfer fail with its own actionable message.
+        }
     }
     private async void OnClearSelected(object sender, RoutedEventArgs e)
     {
@@ -749,24 +814,67 @@ public partial class ProjectWorkbooksView : UserControl
         return null;
     }
 
+    private static SceneVideoItem? GetSceneVideoItem(object sender)
+    {
+        if (sender is FrameworkElement { DataContext: SceneVideoItem directItem }) return directItem;
+        if (sender is MenuItem menuItem)
+        {
+            if (menuItem.DataContext is SceneVideoItem menuItemVideo) return menuItemVideo;
+            if (menuItem.Parent is ContextMenu { PlacementTarget: FrameworkElement target }
+                && target.DataContext is SceneVideoItem targetVideo) return targetVideo;
+        }
+        var row = Scene(sender);
+        var video = GetVideoItem(sender) ?? row?.Video;
+        return video is null ? null : row?.VideoItems.FirstOrDefault(item =>
+            item.FileId == video.FileId && item.Name == video.Name);
+    }
+
     private async void OnPlayVideoDirectly(object sender, RoutedEventArgs e)
     {
+        e.Handled = true;
+        var videoItem = GetSceneVideoItem(sender);
         var video = GetVideoItem(sender) ?? Scene(sender)?.Video;
         if (video == null) return;
         var model = TryResolveModel(sender) ?? Model;
+        if (videoItem?.DownloadInProgress == true) return;
         if (string.IsNullOrWhiteSpace(video.FileId))
         {
-            MessageBox.Show(Window.GetWindow(this), "此视频没有版本化文件 ID，无法从文件服务下载。", "无法播放", MessageBoxButton.OK, MessageBoxImage.Warning);
+            const string message = "此视频没有版本化文件 ID，无法从文件服务下载。";
+            videoItem?.SetDownloadResult("无法下载", message);
+            model.ReportInlineStatus(message);
             return;
         }
+        videoItem?.BeginDownload();
         try
         {
             var resolvedPath = await model.DownloadVideoAsync(video);
+            videoItem?.SetLocalPath(resolvedPath);
+            videoItem?.SetDownloadResult("已下载，正在打开");
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(resolvedPath) { UseShellExecute = true });
+            model.ReportInlineStatus($"视频「{video.Name}」已下载并交由系统默认程序打开。");
         }
         catch (Exception ex)
         {
-            MessageBox.Show(Window.GetWindow(this), $"播放失败：{ex.Message}", "无法播放", MessageBoxButton.OK, MessageBoxImage.Warning);
+            var message = $"视频「{video.Name}」下载或打开失败：{ex.Message}";
+            videoItem?.SetDownloadResult("播放失败，可重试", ex.Message, canRetry: true);
+            model.ReportInlineStatus(message);
+        }
+    }
+
+    private async void OnCancelVideoDownload(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        var item = GetSceneVideoItem(sender);
+        if (item is null) return;
+        var model = TryResolveModel(sender) ?? Model;
+        try
+        {
+            if (!await model.CancelVideoDownloadAsync(item))
+                model.ReportInlineStatus("视频下载未能取消；任务可能已进入不可取消的提交阶段。");
+        }
+        catch (Exception exception)
+        {
+            model.ReportInlineStatus($"取消视频下载失败：{exception.Message}");
         }
     }
 
@@ -787,7 +895,13 @@ public partial class ProjectWorkbooksView : UserControl
         var paths = Paths(e);
         if (paths.Length == 0 || paths.Any(p => !IsVideo(p)))
         {
-            MessageBox.Show(Window.GetWindow(this), "请拖入视频文件（如 .mp4, .mov, .mkv 等）。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            Model.ReportInlineStatus("请拖入视频文件（如 .mp4、.mov、.mkv、.avi 或 .webm）。");
+            foreach (var path in paths.Where(path => !IsVideo(path)))
+            {
+                var rejected = new WorkbookUploadCard(path, isImage: false, sceneRow: row)
+                { State = "上传失败", Error = "不是受支持的视频文件。" };
+                row.TransferCards.Add(rejected);
+            }
             return;
         }
 
@@ -809,20 +923,65 @@ public partial class ProjectWorkbooksView : UserControl
         await AttachVideosAsync(model, row, picker.FileNames);
     }
 
-    private async Task AttachVideosAsync(ProjectWorkbooksViewModel model, SceneRowItem row, IEnumerable<string> paths)
+    private async Task AttachVideosAsync(ProjectWorkbooksViewModel model, SceneRowItem row, IEnumerable<string> paths,
+        WorkbookUploadCard? retryCard = null)
     {
-        var errors = new List<string>();
-        foreach (var path in paths)
+        var cards = new List<WorkbookUploadCard>();
+        if (retryCard is not null) cards.Add(retryCard);
+        else
         {
-            try { await model.AttachVideoFileAsync(row, path); }
-            catch (Exception ex) { errors.Add($"{Path.GetFileName(path)}：{ex.Message}"); }
+            foreach (var path in paths.ToArray())
+            {
+                var card = new WorkbookUploadCard(path, isImage: false, sceneRow: row)
+                { OperationId = Guid.NewGuid().ToString("D") };
+                row.TransferCards.Add(card);
+                cards.Add(card);
+            }
         }
 
-        if (errors.Count > 0)
+        using var concurrency = new SemaphoreSlim(3, 3);
+        await Task.WhenAll(cards.Select(async card =>
         {
-            MessageBox.Show(Window.GetWindow(this), string.Join(Environment.NewLine, errors),
-                "视频关联失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            await concurrency.WaitAsync();
+            try
+            {
+                card.Error = null;
+                card.State = "排队中";
+                await model.AttachVideoFileAsync(row, card.LocalPath, card.OperationId, card);
+            }
+            catch (Exception exception)
+            {
+                card.State = card.HasFileId ? "关联失败，可重试" : "上传失败，可重试";
+                card.Error ??= exception.Message;
+                model.ReportInlineStatus(card.Error);
+                try { model.PersistPendingTransfer(card); }
+                catch (Exception persistError) when (persistError is IOException or InvalidOperationException or InvalidDataException or UnauthorizedAccessException)
+                { model.ReportInlineStatus($"{card.Error}；待恢复信息保存失败：{persistError.Message}"); }
+            }
+            finally { concurrency.Release(); }
+        }));
+    }
+
+    private async void OnRetryUploadCard(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not WorkbookUploadCard card || !card.HasError) return;
+        if (card.AssetRow is { } assetRow)
+            await UploadAssetPathsAsync(assetRow, [card.LocalPath], card.SelectedTarget, card);
+        else if (card.SceneRow is { } sceneRow)
+            await AttachVideosAsync(TryResolveModel(sender) ?? Model, sceneRow, [card.LocalPath], card);
+    }
+
+    private async void OnCancelUploadCard(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not WorkbookUploadCard card || !card.CanCancel) return;
+        var model = TryResolveModel(sender) ?? Model;
+        try
+        {
+            if (!await model.CancelUploadCardAsync(card))
+                model.ReportInlineStatus("传输代理尚未确认取消；请查看该卡片的实际状态后再操作。");
         }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException or TimeoutException)
+        { model.ReportInlineStatus($"取消失败：{exception.Message}"); }
     }
 
     private async void OnOpenDiscardedVideos(object sender, RoutedEventArgs e)

@@ -30,6 +30,59 @@ internal static class Program
             var output = args.Length > 0 ? args[0] : Path.Combine(Path.GetTempPath(), "muying-feedback-render");
             Directory.CreateDirectory(output);
             var settings = new NasClientSettings(new Uri("https://feedback-test.invalid"), new string('0', 64));
+            Assert(TransferTaskStateProjection.Label("committing") == "提交中", "Rust commit state must have a distinct inline label.");
+            Assert(TransferTaskStateProjection.Label("linking") == "等待关联", "Transfer completion must not be confused with business linking.");
+            Assert(TransferTaskStateProjection.Progress(150, 100, "transferring") == 100,
+                "Reported transfer progress must be clamped to the declared byte total.");
+            Assert(TransferTaskStateProjection.Progress(0, 0, "completed") == 100,
+                "A completed task must render complete even when the agent omitted a byte total.");
+            Assert(!TransferTaskStateProjection.CanCancel("committing", true),
+                "A task whose commit began must not expose cancellation as if rollback were possible.");
+            Assert(!TransferTaskStateProjection.CanCancel("failed", false),
+                "A terminal failed task must expose retry, not an invalid cancel action.");
+            Assert(!LocalUploadWalker.IsSafeSegmentName("../outside") && !LocalUploadWalker.IsSafeSegmentName("a\\b") &&
+                   LocalUploadWalker.IsSafeSegmentName("素材 1"),
+                "Local upload path segments must reject traversal and separators while allowing ordinary names.");
+            var restoredDownload = JsonSerializer.Deserialize<TransferAgentTaskSnapshot>("""
+                {"task_id":"fixture-operation","operation_id":"fixture-operation","kind":"download","source":"project_workbook","state":"transferring","file_id":"file-fixture","revision_id":"revision-fixture","destination_path":"/cache/file-fixture.webp","scope_id":"project:fixture:scene-video","project_id":"project-fixture","bytes_total":100,"bytes_done":40,"updated_at":100}
+                """)!;
+            Assert(restoredDownload.DestinationPath == "/cache/file-fixture.webp" && restoredDownload.ScopeId == "project:fixture:scene-video",
+                "A Rust download task must retain the destination and project scope needed to resume its inline video card.");
+            var videoCard = new SceneVideoItem(new VideoItem("video-fixture", "scene.mp4", "scene/scene.mp4")
+            { FileId = "file-fixture" });
+            videoCard.ApplyTransfer(new ProjectTransferTaskSnapshot("fixture-operation", "transferring", 40, 100,
+                null, "file-fixture", "revision-fixture", "download", "project_workbook", "project:fixture:scene-video",
+                "project-fixture", false, true, DateTimeOffset.UtcNow));
+            Assert(videoCard.DownloadStatus == "下载中" && videoCard.Progress == 40 && videoCard.CanCancel,
+                "A scene video card must display the real transfer progress and cancellation state.");
+            videoCard.ApplyTransfer(new ProjectTransferTaskSnapshot("fixture-operation", "failed", 40, 100,
+                "network failed", "file-fixture", "revision-fixture", "download", "project_workbook", "project:fixture:scene-video",
+                "project-fixture", true, false, DateTimeOffset.UtcNow));
+            Assert(videoCard.CanRetry && videoCard.HasDownloadError,
+                "A retryable video download failure must stay on that video row with an actionable retry state.");
+
+            var recoveryScope = new string('A', 64);
+            var recoveryId = Guid.NewGuid().ToString("D");
+            var recoveryPath = Path.Combine(Path.GetTempPath(), "muying-recovery-fixture.png");
+            var recovery = new PendingWorkbookTransferOperation(recoveryScope, recoveryId, "asset_image",
+                "project-fixture", "workbook-fixture", "row-fixture", recoveryPath, "fixture.png", false,
+                12, 34, "关联失败，可重试", "fixture error", null, null);
+            try
+            {
+                recovery.Save();
+                Assert(PendingWorkbookTransferOperation.LoadAll(recoveryScope).Single(item => item.OperationId == recoveryId) == recovery,
+                    "A pending business-link operation must restore its exact operation, scope, row, and local source metadata.");
+            }
+            finally { recovery.Remove(); }
+
+            var transferOnlyCard = new WorkbookUploadCard(recoveryPath, true)
+            { OperationId = recoveryId };
+            transferOnlyCard.ApplyTransfer(new ProjectTransferTaskSnapshot(recoveryId, "completed", 12, 12,
+                null, "file-fixture", "revision-fixture", "upload", "wpf", "project:fixture",
+                "project-fixture", false, false, DateTimeOffset.UtcNow));
+            Assert(transferOnlyCard.State != "已完成",
+                "Rust transfer completion alone must never mark an asset row link as complete.");
+
             var session = new DriveSession(new V2UserSession { Id = 1, UserName = "fixture-only", Department = "fixture-only", GroupType = "film", Spaces = new() { ["film"] = "/film", ["writing"] = "/writing", ["public"] = "/public", ["personal"] = "/personal/fixture" } }, "fixture-token");
             var employeeNamespace = FileClientIdentity.GetEmployeeAgentNamespace(settings.ApiBaseUri, 42);
             Assert(employeeNamespace == FileClientIdentity.GetEmployeeAgentNamespace(settings.ApiBaseUri, 42), "Employee agent namespace must be stable across sign-ins.");

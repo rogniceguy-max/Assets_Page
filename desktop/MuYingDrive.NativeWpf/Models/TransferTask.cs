@@ -23,6 +23,7 @@ public sealed class TransferTask : ObservableObject
     private bool _isFolderTransfer;
     private bool? _canRetryOverride;
     private bool _commitStarted;
+    private string? _agentState;
     private long _lastRevision = -1;
     private DateTimeOffset _lastAgentUpdated = DateTimeOffset.MinValue;
 
@@ -30,6 +31,9 @@ public sealed class TransferTask : ObservableObject
     public TransferTask(TransferAgentTaskSnapshot snapshot) => Update(snapshot);
 
     public string Id { get; private set; } = string.Empty;
+    public string OperationId { get; private set; } = string.Empty;
+    public string? ScopeId { get; private set; }
+    public string? ProjectId { get; private set; }
     public string FileName { get; private set; } = string.Empty;
     public string Direction { get; private set; } = string.Empty;
     public string Location { get; private set; } = string.Empty;
@@ -104,16 +108,18 @@ public sealed class TransferTask : ObservableObject
     public bool CanCancel => !CommitOutcomeUnknown &&
         (State is TransferState.Queued or TransferState.Running or TransferState.Paused or TransferState.Failed);
 
-    public string StateLabel => State switch
-    {
-        TransferState.Queued => "等待中",
-        TransferState.Running => "进行中",
-        TransferState.Paused => "已暂停",
-        TransferState.Failed => "失败",
-        TransferState.Conflict => "发生冲突",
-        TransferState.Cancelled => "已取消",
-        _ => "已完成"
-    };
+    public string StateLabel => _agentState is not null
+        ? TransferTaskStateProjection.Label(_agentState)
+        : State switch
+        {
+            TransferState.Queued => "等待中",
+            TransferState.Running => "进行中",
+            TransferState.Paused => "已暂停",
+            TransferState.Failed => "失败",
+            TransferState.Conflict => "发生冲突",
+            TransferState.Cancelled => "已取消",
+            _ => "已完成"
+        };
 
     public string ProgressLabel => $"{FormatSize(BytesTransferred)} / {Size} · {Progress:0}%";
     public string TransferSummary => State == TransferState.Completed
@@ -207,6 +213,10 @@ public sealed class TransferTask : ObservableObject
         var previousOutcomeUnknown = CommitOutcomeUnknown;
         _lastAgentUpdated = snapshot.UpdatedAt;
         Id = string.IsNullOrWhiteSpace(snapshot.TaskId) ? snapshot.OperationId : snapshot.TaskId;
+        OperationId = snapshot.OperationId;
+        ScopeId = snapshot.ScopeId;
+        ProjectId = snapshot.ProjectId;
+        _agentState = snapshot.State;
         FileName = string.IsNullOrWhiteSpace(snapshot.DisplayName) ? snapshot.LogicalPath ?? Id : snapshot.DisplayName;
         Direction = snapshot.Kind.Contains("download", StringComparison.OrdinalIgnoreCase) ? "下载" : "上传";
         IsFolderTransfer = snapshot.Kind.Contains("batch", StringComparison.OrdinalIgnoreCase) ||
@@ -239,6 +249,10 @@ public sealed class TransferTask : ObservableObject
             OnPropertyChanged(nameof(CanCancel));
         }
         OnPropertyChanged(nameof(Id));
+        OnPropertyChanged(nameof(OperationId));
+        OnPropertyChanged(nameof(ScopeId));
+        OnPropertyChanged(nameof(ProjectId));
+        OnPropertyChanged(nameof(StateLabel));
         OnPropertyChanged(nameof(FileName));
         OnPropertyChanged(nameof(Direction));
         OnPropertyChanged(nameof(Location));

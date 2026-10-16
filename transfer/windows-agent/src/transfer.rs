@@ -569,7 +569,7 @@ async fn upload_one(
             .set_local_fingerprint(root_id, path, size, source_modified_ns)?;
     }
     state_event(state, &current, TaskState::Completed, Some(size), None);
-    Ok(committed)
+    Ok(staged)
 }
 
 async fn upload_small_batch(
@@ -632,7 +632,7 @@ async fn upload_small_batch(
     let errors: std::collections::HashMap<_, _> = intent
         .errors
         .into_iter()
-        .map(|error| (error.operation_id, error))
+        .map(|error| (error.operation_id.clone(), error))
         .collect();
     let mut batch_items = Vec::new();
     for (task, size, sha256) in tasks.iter_mut() {
@@ -1184,7 +1184,8 @@ async fn download_one(state: &Arc<AgentState>, task: &mut TaskRecord) -> Result<
             scope_id: scope_id.clone(),
             project_id: task.project_id.clone(),
             file_id,
-            revision_id: download.revision_id.clone(),
+            revision_id: task.snapshot.revision_id.clone()
+                .ok_or_else(|| anyhow!("download task is missing its authorized revision ID"))?,
             version,
             size: download.size,
             sha256: download.sha256,

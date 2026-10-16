@@ -124,9 +124,31 @@ public sealed class EpisodeSyncService : ObservableObject, IDisposable
 
     private void HandleTaskUpdated(TransferAgentTaskSnapshot snapshot)
     {
-        if (!string.Equals(snapshot.Source, "sync", StringComparison.OrdinalIgnoreCase)) return;
-        if (snapshot.State is "failed" or "conflict") StatusText = snapshot.Message ?? "同步中有文件需要处理";
-        else if (snapshot.State == "completed") StatusText = "同步文件已完成";
+        if (!string.Equals(snapshot.Source, "sync", StringComparison.OrdinalIgnoreCase) ||
+            snapshot.RootId is null || !_roots.Any(root => root.RootId == snapshot.RootId)) return;
+        RefreshTaskStatus();
+    }
+
+    private void RefreshTaskStatus()
+    {
+        var rootIds = _roots.Select(root => root.RootId).ToHashSet(StringComparer.Ordinal);
+        var tasks = _transfers.TaskSnapshots
+            .Where(task => task.Source == "sync" && task.RootId is not null && rootIds.Contains(task.RootId))
+            .GroupBy(task => task.OperationId, StringComparer.Ordinal)
+            .Select(group => group.OrderByDescending(task => task.UpdatedAt).First())
+            .ToArray();
+        if (tasks.Length == 0) return;
+
+        var active = tasks.Where(task => !TransferTaskStateProjection.IsTerminal(task.State) && task.State != "paused").ToArray();
+        var completed = tasks.Count(task => task.State == "completed");
+        var failed = tasks.Count(task => task.State == "failed");
+        var conflicts = tasks.Count(task => task.State == "conflict");
+        var cancelled = tasks.Count(task => task.State is "cancelled" or "canceled");
+        var paused = tasks.Count(task => task.State == "paused");
+        var activeBreakdown = active.GroupBy(task => TransferTaskStateProjection.Label(task.State))
+            .Select(group => $"{group.Key} {group.Count()}").ToArray();
+        var activeText = activeBreakdown.Length == 0 ? "无进行中任务" : string.Join("、", activeBreakdown);
+        StatusText = $"视频素材：{activeText}；已完成 {completed} 项，冲突 {conflicts} 项，失败 {failed} 项，暂停 {paused} 项，取消 {cancelled} 项。目录监听状态：{(IsWatching ? "运行中" : "未运行")}";
     }
 
     private static void ValidateSegment(string value, string label)

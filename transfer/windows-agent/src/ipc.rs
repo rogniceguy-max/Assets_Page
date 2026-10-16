@@ -93,7 +93,15 @@ struct DownloadTaskPayload {
     #[serde(default)]
     logical_path: Option<String>,
     replace_if_sha256: Option<String>,
+    #[serde(default = "default_wpf_source")]
+    source: String,
+    #[serde(default)]
+    scope_id: Option<String>,
+    #[serde(default)]
+    project_id: Option<String>,
 }
+
+fn default_wpf_source() -> String { "wpf".into() }
 
 #[derive(Debug, Deserialize)]
 struct BatchPayload {
@@ -113,6 +121,11 @@ struct TaskIdPayload {
 #[derive(Debug, Deserialize)]
 struct RootIdPayload {
     root_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectIdPayload {
+    project_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -177,6 +190,7 @@ async fn handle_request(
         "pause_for_shutdown" => pause_for_shutdown(state, &request.payload),
         "resume" => set_task_state(state, &request.payload, TaskState::Queued),
         "resume_sync_roots" => resume_sync_roots(state, &request.payload),
+        "resume_project_asset_downloads" => resume_project_asset_downloads(state, &request.payload),
         "cancel" => cancel_task(state, &request.payload).await,
         "rescan" => rescan(state, &request.payload).await,
         "stop_watching" => stop_watching(state).await,
@@ -489,8 +503,8 @@ fn enqueue_download(state: &AgentState, payload: &Value) -> Result<Value, (Strin
         source_path: None,
         destination_path: Some(task.destination_path),
         logical_path: task.logical_path,
-        scope_id: None,
-        project_id: None,
+        scope_id: task.scope_id,
+        project_id: task.project_id,
         display_name: task.display_name.unwrap_or_else(|| "Download".into()),
         folder_group: task.folder_group.unwrap_or_else(|| "downloads".into()),
         file_id: Some(task.file_id),
@@ -498,7 +512,7 @@ fn enqueue_download(state: &AgentState, payload: &Value) -> Result<Value, (Strin
         object_id: task.object_id,
         expected_version: None,
         media_type: None,
-        source: "wpf".into(),
+        source: task.source,
         transfer_url: task.transfer_url,
         ticket: task.ticket,
         bytes_total: task.size,
@@ -599,6 +613,22 @@ fn resume_sync_roots(state: &AgentState, payload: &Value) -> Result<Value, (Stri
         return Err(("invalid_root_ids".into(), "sync root ID is invalid".into(), false));
     }
     let resumed = state.queue.resume_shutdown_paused_sync_tasks(&payload.root_ids).map_err(db_error)?;
+    Ok(json!({"resumed":resumed}))
+}
+
+fn resume_project_asset_downloads(
+    state: &AgentState,
+    payload: &Value,
+) -> Result<Value, (String, String, bool)> {
+    let payload: ProjectIdPayload = serde_json::from_value(payload.clone()).map_err(|_| {
+        ("invalid_project_id".into(), "project_id is required".into(), false)
+    })?;
+    if payload.project_id.trim().is_empty() || payload.project_id.len() > 512
+        || payload.project_id.chars().any(char::is_control)
+    {
+        return Err(("invalid_project_id".into(), "project_id is invalid".into(), false));
+    }
+    let resumed = state.queue.resume_shutdown_paused_asset_downloads(&payload.project_id).map_err(db_error)?;
     Ok(json!({"resumed":resumed}))
 }
 

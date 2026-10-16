@@ -95,6 +95,26 @@
                             Background="#B3101113" Visibility="Collapsed">
                         <controls:LucideIcon Icon="Video" Width="15" Height="15" Stroke="#FFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </Border>
+                    <Border VerticalAlignment="Top" HorizontalAlignment="Left" Margin="6" Padding="7,5" CornerRadius="6"
+                            Background="#E6101113" Visibility="{Binding HasInlineTransfer, Converter={StaticResource BoolToVisibility}}">
+                        <StackPanel MaxWidth="220">
+                            <TextBlock Text="{Binding InlineTransferStatus}" Foreground="#FFFFFF" FontSize="11" FontWeight="SemiBold" />
+                            <ProgressBar Height="3" Margin="0,4,0,0" Value="{Binding InlineTransferProgress}"
+                                         Visibility="{Binding InlineTransferHasProgress, Converter={StaticResource BoolToVisibility}}" />
+                            <TextBlock Text="{Binding InlineTransferError}" Foreground="#FFF3B0" FontSize="10" TextWrapping="Wrap"
+                                       Visibility="{Binding HasInlineTransferError, Converter={StaticResource BoolToVisibility}}" />
+                            <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+                                <Button Content="重试" Padding="5,1" Margin="0,0,4,0"
+                                        Command="{Binding DataContext.RetryInlineDownloadCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                        CommandParameter="{Binding}"
+                                        Visibility="{Binding InlineTransferCanRetry, Converter={StaticResource BoolToVisibility}}" />
+                                <Button Content="取消" Padding="5,1"
+                                        Command="{Binding DataContext.CancelInlineDownloadCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                        CommandParameter="{Binding}"
+                                        Visibility="{Binding InlineTransferCanCancel, Converter={StaticResource BoolToVisibility}}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
                     <Border x:Name="FilenameBand" MinHeight="38" VerticalAlignment="Bottom" Opacity="0"
                             Background="#D9101113" Padding="10,6">
                         <StackPanel VerticalAlignment="Center">
@@ -125,6 +145,66 @@
                     <Setter TargetName="FilenameBand" Property="Opacity" Value="1" />
                 </DataTrigger>
             </DataTemplate.Triggers>
+        </DataTemplate>
+
+        <DataTemplate x:Key="InlineUploadCardTemplate">
+            <Border Background="{DynamicResource Brush.Surface.Panel}"
+                    BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
+                    CornerRadius="{StaticResource CornerRadius.Card}" Padding="10" Margin="0,0,8,8"
+                    MinWidth="280" MaxWidth="380">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="48" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Width="40" Height="40" CornerRadius="{StaticResource CornerRadius.Small}"
+                            Background="{DynamicResource Brush.Surface.Subtle}" ClipToBounds="True" VerticalAlignment="Top">
+                        <Grid>
+                            <Image Source="{Binding LocalPreview}" Stretch="UniformToFill" />
+                            <controls:LucideIcon Icon="File" Width="18" Height="18"
+                                Stroke="{DynamicResource Brush.Text.Secondary}" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <controls:LucideIcon.Style>
+                                    <Style TargetType="controls:LucideIcon">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasLocalPreview}" Value="True"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger>
+                                            <DataTrigger Binding="{Binding IsFolderBatch}" Value="True"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </controls:LucideIcon.Style>
+                            </controls:LucideIcon>
+                            <controls:LucideIcon Icon="Folder" Width="20" Height="20"
+                                Stroke="{DynamicResource Brush.Text.Secondary}" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <controls:LucideIcon.Style>
+                                    <Style TargetType="controls:LucideIcon">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers><DataTrigger Binding="{Binding IsFolderBatch}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+                                    </Style>
+                                </controls:LucideIcon.Style>
+                            </controls:LucideIcon>
+                        </Grid>
+                    </Border>
+                    <StackPanel Grid.Column="1" MinWidth="0">
+                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                   ToolTip="{Binding LogicalPath}" />
+                        <TextBlock Text="{Binding StateLabel}" FontSize="11" Foreground="{DynamicResource Brush.Text.Secondary}" Margin="0,2,0,0" />
+                        <TextBlock Text="{Binding ProgressLabel}" FontSize="10" Foreground="{DynamicResource Brush.Text.Secondary}"
+                                   Visibility="{Binding HasProgress, Converter={StaticResource BoolToVisibility}}" />
+                        <ProgressBar Height="3" Margin="0,4,0,0" Value="{Binding Progress}"
+                                     Visibility="{Binding HasProgress, Converter={StaticResource BoolToVisibility}}" />
+                        <TextBlock Text="{Binding ErrorMessage}" FontSize="10" Foreground="{DynamicResource Brush.Status.Danger}"
+                                   TextWrapping="Wrap" Visibility="{Binding HasError, Converter={StaticResource BoolToVisibility}}" />
+                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                            <Button Content="重试" Padding="6,2" Margin="0,0,5,0"
+                                    Command="{Binding DataContext.RetryInlineUploadCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                    CommandParameter="{Binding}" Visibility="{Binding CanRetry, Converter={StaticResource BoolToVisibility}}" />
+                            <Button Content="取消" Padding="6,2"
+                                    Command="{Binding DataContext.CancelInlineUploadCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                    CommandParameter="{Binding}" Visibility="{Binding CanCancel, Converter={StaticResource BoolToVisibility}}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Grid>
+            </Border>
         </DataTemplate>
     </UserControl.Resources>
 
@@ -220,7 +300,32 @@
                     Visibility="{Binding CanUpload, Converter={StaticResource BoolToVisibility}}" />
         </Grid>
 
-        <Grid Grid.Row="2">
+        <Grid Grid.Row="2" AllowDrop="True" DragOver="Files_DragOver" DragLeave="Files_DragLeave" Drop="Files_Drop">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <StackPanel Grid.Row="0">
+                <ItemsControl ItemsSource="{Binding InlineUploadCards}" ItemTemplate="{StaticResource InlineUploadCardTemplate}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                </ItemsControl>
+                <Border Padding="9,6" Margin="0,0,0,8" CornerRadius="{StaticResource CornerRadius.Small}"
+                        Background="{DynamicResource Brush.Surface.Subtle}" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding InlineUploadMessage}" Value=""><Setter Property="Visibility" Value="Collapsed" /></DataTrigger>
+                                <DataTrigger Binding="{Binding InlineUploadMessage}" Value="{x:Null}"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <TextBlock Text="{Binding InlineUploadMessage}" TextWrapping="Wrap" Foreground="{DynamicResource Brush.Text.Secondary}" />
+                </Border>
+            </StackPanel>
+            <Grid Grid.Row="1">
             <ListBox x:Name="GalleryList" Style="{StaticResource GalleryListVisible}"
                      ItemsSource="{Binding ItemsView}" ItemTemplate="{StaticResource GalleryFileTemplate}"
                      ItemContainerStyle="{StaticResource GalleryItemContainer}" SelectionMode="Extended"
@@ -287,6 +392,22 @@
                                             </Style>
                                         </TextBlock.Style>
                                     </TextBlock>
+                                    <TextBlock Text="{Binding InlineTransferStatus}" FontSize="11" Foreground="{DynamicResource Brush.Status.Info}"
+                                               Margin="0,3,0,0" Visibility="{Binding HasInlineTransfer, Converter={StaticResource BoolToVisibility}}" />
+                                    <TextBlock Text="{Binding InlineTransferError}" FontSize="10" Foreground="{DynamicResource Brush.Status.Danger}"
+                                               TextWrapping="Wrap" Visibility="{Binding HasInlineTransferError, Converter={StaticResource BoolToVisibility}}" />
+                                    <ProgressBar Height="3" Margin="0,3,0,0" Value="{Binding InlineTransferProgress}"
+                                                 Visibility="{Binding InlineTransferHasProgress, Converter={StaticResource BoolToVisibility}}" />
+                                    <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+                                        <Button Content="重试" Padding="5,1" Margin="0,0,4,0"
+                                                Command="{Binding DataContext.RetryInlineDownloadCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding}"
+                                                Visibility="{Binding InlineTransferCanRetry, Converter={StaticResource BoolToVisibility}}" />
+                                        <Button Content="取消" Padding="5,1"
+                                                Command="{Binding DataContext.CancelInlineDownloadCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding}"
+                                                Visibility="{Binding InlineTransferCanCancel, Converter={StaticResource BoolToVisibility}}" />
+                                    </StackPanel>
                                 </StackPanel>
                             </StackPanel>
                             <TextBlock Grid.Column="1" Text="{Binding KindLabel}" Foreground="{DynamicResource Brush.Text.Secondary}" VerticalAlignment="Center" />
@@ -299,6 +420,17 @@
             <Border Background="{DynamicResource Brush.Surface.Canvas}" Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibility}}">
                 <TextBlock Text="{Binding LoadingMessage}" Foreground="{DynamicResource Brush.Text.Secondary}"
                            HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            </Grid>
+            <Border Grid.RowSpan="2" Margin="4" CornerRadius="{StaticResource CornerRadius.Card}"
+                    BorderThickness="2" BorderBrush="{DynamicResource Brush.Accent.Primary}"
+                    Background="#221D78D1" IsHitTestVisible="False">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers><DataTrigger Binding="{Binding IsDropTargetActive}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+                    </Style>
+                </Border.Style>
             </Border>
         </Grid>
         <Border Grid.Row="0" Grid.RowSpan="3" Background="Transparent" IsHitTestVisible="False"

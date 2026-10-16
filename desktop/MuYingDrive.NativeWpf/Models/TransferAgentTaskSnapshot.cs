@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace MuYingDrive.NativeWpf.Models;
@@ -9,6 +10,10 @@ public sealed record TransferAgentTaskSnapshot
     [JsonPropertyName("kind")] public string Kind { get; init; } = string.Empty;
     [JsonPropertyName("source")] public string? Source { get; init; }
     [JsonPropertyName("root_id")] public string? RootId { get; init; }
+    [JsonPropertyName("source_path")] public string? SourcePath { get; init; }
+    [JsonPropertyName("destination_path")] public string? DestinationPath { get; init; }
+    [JsonPropertyName("scope_id")] public string? ScopeId { get; init; }
+    [JsonPropertyName("project_id")] public string? ProjectId { get; init; }
     [JsonPropertyName("commit_started")] public bool CommitStarted { get; init; }
     [JsonPropertyName("state")] public string State { get; init; } = string.Empty;
     [JsonPropertyName("display_name")] public string DisplayName { get; init; } = string.Empty;

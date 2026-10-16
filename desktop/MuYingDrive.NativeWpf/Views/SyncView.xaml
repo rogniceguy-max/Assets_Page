@@ -37,7 +37,7 @@
                         <Button Style="{StaticResource Button.Primary}" Command="{Binding ToggleSyncCommand}"
                                 Content="{Binding ToggleButtonLabel}" MinWidth="96" />
                         <Button Style="{StaticResource Button.Secondary}" Command="{Binding SyncNowCommand}"
-                                Content="立即同步" MinWidth="88" Margin="8,0,0,0" />
+                                Content="立即检查全部素材" MinWidth="128" Margin="8,0,0,0" />
                     </StackPanel>
                 </Grid>
 
@@ -47,7 +47,7 @@
                         Margin="0,0,0,20">
                     <Border.Style>
                         <Style TargetType="Border">
-                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Setter Property="Visibility" Value="Visible" />
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding ValidationMessage}" Value="">
                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -58,6 +58,23 @@
                     <TextBlock Text="{Binding ValidationMessage}" Foreground="{DynamicResource Brush.Status.Danger}"
                                FontSize="{StaticResource Typography.FontSize.Body}" />
                 </Border>
+
+                <Border Background="{DynamicResource Brush.Surface.Panel}" BorderBrush="{DynamicResource Brush.Border.Subtle}"
+                        BorderThickness="1" CornerRadius="{StaticResource CornerRadius.Card}" Padding="18,14" Margin="0,0,0,20">
+                    <StackPanel>
+                        <TextBlock Text="视频素材（剪辑）" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}" />
+                        <TextBlock Text="{Binding StatusText}" Margin="0,3,0,10" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource Brush.Text.Secondary}" />
+                        <TextBlock Text="资产图片（视频生成）" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}" />
+                        <TextBlock Text="{Binding AssetImageStatusText}" Margin="0,3,0,10" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource Brush.Text.Secondary}" />
+                        <Button Style="{StaticResource Button.Secondary}" Content="检查资产原图"
+                                Command="{Binding SyncAssetImagesCommand}" HorizontalAlignment="Left" MinWidth="120" />
+                    </StackPanel>
+                </Border>
+
+                <Expander Header="同步设置：项目、节拍表、集数、目录与资产范围" IsExpanded="False" Margin="0,0,0,16">
+                 <StackPanel Margin="0,14,0,0">
 
                 <!-- Section 1: Project Selection -->
                 <Border Background="{DynamicResource Brush.Surface.Panel}" BorderBrush="{DynamicResource Brush.Border.Subtle}"
@@ -198,8 +215,16 @@
                             <Button Grid.Column="1" Style="{StaticResource Button.Secondary}" Content="浏览..."
                                     Command="{Binding BrowseLocalDirectoryCommand}" Margin="8,0,0,0" MinWidth="80" />
                         </Grid>
+                        <TextBlock Text="资产图片离线策略" FontSize="{StaticResource Typography.FontSize.Caption}"
+                                   Foreground="{DynamicResource Brush.Text.Secondary}" Margin="0,14,0,6" />
+                        <ComboBox ItemsSource="{Binding AssetImagePolicies}" SelectedItem="{Binding SelectedAssetImagePolicy}"
+                                  MinWidth="280" MaxWidth="420" HorizontalAlignment="Left"
+                                  AutomationProperties.Name="资产图片离线策略" />
                     </StackPanel>
                 </Border>
+
+                 </StackPanel>
+                </Expander>
 
             </StackPanel>
         </ScrollViewer>

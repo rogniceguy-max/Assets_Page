@@ -49,7 +49,7 @@ pub enum TicketError {
 
 pub fn sign_ticket(claims: &TicketClaims, secret: &[u8]) -> Result<String, TicketError> {
     validate_claims(claims, i64::MIN)?;
-    let payload = canonical_json(claims)?;
+    let payload = canonical_json(claims).map_err(|_| TicketError::Payload)?;
     let signature = sign_bytes(secret, &payload)?;
     Ok(format!(
         "v1.{}.{}",
@@ -106,7 +106,7 @@ pub fn sign_receipt(
     secret: &[u8],
 ) -> Result<StagedObjectReceipt, TicketError> {
     receipt.mac.clear();
-    let bytes = canonical_json_without(&receipt, "mac")?;
+    let bytes = canonical_json_without(&receipt, "mac").map_err(|_| TicketError::Payload)?;
     receipt.mac = URL_SAFE_NO_PAD.encode(sign_bytes(secret, &bytes)?);
     Ok(receipt)
 }
@@ -118,7 +118,7 @@ pub fn verify_receipt(receipt: &StagedObjectReceipt, secret: &[u8]) -> Result<()
     let provided = URL_SAFE_NO_PAD
         .decode(&receipt.mac)
         .map_err(|_| TicketError::Format)?;
-    let payload = canonical_json_without(receipt, "mac")?;
+    let payload = canonical_json_without(receipt, "mac").map_err(|_| TicketError::Payload)?;
     verify_bytes(secret, &payload, &provided)
 }
 

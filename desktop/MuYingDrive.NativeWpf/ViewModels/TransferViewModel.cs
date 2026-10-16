@@ -51,6 +51,11 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
     }
 
     public ObservableCollection<TransferTask> Tasks { get; }
+    /// <summary>Current durable agent snapshots, copied under the snapshot lock for UI restoration.</summary>
+    public IReadOnlyList<TransferAgentTaskSnapshot> TaskSnapshots
+    {
+        get { lock (_snapshotGate) return _snapshots.Values.OrderByDescending(item => item.UpdatedAt).ToArray(); }
+    }
     public bool HasTasks => Tasks.Count > 0;
     public bool IsEmpty => !HasTasks;
     public string OperationErrorMessage
@@ -95,6 +100,15 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
         await RefreshTasksAsync().ConfigureAwait(false);
     }
 
+    public async Task ResumeShutdownPausedProjectAssetDownloadsAsync(string projectId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(projectId)) return;
+        _ = await _agent.RequestAsync("resume_project_asset_downloads", new { project_id = projectId }, cancellationToken)
+            .ConfigureAwait(false);
+        await RefreshTasksAsync().ConfigureAwait(false);
+    }
+
     public Task StopWatchingAsync(CancellationToken cancellationToken = default) =>
         _agent.StopWatchingAsync(cancellationToken);
 
@@ -109,17 +123,21 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
 
     public async Task<string?> QueueUploadAsync(string localSource, string scopeId, string? projectId,
         string logicalPath, string? fileId = null, long? expectedVersion = null,
-        string? displayName = null, CancellationToken cancellationToken = default)
+        string? displayName = null, CancellationToken cancellationToken = default, string? operationId = null,
+        string source = "wpf")
     {
         if (!_acceptTransferActions) return null;
         try
         {
             var info = new FileInfo(localSource);
             if (!info.Exists) throw new FileNotFoundException("所选文件已不存在。", localSource);
-            var operationId = Guid.NewGuid().ToString("D");
+            var resolvedOperationId = operationId ?? Guid.NewGuid().ToString("D");
+            if (!Guid.TryParseExact(resolvedOperationId, "D", out var parsedOperationId) ||
+                parsedOperationId.ToString("D") != resolvedOperationId)
+                throw new InvalidOperationException("传输操作编号无效。");
             var payload = new
             {
-                operation_id = operationId,
+                operation_id = resolvedOperationId,
                 source_path = Path.GetFullPath(localSource),
                 scope_id = scopeId,
                 project_id = projectId,
@@ -128,11 +146,11 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
                 expected_version = expectedVersion,
                 size = info.Length,
                 media_type = MediaTypeFor(localSource),
-                source = "wpf",
+                source,
                 display_name = displayName ?? Path.GetFileName(localSource)
             };
             _ = await _agent.RequestAsync("enqueue_upload", payload, cancellationToken).ConfigureAwait(false);
-            return operationId;
+            return resolvedOperationId;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
             InvalidOperationException or TransferAgentException or TimeoutException)
@@ -161,24 +179,31 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
         finally { lock (_transferWaiters) _transferWaiters.Remove(operationId); }
     }
 
-    public async Task<(int QueuedCount, string? ErrorMessage)> AddFolderUploadAsync(
+    public async Task<FolderUploadEnqueueResult> AddFolderUploadAsync(
         string folderName, string folderGroup, string scopeId, string? projectId,
         IReadOnlyList<(string LocalPath, string LogicalPath)> files,
-        IReadOnlyList<string> directories, CancellationToken cancellationToken = default)
+        IReadOnlyList<string> directories, CancellationToken cancellationToken = default,
+        IReadOnlyList<string>? operationIds = null)
     {
-        if (!_acceptTransferActions) return (0, "正在安全退出，暂时不能开始新的传输。");
+        if (!_acceptTransferActions) return new(0, "正在安全退出，暂时不能开始新的传输。", []);
         var queuedCount = 0;
+        var queuedOperationIds = new List<string>();
         try
         {
             if (directories.Count > 4096)
-                return (0, "此文件夹包含的目录过多，无法安全加入传输队列。");
+                return new(0, "此文件夹包含的目录过多，无法安全加入传输队列。", []);
+            if (operationIds is not null && operationIds.Count != files.Count)
+                return new(0, "文件操作编号与清单数量不匹配。", []);
 
-            var items = files.Select(file =>
+            var items = files.Select((file, index) =>
             {
                 var info = new FileInfo(file.LocalPath);
                 if (!info.Exists) throw new FileNotFoundException("所选文件已不存在。", file.LocalPath);
+                var operationId = operationIds?[index] ?? Guid.NewGuid().ToString("D");
+                if (!Guid.TryParseExact(operationId, "D", out _))
+                    throw new InvalidOperationException("传输操作编号无效。");
                 return new TransferAgentUploadBatchItem(
-                    Guid.NewGuid().ToString("D"),
+                    operationId,
                     Path.GetFullPath(file.LocalPath),
                     scopeId,
                     projectId,
@@ -216,7 +241,7 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
                     {
                         chunk.RemoveAt(chunk.Count - 1);
                         if (chunk.Count == 0)
-                            return (0, "单个文件或目录清单超过传输代理的单帧限制，请缩短路径后重试。");
+                            return new(0, "单个文件或目录清单超过传输代理的单帧限制，请缩短路径后重试。", queuedOperationIds);
                         break;
                     }
                     offset++;
@@ -229,7 +254,7 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
                 var emptyBatch = new TransferAgentEnqueueBatchRequest(Guid.NewGuid().ToString("D"), directoryEntries, []);
                 if (RustTransferAgentClient.EstimateRequestFrameBytes("enqueue_batch", emptyBatch) >
                     RustTransferAgentClient.RecommendedBatchFrameBytes)
-                    return (0, "此文件夹的目录清单超过传输代理的单帧限制，请拆分后上传。");
+                    return new(0, "此文件夹的目录清单超过传输代理的单帧限制，请拆分后上传。", queuedOperationIds);
                 requests.Add(emptyBatch);
             }
 
@@ -242,6 +267,7 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
                     queuedCount += queuedElement.GetInt32();
                 else
                     queuedCount += request.Items.Count;
+                queuedOperationIds.AddRange(request.Items.Select(item => item.OperationId));
                 if (response.TryGetProperty("errors", out var errorArray) && errorArray.ValueKind == JsonValueKind.Array)
                 {
                     errors.AddRange(errorArray.EnumerateArray()
@@ -251,7 +277,7 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
                 }
             }
             await RefreshTasksAsync().ConfigureAwait(false);
-            return (queuedCount, errors.Count == 0 ? null : string.Join("\n", errors));
+            return new(queuedCount, errors.Count == 0 ? null : string.Join("\n", errors), queuedOperationIds);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
             InvalidOperationException or TransferAgentException or TimeoutException)
@@ -260,7 +286,7 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
             var message = queuedCount > 0
                 ? $"已加入 {queuedCount} 项；后续批次未能加入。{Environment.NewLine}{exception.Message}"
                 : exception.Message;
-            return (queuedCount, message);
+            return new(queuedCount, message, queuedOperationIds);
         }
     }
 
@@ -269,18 +295,25 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
         await QueueDownloadAsync(ticket, localDestination, displayName, folderGroup, cancellationToken).ConfigureAwait(false) is not null;
 
     public async Task<string?> QueueDownloadAsync(FileDownloadTicketResponse ticket, string localDestination,
-        string displayName, string? folderGroup = null, CancellationToken cancellationToken = default)
+        string displayName, string? folderGroup = null, CancellationToken cancellationToken = default,
+        string? operationId = null, string source = "wpf", string? scopeId = null, string? projectId = null)
     {
         if (!_acceptTransferActions) return null;
         try
         {
-            var operationId = Guid.NewGuid().ToString("D");
+            var resolvedOperationId = operationId ?? Guid.NewGuid().ToString("D");
+            if (!Guid.TryParseExact(resolvedOperationId, "D", out var parsedOperationId) ||
+                parsedOperationId.ToString("D") != resolvedOperationId)
+                throw new InvalidOperationException("传输操作编号无效。");
             _ = await _agent.RequestAsync("enqueue_download", new
             {
-                operation_id = operationId,
+                operation_id = resolvedOperationId,
                 file_id = ticket.FileId,
                 revision_id = ticket.RevisionId,
                 object_id = ticket.ObjectId,
+                source,
+                scope_id = scopeId,
+                project_id = projectId,
                 destination_path = Path.GetFullPath(localDestination),
                 size = ticket.Size,
                 sha256 = ticket.Sha256,
@@ -289,7 +322,7 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
                 display_name = displayName,
                 folder_group = folderGroup
             }, cancellationToken).ConfigureAwait(false);
-            return operationId;
+            return resolvedOperationId;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
             InvalidOperationException or TransferAgentException or TimeoutException)
@@ -297,6 +330,30 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
             OperationErrorMessage = exception.Message;
             return null;
         }
+    }
+
+    public Task<bool> RetryOperationAsync(string operationId) =>
+        SendOperationCommandAsync(operationId, "resume", requireRetryable: true);
+
+    public Task<bool> ResumeOperationAsync(string operationId) =>
+        SendOperationCommandAsync(operationId, "resume", requireRetryable: false);
+
+    public Task<bool> CancelOperationAsync(string operationId) =>
+        SendOperationCommandAsync(operationId, "cancel", requireRetryable: false);
+
+    private async Task<bool> SendOperationCommandAsync(string operationId, string command, bool requireRetryable)
+    {
+        var succeeded = false;
+        await RunLifecycleCommandAsync(async () =>
+        {
+            var snapshot = FindSnapshotByOperationId(operationId);
+            if (snapshot is null || (requireRetryable && !snapshot.Retryable) ||
+                (!requireRetryable && !TransferTaskStateProjection.CanCancel(snapshot.State, snapshot.CommitStarted)))
+                return;
+            await SendTaskCommandAsync(command, snapshot.TaskId).ConfigureAwait(false);
+            succeeded = true;
+        }, requireRetryable ? "重试传输失败，请检查文件后重试。" : "取消传输失败，请稍后重试。").ConfigureAwait(false);
+        return succeeded;
     }
 
     public async Task<bool> PauseAllAsync()
@@ -423,7 +480,7 @@ public sealed class TransferViewModel : ObservableObject, IAsyncDisposable
         finally { _lifecycleGate.Release(); }
     }
 
-    private async Task RefreshTasksAsync()
+    public async Task RefreshTasksAsync()
     {
         await _refreshGate.WaitAsync().ConfigureAwait(false);
         try
@@ -637,6 +694,11 @@ public sealed record TransferAgentDirectoryEntry(
     [property: JsonPropertyName("scope_id")] string ScopeId,
     [property: JsonPropertyName("project_id")] string? ProjectId,
     [property: JsonPropertyName("logical_path")] string LogicalPath);
+
+public sealed record FolderUploadEnqueueResult(
+    int QueuedCount,
+    string? ErrorMessage,
+    IReadOnlyList<string> QueuedOperationIds);
 
 public sealed record TransferAgentUploadBatchItem(
     [property: JsonPropertyName("operation_id")] string OperationId,
