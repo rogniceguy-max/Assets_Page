@@ -87,6 +87,12 @@ pub struct TaskSnapshot {
     pub message: Option<String>,
     pub root_id: Option<String>,
     pub commit_started: bool,
+    /// Local task context used by the WPF client to restore an inline card after navigation
+    /// or an agent restart. This remains on the local IPC path and is not control API data.
+    pub source_path: Option<String>,
+    pub destination_path: Option<String>,
+    pub scope_id: Option<String>,
+    pub project_id: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -631,6 +637,20 @@ impl QueueStore {
         Ok(changed)
     }
 
+    pub fn resume_shutdown_paused_asset_downloads(&self, project_id: &str) -> Result<usize> {
+        if project_id.trim().is_empty() || project_id.len() > 512 || project_id.chars().any(char::is_control) {
+            anyhow::bail!("project ID is invalid");
+        }
+        let connection = self.connection.lock().expect("queue mutex poisoned");
+        Ok(connection.execute(
+            "UPDATE tasks SET state='queued',control_state=NULL,error_code=NULL,message=NULL,
+                retryable=0,retry_at=0,updated_at=?2
+             WHERE source='asset_image_sync' AND kind='download' AND project_id=?1
+                AND state='paused' AND control_state='shutdown_paused'",
+            params![project_id, unix_now()],
+        )?)
+    }
+
     pub fn schedule_retry(&self, operation_id: &str, delay_seconds: u64) -> Result<()> {
         let connection = self.connection.lock().expect("queue mutex poisoned");
         let now = unix_now();
@@ -690,7 +710,8 @@ impl QueueStore {
         let connection = self.connection.lock().expect("queue mutex poisoned");
         let mut statement = connection.prepare(
             "SELECT task_id,operation_id,kind,state,display_name,folder_group,logical_path,file_id,revision_id,object_id,
-                expected_version,batch_parent_id,bytes_total,bytes_done,created_at,updated_at,attempt,retryable,error_code,message,source,root_id,commit_started
+                expected_version,batch_parent_id,bytes_total,bytes_done,created_at,updated_at,attempt,retryable,error_code,message,source,root_id,commit_started,
+                source_path,destination_path,scope_id,project_id
              FROM tasks ORDER BY created_at DESC LIMIT 1000",
         )?;
         let rows = statement.query_map([], |row| {
@@ -719,6 +740,10 @@ impl QueueStore {
                 message: row.get(19)?,
                 root_id: row.get(21)?,
                 commit_started: row.get(22)?,
+                source_path: row.get(23)?,
+                destination_path: row.get(24)?,
+                scope_id: row.get(25)?,
+                project_id: row.get(26)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -777,6 +802,10 @@ impl QueueStore {
                         attempt:row.get::<_,i64>(16)? as u32,retryable:row.get(17)?,error_code:row.get(18)?,message:row.get(19)?,
                         root_id:row.get(33)?,
                         commit_started:row.get(37)?,
+                        source_path:row.get(20)?,
+                        destination_path:row.get(21)?,
+                        scope_id:row.get(22)?,
+                        project_id:row.get(23)?,
                     },
                     source_path:row.get(20)?,destination_path:row.get(21)?,scope_id:row.get(22)?,project_id:row.get(23)?,
                     file_id:row.get(24)?,revision_id:row.get(25)?,object_id:row.get(26)?,expected_version:row.get(27)?,
@@ -1249,6 +1278,7 @@ fn query_task_record(connection: &Connection, operation_id: &str) -> Result<Task
                 batch_id:row.get(11)?,version:row.get(10)?,bytes_total:row.get::<_,Option<i64>>(12)?.map(|v|v as u64),bytes_done:row.get::<_,i64>(13)? as u64,
                 created_at:row.get(14)?,updated_at:row.get(15)?,attempt:row.get::<_,i64>(16)? as u32,retryable:row.get(17)?,error_code:row.get(18)?,
                 message:row.get(19)?,source:row.get(29)?,root_id:row.get(33)?,commit_started:row.get(37)?,
+                source_path:row.get(20)?,destination_path:row.get(21)?,scope_id:row.get(22)?,project_id:row.get(23)?,
             },
             source_path:row.get(20)?,destination_path:row.get(21)?,scope_id:row.get(22)?,project_id:row.get(23)?,file_id:row.get(24)?,
             revision_id:row.get(25)?,object_id:row.get(26)?,expected_version:row.get(27)?,media_type:row.get(28)?,source:row.get(29)?,
@@ -1385,6 +1415,34 @@ mod tests {
         assert_eq!("queued", resumed.state);
         assert_eq!("paused", manually_paused.state);
         assert_eq!(Some("root-a"), resumed.root_id.as_deref());
+        drop(queue);
+        remove_test_db(&path);
+    }
+
+    #[test]
+    fn project_asset_downloads_resume_shutdown_pauses_but_not_user_pauses() {
+        let path = std::env::temp_dir().join(format!("transfer-queue-{}.sqlite", Uuid::new_v4()));
+        let queue = QueueStore::open(&path).unwrap();
+        let shutdown_paused = Uuid::new_v4().to_string();
+        let user_paused = Uuid::new_v4().to_string();
+        let mut shutdown_task = upload_task(shutdown_paused.clone(), "asset_image_sync", None);
+        shutdown_task.kind = TaskKind::Download;
+        shutdown_task.destination_path = Some("C:\\cache\\asset.webp".into());
+        shutdown_task.project_id = Some("project-a".into());
+        let mut user_task = shutdown_task.clone();
+        user_task.operation_id = user_paused.clone();
+        queue.enqueue(&shutdown_task).unwrap();
+        queue.enqueue(&user_task).unwrap();
+        assert!(queue.set_shutdown_paused(&shutdown_paused).unwrap());
+        assert!(queue.set_user_task_state(&user_paused, TaskState::Paused).unwrap());
+
+        assert_eq!(1, queue.resume_shutdown_paused_asset_downloads("project-a").unwrap());
+        let tasks = queue.list_tasks().unwrap();
+        let resumed = tasks.iter().find(|task| task.operation_id == shutdown_paused).unwrap();
+        let manually_paused = tasks.iter().find(|task| task.operation_id == user_paused).unwrap();
+        assert_eq!("queued", resumed.state);
+        assert_eq!("paused", manually_paused.state);
+        assert_eq!(Some("project-a"), resumed.project_id.as_deref());
         drop(queue);
         remove_test_db(&path);
     }

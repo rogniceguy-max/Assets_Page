@@ -29,6 +29,7 @@ use crate::{
     api::{self, ChangeItem, FileCatalogItem},
     queue::{NewTask, SyncBaseline, TaskKind, TaskRecord, TaskSnapshot, TaskState},
 };
+use common::{ensure_safe_local_path, reject_reparse_root_ancestry};
 
 const EVENT_DEBOUNCE: Duration = Duration::from_millis(900);
 const FEED_POLL: Duration = Duration::from_secs(2);

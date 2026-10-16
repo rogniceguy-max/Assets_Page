@@ -17,7 +17,7 @@
     <TransferAgentRoot>$(MSBuildProjectDirectory)\..\..\transfer</TransferAgentRoot>
     <TransferAgentManifest>$(TransferAgentRoot)\Cargo.toml</TransferAgentManifest>
     <TransferAgentCargoTarget>x86_64-pc-windows-msvc</TransferAgentCargoTarget>
-    <TransferAgentBinary>$(TransferAgentRoot)\target\$(TransferAgentCargoTarget)\release\MuYingDrive.TransferAgent.exe</TransferAgentBinary>
+    <TransferAgentBinary>$(TransferAgentRoot)\target\$(TransferAgentCargoTarget)\release\MuYingDrive_TransferAgent.exe</TransferAgentBinary>
     <BuildTransferAgent Condition="'$(BuildTransferAgent)' == ''">true</BuildTransferAgent>
   </PropertyGroup>
 
@@ -34,7 +34,7 @@
 
   <Target Name="BuildRustTransferAgent" BeforeTargets="PrepareForBuild" Condition="'$(BuildTransferAgent)' == 'true'">
     <Error Condition="!Exists('$(TransferAgentManifest)')" Text="Rust transfer agent sources are missing: $(TransferAgentManifest)" />
-    <Exec Command="cargo build --locked --manifest-path &quot;$(TransferAgentManifest)&quot; --package muying-transfer-agent --bin MuYingDrive.TransferAgent --target $(TransferAgentCargoTarget) --release"
+    <Exec Command="cargo build --locked --manifest-path &quot;$(TransferAgentManifest)&quot; --package muying-transfer-agent --bin MuYingDrive_TransferAgent --target $(TransferAgentCargoTarget) --release"
           WorkingDirectory="$(TransferAgentRoot)" />
   </Target>
   <Target Name="StageRustTransferAgent" AfterTargets="Build" Condition="'$(BuildTransferAgent)' == 'true'">

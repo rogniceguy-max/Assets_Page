@@ -1,5 +1,5 @@
 use super::*;
-use super::{common::*, reconcile::reconcile_catalog_file};
+use super::{common::*, reconcile::{full_reconcile, reconcile_catalog_file}};
 
 pub(super) async fn poll_changes(
     state: &Arc<AgentState>,
@@ -89,7 +89,7 @@ pub(super) fn change_touches_root(root: &RootContext, change: &ChangeItem) -> bo
 }
 
 pub(super) async fn apply_file_change(
-    state: &AgentState,
+    state: &Arc<AgentState>,
     root: &RootContext,
     change: &ChangeItem,
     config: &AgentConfig,
@@ -274,7 +274,7 @@ async fn apply_remote_delete_at(
 }
 
 pub(super) async fn apply_remote_move(
-    state: &AgentState,
+    state: &Arc<AgentState>,
     root: &RootContext,
     change: &ChangeItem,
     old_path: &str,

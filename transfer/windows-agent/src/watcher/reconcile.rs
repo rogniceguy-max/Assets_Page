@@ -1,5 +1,5 @@
 use super::common::*;
-use super::*;
+use super::{events::queue_delete_task, *};
 
 pub(super) async fn full_reconcile(state: &Arc<AgentState>, root: &RootContext) -> Result<()> {
     let config = current_config_for_root(state, root).await?;
