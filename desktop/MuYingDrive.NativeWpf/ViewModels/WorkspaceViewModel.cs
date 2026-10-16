@@ -336,7 +336,7 @@ public sealed class WorkspaceViewModel : ObservableObject
         var files = new FilesViewModel(api, session, transfers, agent, clientId);
         SyncViewModel? sync = session.IsReadOnly
             ? null
-            : new SyncViewModel(projectWorkbooks, transfers, session.User.Id, settings.ApiBaseUri);
+            : new SyncViewModel(projectWorkbooks, transfers, session.User.Id, settings.ApiBaseUri, api, session, clientId);
 
         var chrome = new WorkspaceChrome(
             [
