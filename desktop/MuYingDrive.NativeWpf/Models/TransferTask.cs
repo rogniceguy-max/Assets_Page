@@ -108,7 +108,8 @@ public sealed class TransferTask : ObservableObject
     public bool CanRetry => _canRetryOverride ?? State is TransferState.Failed or TransferState.Conflict;
     public bool CanCancel => !CommitOutcomeUnknown &&
         (_canCancelOverride ?? (_agentState is not null
-            ? TransferTaskStateProjection.CanCancel(_agentState, _commitStarted)
+            ? TransferTaskStateProjection.CanCancel(_agentState, _commitStarted) ||
+                string.Equals(_agentState, "failed", StringComparison.Ordinal)
             : State is TransferState.Queued or TransferState.Running or TransferState.Paused));
 
     public string StateLabel => _agentState is not null
