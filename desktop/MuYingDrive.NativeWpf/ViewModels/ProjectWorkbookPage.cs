@@ -133,7 +133,7 @@ public sealed class ProjectWorkbookPage : IDisposable
 
     public void Dispose()
     {
-        ViewModel.StopLiveUpdates();
+        ViewModel.Dispose();
         // Disposing the client cancels anything still in flight for this account.
         _http.Dispose();
     }

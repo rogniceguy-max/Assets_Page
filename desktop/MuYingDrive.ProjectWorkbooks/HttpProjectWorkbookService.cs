@@ -23,6 +23,15 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
     private sealed record ApiError(string Code, string Message);
     private sealed record ErrorBody(ApiError? Error = null, string? Message = null);
     private sealed record ItemsEnvelope<T>(List<T> Items);
+    public event Action<ProjectTransferTaskSnapshot>? TransferUpdated
+    {
+        add { if (_imageTransfer is not null) _imageTransfer.TaskUpdated += value; }
+        remove { if (_imageTransfer is not null) _imageTransfer.TaskUpdated -= value; }
+    }
+    public ProjectTransferTaskSnapshot? GetTransferTaskSnapshot(string operationId) =>
+        _imageTransfer?.GetTaskSnapshot(operationId);
+    public IReadOnlyList<ProjectTransferTaskSnapshot> GetTransferTaskSnapshots() =>
+        _imageTransfer?.GetTaskSnapshots() ?? Array.Empty<ProjectTransferTaskSnapshot>();
     public string OperationScope
     {
         get
@@ -287,7 +296,7 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
         if (!string.IsNullOrEmpty(cursor)) route += "&cursor=" + Uri.EscapeDataString(cursor);
         return ReadAsync<ImageSearchPage>(HttpMethod.Get, route, null, ct);
     }
-    public async Task<ImageAsset> UploadProjectImageAsync(string projectId, string fileName, string mediaType, Stream source, string? folderPath = null, CancellationToken ct = default)
+    public async Task<ImageAsset> UploadProjectImageAsync(string projectId, string fileName, string mediaType, Stream source, string? folderPath = null, CancellationToken ct = default, string? operationId = null)
     {
         ImageType(mediaType); _ = Id(projectId);
         if (_imageTransfer is null)
@@ -296,12 +305,15 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
         var safeName = Path.GetFileName(fileName);
         if (string.IsNullOrWhiteSpace(safeName) || safeName.Any(char.IsControl) || safeName.Contains('/') || safeName.Contains('\\'))
             throw new InvalidDataException("文件名无效。");
-        var temporary = Path.Combine(Path.GetTempPath(), "muying-image-" + Guid.NewGuid().ToString("N") + Path.GetExtension(safeName));
+        var tempSuffix = Guid.TryParse(operationId, out var operationGuid) ? operationGuid.ToString("N") : Guid.NewGuid().ToString("N");
+        var temporary = Path.Combine(Path.GetTempPath(), "muying-image-" + tempSuffix + Path.GetExtension(safeName));
+        var keepForRetry = false;
         try
         {
-            await using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None,
-                128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
+            if (!File.Exists(temporary))
             {
+                await using var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                    128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
                 var buffer = new byte[128 * 1024];
                 long copied = 0;
                 while (true)
@@ -316,35 +328,66 @@ public sealed class HttpProjectWorkbookService : IProjectWorkbookService
             }
             var logicalPath = string.IsNullOrWhiteSpace(folderPath)
                 ? safeName : folderPath.Trim('/', '\\') + "/" + safeName;
-            var uploaded = await _imageTransfer.UploadAsync(projectId, safeName, mediaType, temporary, logicalPath, ct)
-                .ConfigureAwait(false);
+            ProjectFileTransferResult uploaded;
+            try
+            {
+                uploaded = await _imageTransfer.UploadAsync(projectId, safeName, mediaType, temporary, logicalPath, ct, operationId)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                keepForRetry = operationId is not null;
+                throw;
+            }
             return new ImageAsset(uploaded.FileId, Path.GetFileNameWithoutExtension(safeName), mediaType, 0, 0)
             {
                 FileId = uploaded.FileId,
                 CurrentRevisionId = uploaded.RevisionId,
                 LogicalPath = uploaded.LogicalPath,
-                ProjectId = projectId
+                ProjectId = projectId,
+                TransferOperationId = uploaded.OperationId
             };
         }
-        finally { try { if (File.Exists(temporary)) File.Delete(temporary); } catch (IOException) { } }
+        finally { if (!keepForRetry) try { if (File.Exists(temporary)) File.Delete(temporary); } catch (IOException) { } }
     }
     public async Task<ProjectFileTransferResult> UploadProjectFileAsync(string projectId, string fileName,
-        string mediaType, string localPath, string logicalPath, CancellationToken ct = default)
+        string mediaType, string localPath, string logicalPath, CancellationToken ct = default, string? operationId = null)
     {
         ImageType(mediaType);
         _ = Id(projectId);
         if (_imageTransfer is null)
             throw new WorkbookApiException(409, "TRANSFER_REQUIRED", "项目文件必须通过本地传输代理上传。");
         return await _imageTransfer.UploadAsync(projectId, Path.GetFileName(fileName), mediaType,
-            localPath, logicalPath, ct).ConfigureAwait(false);
+            localPath, logicalPath, ct, operationId).ConfigureAwait(false);
     }
+    public async Task<bool> CancelProjectTransferAsync(string operationId)
+    {
+        if (_imageTransfer is null) return false;
+        var canceled = await _imageTransfer.CancelAsync(operationId).ConfigureAwait(false);
+        if (!canceled || !Guid.TryParseExact(operationId, "D", out var operationGuid)) return canceled;
+        var prefix = "muying-image-" + operationGuid.ToString("N");
+        try
+        {
+            foreach (var path in Directory.EnumerateFiles(Path.GetTempPath(), prefix + ".*"))
+            {
+                try { File.Delete(path); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+        return true;
+    }
+
     public async Task<string> DownloadProjectFileAsync(string fileId, string? revisionId, string fileName,
-        CancellationToken ct = default)
+        CancellationToken ct = default, string? projectId = null)
     {
         _ = Id(fileId);
         if (_imageTransfer is null)
             throw new WorkbookApiException(409, "TRANSFER_REQUIRED", "项目文件必须通过本地传输代理下载。");
-        return await _imageTransfer.DownloadToLocalAsync(fileId, revisionId, fileName, ct).ConfigureAwait(false);
+        return await _imageTransfer.DownloadToLocalAsync(fileId, revisionId, fileName, ct,
+            projectId is null ? null : $"project:{projectId}:scene-video", projectId).ConfigureAwait(false);
     }
     public async Task DeleteProjectFileAsync(string fileId, long expectedVersion, CancellationToken ct = default)
     {

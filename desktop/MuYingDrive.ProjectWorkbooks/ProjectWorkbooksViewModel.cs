@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.CompilerServices;
@@ -47,6 +48,100 @@ public sealed class ImageItem(ImageAsset asset, ImageSource? preview, string? er
         ? $"好 {summary.Good} · 不好 {summary.Bad} · 评论 {summary.CommentCount}" : "好 ? · 不好 ? · 评论 ?";
     public void SetSummary(ReviewSummary? summary) { _summary = summary; Changed(nameof(SummaryText)); }
 }
+
+/// <summary>Local-first upload card whose completed state includes the workbook link.</summary>
+public sealed class WorkbookUploadCard(string localPath, bool isImage, AssetRowItem? assetRow = null,
+    SceneRowItem? sceneRow = null) : ObservableModel
+{
+    private ImageSource? _preview;
+    private string _state = "准备上传";
+    private string? _error;
+    private string? _operationId;
+    private string? _fileId;
+    private ProjectTransferTaskSnapshot? _transfer;
+
+    public string LocalPath { get; } = Path.GetFullPath(localPath);
+    public string DisplayName { get; } = Path.GetFileName(localPath);
+    public string? OperationId { get => _operationId; set { _operationId = value; Changed(); } }
+    public bool IsImage { get; } = isImage;
+    public bool IsVideo => !IsImage;
+    public bool SelectedTarget { get; set; }
+    public AssetRowItem? AssetRow { get; } = assetRow;
+    public SceneRowItem? SceneRow { get; } = sceneRow;
+    public ImageSource? Preview { get => _preview; set { _preview = value; Changed(); Changed(nameof(HasPreview)); } }
+    public string State { get => _state; set { _state = value; Changed(); Changed(nameof(IsBusy)); Changed(nameof(CanRetry)); } }
+    public string? Error { get => _error; set { _error = value; Changed(); Changed(nameof(HasError)); } }
+    public string? FileId { get => _fileId; set { _fileId = value; Changed(); Changed(nameof(HasFileId)); } }
+    public bool HasError => !string.IsNullOrWhiteSpace(Error);
+    public bool HasFileId => !string.IsNullOrWhiteSpace(FileId);
+    public bool HasPreview => Preview is not null;
+    public bool IsBusy => State is "正在上传" or "正在关联";
+    public ProjectTransferTaskSnapshot? Transfer
+    {
+        get => _transfer;
+        private set
+        {
+            _transfer = value;
+            Changed(); Changed(nameof(Progress)); Changed(nameof(ProgressLabel)); Changed(nameof(HasProgress));
+            Changed(nameof(CanRetry)); Changed(nameof(CanCancel));
+        }
+    }
+    public double Progress => Transfer is { BytesTotal: > 0 } transfer
+        ? Math.Clamp((double)Math.Max(0, transfer.BytesDone) / transfer.BytesTotal.Value * 100, 0, 100)
+        : Transfer?.State == "completed" ? 100 : 0;
+    public bool HasProgress => Transfer?.BytesTotal is > 0;
+    public string ProgressLabel => HasProgress
+        ? $"{Transfer!.BytesDone:N0} / {Transfer.BytesTotal:N0} 字节 · {Progress:0}%"
+        : Transfer is null ? string.Empty : Transfer.State switch
+        {
+            "queued" => "排队中",
+            "hashing" => "正在校验",
+            "verifying" => "正在校验传输",
+            "committing" => "正在提交",
+            "completed" => "文件传输已提交",
+            "paused" => "已暂停",
+            "waiting_network" or "offline" => "等待网络",
+            _ => string.Empty
+        };
+    public bool CanRetry => !IsBusy && (Transfer is { } transfer
+        ? transfer.Retryable || transfer.State is "paused" or "completed"
+        : UploadedImage is not null || UploadedVideo is not null || State.Contains("可重试", StringComparison.Ordinal));
+    public bool CanCancel => Transfer?.CanCancel == true;
+    public ImageAsset? UploadedImage { get; set; }
+    public ProjectFileTransferResult? UploadedVideo { get; set; }
+
+    public void ApplyTransfer(ProjectTransferTaskSnapshot snapshot)
+    {
+        Transfer = snapshot;
+        if (snapshot.FileId is { Length: > 0 }) FileId = snapshot.FileId;
+        if (snapshot.State is "failed" or "conflict")
+        {
+            State = snapshot.Retryable ? "上传失败，可重试" : snapshot.State == "conflict" ? "文件冲突" : "上传失败";
+            Error = snapshot.Message ?? "文件传输失败。";
+        }
+        else if (snapshot.State is "cancelled" or "canceled")
+        {
+            State = "已取消";
+            Error = snapshot.Message;
+        }
+        else if (snapshot.State != "completed" && State is not "正在关联" and not "已完成")
+        {
+            State = snapshot.State switch
+            {
+                "queued" => "排队中",
+                "hashing" => "正在校验",
+                "transferring" => "正在上传",
+                "verifying" => "正在校验",
+                "committing" or "staged" => "正在提交",
+                "paused" => "已暂停",
+                "waiting_network" or "offline" => "等待网络",
+                _ => "等待传输状态"
+            };
+        }
+        Changed(nameof(CanRetry)); Changed(nameof(CanCancel));
+    }
+}
+
 public sealed class AssetRowItem(AssetRow row, ImageItem? selected, IReadOnlyList<ImageItem> candidates) : ObservableModel
 {
     private AssetRow _row = row;
@@ -70,6 +165,7 @@ public sealed class AssetRowItem(AssetRow row, ImageItem? selected, IReadOnlyLis
     public bool IsSaving { get => _isSaving; internal set { _isSaving = value; Changed(); } }
     public ImageItem? Selected { get; private set; } = selected;
     public IReadOnlyList<ImageItem> Candidates { get; private set; } = candidates;
+    public ObservableCollection<WorkbookUploadCard> TransferCards { get; } = [];
     public bool HasCandidates => Candidates.Count > 0;
     public bool HasNoCandidates => Candidates.Count == 0;
     public void UpdateFrom(AssetRow row)
@@ -187,6 +283,8 @@ public sealed class ProjectFileItem : ObservableModel
 public sealed class SceneRowItem(SceneRow row) : ObservableModel
 {
     private SceneRow _row = row;
+    private readonly Dictionary<string, SceneVideoItem> _videoItemsById = new(StringComparer.Ordinal);
+    public ObservableCollection<WorkbookUploadCard> TransferCards { get; } = [];
     public SceneRow Row
     {
         get => _row;
@@ -268,7 +366,14 @@ public sealed class SceneRowItem(SceneRow row) : ObservableModel
         get
         {
             var rawList = Row.Videos.Count > 0 ? Row.Videos : (Row.Video != null ? [Row.Video] : []);
-            return rawList.Select(v => new SceneVideoItem(v)).ToList();
+            return rawList.Select(video =>
+            {
+                var key = video.FileId ?? video.Id ?? video.Path ?? video.Name;
+                if (!_videoItemsById.TryGetValue(key, out var item))
+                    _videoItemsById[key] = item = new SceneVideoItem(video);
+                else item.UpdateVideo(video);
+                return item;
+            }).ToList();
         }
     }
 
@@ -373,10 +478,23 @@ public sealed class SheetItem(WorkbookSheet sheet)
     public ObservableCollection<SceneRowItem> Scenes { get; } = new(sheet.SceneRows.Select(row => new SceneRowItem(row)));
 }
 
-public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service, bool isReadOnly = false) : ObservableModel
+public sealed class ProjectWorkbooksViewModel : ObservableModel, IDisposable
 {
-    public IProjectWorkbookService Service { get; } = service;
-    public bool IsReadOnly { get; } = isReadOnly;
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _videoLinkGates = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _assetLinkGates = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, (string Path, long Length, DateTime LastWriteUtc, ProjectFileTransferResult Result)> _unlinkedVideoTransfers = new(StringComparer.Ordinal);
+    private string _inlineStatusMessage = string.Empty;
+    private bool _disposed;
+
+    public ProjectWorkbooksViewModel(IProjectWorkbookService service, bool isReadOnly = false)
+    {
+        Service = service ?? throw new ArgumentNullException(nameof(service));
+        IsReadOnly = isReadOnly;
+        Service.TransferUpdated += HandleTransferUpdated;
+    }
+
+    public IProjectWorkbookService Service { get; }
+    public bool IsReadOnly { get; }
     public ObservableCollection<ProjectFileItem> Files { get; } = [];
     public ObservableCollection<ProjectInfo> Projects { get; } = [];
     private ProjectInfo? _selectedProject;
@@ -393,6 +511,172 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service, b
     public ObservableCollection<SheetItem> Sheets { get; } = [];
     private bool _busy;
     public bool Busy { get => _busy; private set { _busy = value; Changed(); Changed(nameof(Ready)); } }
+    public string InlineStatusMessage { get => _inlineStatusMessage; private set { _inlineStatusMessage = value; Changed(); Changed(nameof(HasInlineStatus)); } }
+    public bool HasInlineStatus => !string.IsNullOrWhiteSpace(InlineStatusMessage);
+    public void ReportInlineStatus(string? message) => InlineStatusMessage = message ?? string.Empty;
+
+    public void PersistPendingTransfer(WorkbookUploadCard card)
+    {
+        if (Document is not { } document || SelectedProject is not { } project ||
+            (card.AssetRow is null && card.SceneRow is null))
+            throw new InvalidOperationException("无法确定待上传素材所属的项目、工作簿或业务行。");
+        if (!Guid.TryParseExact(card.OperationId, "D", out _))
+            throw new InvalidDataException("上传操作 ID 无效。");
+        var path = Path.GetFullPath(card.LocalPath);
+        var old = PendingWorkbookTransferOperation.LoadAll(Service.OperationScope)
+            .FirstOrDefault(operation => operation.OperationId == card.OperationId);
+        var info = File.Exists(path) ? new FileInfo(path) : null;
+        if (old is not null && info is not null && old.UploadedImage is null && old.UploadedVideo is null &&
+            (old.SourceLength != info.Length || old.SourceLastWriteUtcTicks != info.LastWriteTimeUtc.Ticks))
+            throw new IOException("本机文件自上次尝试后发生变化；为避免将错误内容关联到业务行，请作为新文件重新拖入。");
+        if (info is null && (old is null || old.UploadedImage is null && old.UploadedVideo is null))
+            throw new FileNotFoundException("找不到待上传的本地文件。", path);
+        var operation = new PendingWorkbookTransferOperation(
+            Service.OperationScope,
+            card.OperationId!,
+            card.IsImage ? "asset_image" : "scene_video",
+            project.Id,
+            document.File.Id,
+            card.AssetRow?.Row.Id ?? card.SceneRow!.Row.Id,
+            path,
+            card.DisplayName,
+            card.SelectedTarget,
+            info?.Length ?? old!.SourceLength,
+            info?.LastWriteTimeUtc.Ticks ?? old!.SourceLastWriteUtcTicks,
+            card.State,
+            card.Error,
+            card.UploadedImage,
+            card.UploadedVideo ?? old?.UploadedVideo);
+        operation.Save();
+    }
+
+    public void RemovePendingTransfer(string operationId)
+    {
+        foreach (var operation in PendingWorkbookTransferOperation.LoadAll(Service.OperationScope)
+                     .Where(operation => operation.OperationId == operationId))
+            operation.Remove();
+    }
+
+    public void RestorePendingUploadCards()
+    {
+        if (Document is not { } document || SelectedProject is not { } project) return;
+        foreach (var operation in PendingWorkbookTransferOperation.LoadAll(Service.OperationScope)
+                     .Where(operation => operation.ProjectId == project.Id && operation.WorkbookId == document.File.Id))
+        {
+            var imageRow = Sheets.SelectMany(sheet => sheet.Assets).FirstOrDefault(item => item.Row.Id == operation.RowId);
+            var sceneRow = Sheets.SelectMany(sheet => sheet.Scenes).FirstOrDefault(item => item.Row.Id == operation.RowId);
+            if (operation.Kind == "asset_image" && imageRow is not null &&
+                !imageRow.TransferCards.Any(card => card.OperationId == operation.OperationId))
+            {
+                var card = new WorkbookUploadCard(operation.LocalPath, true, imageRow)
+                {
+                    OperationId = operation.OperationId,
+                    SelectedTarget = operation.SelectedTarget,
+                    UploadedImage = operation.UploadedImage,
+                    FileId = operation.UploadedImage?.FileId,
+                    State = operation.State.Contains("失败", StringComparison.Ordinal) ? operation.State : "已恢复，可重试",
+                    Error = operation.Error ?? "已恢复待关联操作。重试会继续原操作并确认资产行关联。"
+                };
+                ApplyRestoredTransfer(card, operation.OperationId);
+                imageRow.TransferCards.Add(card);
+            }
+            else if (operation.Kind == "scene_video" && sceneRow is not null &&
+                     !sceneRow.TransferCards.Any(card => card.OperationId == operation.OperationId))
+            {
+                var card = new WorkbookUploadCard(operation.LocalPath, false, sceneRow: sceneRow)
+                {
+                    OperationId = operation.OperationId,
+                    UploadedVideo = operation.UploadedVideo,
+                    FileId = operation.UploadedVideo?.FileId,
+                    State = operation.State.Contains("失败", StringComparison.Ordinal) ? operation.State : "已恢复，可重试",
+                    Error = operation.Error ?? "已恢复待关联操作。重试会继续原操作并确认节拍关联。"
+                };
+                ApplyRestoredTransfer(card, operation.OperationId);
+                sceneRow.TransferCards.Add(card);
+            }
+        }
+    }
+
+    private void ApplyRestoredTransfer(WorkbookUploadCard card, string operationId)
+    {
+        var task = Service.GetTransferTaskSnapshot(operationId);
+        if (task is null) return;
+        if (!TransferTaskProjectionIsActive(task.State)) card.Error = task.Message;
+        else card.Error = null;
+        card.ApplyTransfer(task);
+    }
+
+    private static bool TransferTaskProjectionIsActive(string state) => state is
+        "queued" or "waiting_stable" or "hashing" or "transferring" or "verifying" or "staged" or
+        "committing" or "paused" or "waiting_network" or "offline";
+
+    private void HandleTransferUpdated(ProjectTransferTaskSnapshot snapshot)
+    {
+        void Apply()
+        {
+            foreach (var card in Sheets.SelectMany(sheet => sheet.Assets).SelectMany(row => row.TransferCards)
+                         .Concat(Sheets.SelectMany(sheet => sheet.Scenes).SelectMany(row => row.TransferCards))
+                         .Where(card => card.OperationId == snapshot.OperationId))
+            {
+                card.ApplyTransfer(snapshot);
+                if (snapshot.State is "failed" or "conflict" && card.Error is not null)
+                {
+                    var pending = PendingWorkbookTransferOperation.LoadAll(Service.OperationScope)
+                        .FirstOrDefault(operation => operation.OperationId == card.OperationId);
+                    if (pending is not null) (pending with { State = card.State, Error = card.Error }).Save();
+                }
+            }
+            ApplyVideoTransferSnapshot(snapshot);
+        }
+
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher is null || dispatcher.CheckAccess()) Apply();
+        else dispatcher.BeginInvoke(new Action(Apply));
+    }
+
+    private void ApplyVideoTransferSnapshot(ProjectTransferTaskSnapshot snapshot)
+    {
+        if (snapshot.Source != "project_workbook" || !snapshot.Kind.Contains("download", StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(snapshot.ProjectId)
+            || snapshot.ScopeId != $"project:{snapshot.ProjectId}:scene-video") return;
+        var currentProjectId = Document?.File.ProjectId ?? SelectedProject?.Id;
+        if (currentProjectId != snapshot.ProjectId) return;
+        foreach (var item in Sheets.SelectMany(sheet => sheet.Scenes).SelectMany(row => row.VideoItems)
+                     .Where(item => item.FileId == snapshot.FileId))
+            item.ApplyTransfer(snapshot);
+    }
+
+    private void RestoreVideoDownloadStatuses()
+    {
+        var currentProjectId = Document?.File.ProjectId ?? SelectedProject?.Id;
+        if (string.IsNullOrWhiteSpace(currentProjectId)) return;
+        foreach (var snapshot in Service.GetTransferTaskSnapshots()
+                     .Where(task => task.Source == "project_workbook"
+                         && task.Kind.Contains("download", StringComparison.OrdinalIgnoreCase)
+                         && task.ProjectId == currentProjectId
+                         && task.ScopeId == $"project:{currentProjectId}:scene-video")
+                     .OrderBy(task => task.UpdatedAt))
+            ApplyVideoTransferSnapshot(snapshot);
+    }
+
+    public async Task<bool> CancelUploadCardAsync(WorkbookUploadCard card)
+    {
+        if (string.IsNullOrWhiteSpace(card.OperationId) || !card.CanCancel) return false;
+        var canceled = await Service.CancelProjectTransferAsync(card.OperationId);
+        if (canceled)
+        {
+            card.State = "已取消";
+            card.Error = null;
+            RemovePendingTransfer(card.OperationId);
+        }
+        return canceled;
+    }
+
+    public async Task<bool> CancelVideoDownloadAsync(SceneVideoItem item)
+    {
+        if (!item.CanCancel || string.IsNullOrWhiteSpace(item.OperationId)) return false;
+        return await Service.CancelProjectTransferAsync(item.OperationId);
+    }
     public bool Ready => !Busy;
     private string? _error;
     public string? Error { get => _error; private set { _error = value; Changed(); Changed(nameof(CanReload)); } }
@@ -483,6 +767,9 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service, b
     public Func<bool>? ConfirmLeaving { get; set; }
     public Action? ProjectFilesChanged { get; set; }
     public event Action<ImageAsset>? ProjectImageChanged;
+    public event Action<string>? ProjectRowsChanged;
+
+    public Task ObserveProjectAsync(string projectId) => EnsureLiveUpdatesAsync(projectId);
 
     public Task OpenAsync(ProjectFileItem item) => OpenAsync(item.File);
     public async Task OpenAsync(ProjectFile file)
@@ -503,6 +790,8 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service, b
         Document = document;
         Sheets.Clear(); foreach (var sheet in sheets) Sheets.Add(sheet);
         SelectedSheet = Sheets.FirstOrDefault(s => s.IsScene || s.IsAsset) ?? Sheets.FirstOrDefault();
+        RestorePendingUploadCards();
+        RestoreVideoDownloadStatuses();
         if (Document.File.ProjectId == file.ProjectId && _lastEventSequence != sequenceBeforeLoad)
             await RefreshCurrentDocumentAsync(CancellationToken.None);
         if (SelectedSheet is { IsAsset: true } assetSheet)
@@ -606,6 +895,8 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service, b
             await RefreshCurrentDocumentAsync(ct);
         else if (Document?.File.ProjectId == projectId && Document.File.TemplateKind == "scene_beats")
             _ = LoadProjectAssetsAsync(ct);
+        if (change.EntityKind == "row" && change.ChangedFields.Contains("image_selection", StringComparer.Ordinal))
+            ProjectRowsChanged?.Invoke(projectId);
     }
 
     private async Task RefreshProjectFilesFromEventAsync(string projectId, CancellationToken ct)
@@ -670,6 +961,8 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service, b
             SelectedSheet = refreshedSheets.FirstOrDefault(sheet => sheet.Sheet.Id == selectedSheetId)
                 ?? refreshedSheets.FirstOrDefault(sheet => sheet.IsScene || sheet.IsAsset)
                 ?? refreshedSheets.FirstOrDefault();
+            RestorePendingUploadCards();
+            RestoreVideoDownloadStatuses();
             SceneChanged();
             AssetChanged();
         }
@@ -685,6 +978,14 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service, b
         _liveUpdatesCts = null;
         _liveUpdatesReady = null;
         _liveUpdatesProjectId = null;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        Service.TransferUpdated -= HandleTransferUpdated;
+        StopLiveUpdates();
     }
 
     public ObservableCollection<AssetRowItem> ProjectAssets { get; } = [];
@@ -876,16 +1177,47 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service, b
     public async Task UpdateImagesAsync(AssetRowItem item, string? selectedId, IEnumerable<string> candidateIds)
     {
         if (IsReadOnly) throw new InvalidDataException("访客只能查看项目工作簿。");
-        if (Document == null || SelectedSheet == null) return;
+        if (Document == null) return;
         if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行图片的权限。");
         var ids = candidateIds.Distinct(StringComparer.Ordinal).ToList();
         if (ids.Count > 100) throw new InvalidDataException("每行最多保留 100 张备选图片。");
-        var sheet = SelectedSheet;
-        var updated = await Service.UpdateImagesAsync(Document.File.Id, item.Row.Id,
+        var gate = _assetLinkGates.GetOrAdd(item.Row.Id, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync();
+        try
+        {
+            await UpdateImagesWhileLockedAsync(item, selectedId, ids);
+        }
+        finally { gate.Release(); }
+    }
+
+    public async Task LinkUploadedImageAsync(AssetRowItem item, ImageAsset image, bool selectedTarget)
+    {
+        if (IsReadOnly) throw new InvalidDataException("访客只能查看项目工作簿。");
+        if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行图片的权限。");
+        var gate = _assetLinkGates.GetOrAdd(item.Row.Id, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync();
+        try
+        {
+            var candidateIds = item.Row.CandidateImages.Select(asset => asset.Id).ToList();
+            if (!candidateIds.Contains(image.Id, StringComparer.Ordinal) && candidateIds.Count < 100)
+                candidateIds.Add(image.Id);
+            await UpdateImagesWhileLockedAsync(item,
+                selectedTarget ? image.Id : item.Row.SelectedImage?.Id, candidateIds);
+        }
+        finally { gate.Release(); }
+    }
+
+    private async Task UpdateImagesWhileLockedAsync(AssetRowItem item, string? selectedId, List<string> ids)
+    {
+        var document = Document ?? throw new InvalidOperationException("工作簿已关闭；关联操作保留待恢复状态。");
+        var sheet = Sheets.FirstOrDefault(candidate => candidate.Assets.Contains(item))
+            ?? throw new InvalidOperationException("资产行已离开当前工作簿；请重新打开原工作簿后重试关联。");
+        var workbookId = document.File.Id;
+        var updated = await Service.UpdateImagesAsync(workbookId, item.Row.Id,
             new UpdateImagesRequest(item.Row.FieldVersions.GetValueOrDefault("image_selection", 1), selectedId, ids));
-        // Replace only after server success. A conflict never mutates local references and never retries.
-        var index = sheet.Assets.IndexOf(item);
-        if (index >= 0) sheet.Assets[index] = MakeRow(updated);
+        if (Document?.File.Id != workbookId || !sheet.Assets.Contains(item))
+            throw new InvalidOperationException("工作簿在图片关联期间发生变化；请重新打开原工作簿核对关联结果。");
+        item.UpdateFrom(updated);
         AssetChanged();
     }
     public async Task UpdateStoryContentAsync(SceneRowItem item)
@@ -1038,19 +1370,29 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service, b
         SceneChanged();
     }
 
-    public async Task AttachVideoFileAsync(SceneRowItem item, string sourceLocalPath)
+    public async Task AttachVideoFileAsync(SceneRowItem item, string sourceLocalPath, string? operationId = null,
+        WorkbookUploadCard? uploadCard = null)
+    {
+        var gate = _videoLinkGates.GetOrAdd(item.Row.Id, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync();
+        try { await AttachVideoFileCoreAsync(item, sourceLocalPath, operationId, uploadCard); }
+        finally { gate.Release(); }
+    }
+
+    private async Task AttachVideoFileCoreAsync(SceneRowItem item, string sourceLocalPath, string? operationId,
+        WorkbookUploadCard? uploadCard)
     {
         if (IsReadOnly) throw new InvalidDataException("访客只能查看项目工作簿。");
-        var document = Document ?? throw new InvalidOperationException("请先打开节拍表。");
         if (!item.Row.CanEdit) throw new InvalidDataException("当前账号没有修改此行的权限。");
-        if (Busy) throw new InvalidOperationException("当前有其他操作正在进行，请完成后再关联视频。");
-
+        var document = Document ?? throw new InvalidOperationException("请先打开节拍表。");
         var project = SelectedProject ?? throw new InvalidOperationException("请先选择项目。");
         var workbookId = document.File.Id;
         var sheet = Sheets.FirstOrDefault(candidate => candidate.Scenes.Contains(item))
             ?? throw new InvalidOperationException("找不到该节拍行所属的工作表，请重新打开工作簿后重试。");
-
-        var fileName = Path.GetFileName(sourceLocalPath);
+        var sourcePath = Path.GetFullPath(sourceLocalPath);
+        var sourceInfo = File.Exists(sourcePath) ? new FileInfo(sourcePath) : null;
+        var recoveryKey = workbookId + "\0" + item.Row.Id + "\0" + sourcePath;
+        var fileName = Path.GetFileName(sourcePath);
         if (string.IsNullOrWhiteSpace(fileName)) throw new InvalidDataException("视频文件名无效。");
         RequirePathSegment(fileName, "视频文件名");
         var episode = RequirePathSegment(sheet.Name, "工作表名称");
@@ -1063,72 +1405,127 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service, b
             NormalizeBeatNumber(candidate.Row.BeatNumber) == beatNumber).ToArray();
         if (rowsInBeatFolder.Length != 1)
             throw new InvalidDataException($"节拍 {beatNumber} 必须恰好对应一行；当前找到 {rowsInBeatFolder.Length} 行，请先整理节拍表。");
-        var activeVideos = rowsInBeatFolder.SelectMany(candidate => ActiveVideos(candidate.Row)).ToArray();
-        if (activeVideos.Any(video => video.Name.Equals(fileName, StringComparison.OrdinalIgnoreCase)))
-            throw new IOException("该节拍目录已关联同名视频，未覆盖现有内容。请先处理现有关联或重命名新文件。");
-        if (rowsInBeatFolder.SelectMany(candidate => candidate.Row.DiscardedVideos)
-            .Any(video => video.Name.Equals(fileName, StringComparison.OrdinalIgnoreCase)))
-            throw new IOException("同名视频已在废片库中，未覆盖或重新关联。请先恢复原视频或重命名新文件。");
+
+        ProjectFileTransferResult? uploaded = uploadCard?.UploadedVideo;
+        if (uploaded is not null)
+        {
+            if (uploadCard?.FileId != uploaded.FileId)
+                throw new InvalidDataException("已上传视频的文件标识不一致，拒绝建立关联。");
+        }
+        else if (_unlinkedVideoTransfers.TryGetValue(recoveryKey, out var pending))
+        {
+            if (sourceInfo is null || pending.Length != sourceInfo.Length || pending.LastWriteUtc != sourceInfo.LastWriteTimeUtc)
+                throw new IOException("本机视频自上次上传后发生变化；为避免错误关联，请使用新文件名重新拖入。");
+            uploaded = pending.Result;
+            if (uploadCard is not null) uploadCard.FileId = uploaded.FileId;
+        }
+        else
+        {
+            if (sourceInfo is null) throw new FileNotFoundException("找不到所选视频文件。", sourcePath);
+            var activeVideos = rowsInBeatFolder.SelectMany(candidate => ActiveVideos(candidate.Row)).ToArray();
+            if (activeVideos.Any(video => video.Name.Equals(fileName, StringComparison.OrdinalIgnoreCase)))
+                throw new IOException("该节拍目录已关联同名视频，未覆盖现有内容。请先处理现有关联或重命名新文件。");
+            if (rowsInBeatFolder.SelectMany(candidate => candidate.Row.DiscardedVideos)
+                .Any(video => video.Name.Equals(fileName, StringComparison.OrdinalIgnoreCase)))
+                throw new IOException("同名视频已在废片库中，未覆盖或重新关联。请先恢复原视频或重命名新文件。");
+        }
+
+        if (uploaded is not null && rowsInBeatFolder.SelectMany(candidate => ActiveVideos(candidate.Row))
+                .Any(video => video.FileId == uploaded.FileId || video.Id == uploaded.FileId))
+        {
+            _unlinkedVideoTransfers.TryRemove(recoveryKey, out _);
+            if (uploadCard is not null) uploadCard.State = "已完成";
+            if (operationId is not null) RemovePendingTransfer(operationId);
+            return; // The process may have stopped after the server committed the link.
+        }
+        if (uploaded is not null && rowsInBeatFolder.SelectMany(candidate => candidate.Row.DiscardedVideos)
+                .Any(video => video.FileId == uploaded.FileId || video.Id == uploaded.FileId))
+            throw new IOException("该视频已在废片库中；为避免自动恢复或覆盖废片，请先在界面中明确恢复。");
+        if (uploaded is not null && rowsInBeatFolder.SelectMany(candidate => ActiveVideos(candidate.Row))
+                .Any(video => video.Name.Equals(fileName, StringComparison.OrdinalIgnoreCase)
+                    && video.FileId != uploaded.FileId && video.Id != uploaded.FileId))
+            throw new IOException("节拍目录中已出现同名视频；已上传文件保留在项目文件库中，但未建立重复名称关联。");
+        if (uploaded is not null && rowsInBeatFolder.SelectMany(candidate => candidate.Row.DiscardedVideos)
+                .Any(video => video.Name.Equals(fileName, StringComparison.OrdinalIgnoreCase)
+                    && video.FileId != uploaded.FileId && video.Id != uploaded.FileId))
+            throw new IOException("同名视频已在废片库中；已上传文件保留在项目文件库中，但未自动恢复或建立关联。");
 
         var logicalPath = $"{episode}/{beatFolder}/{fileName}";
-
-        Busy = true;
         Error = null;
-        ProjectFileTransferResult? uploaded = null;
         try
         {
-            var sourcePath = Path.GetFullPath(sourceLocalPath);
-            if (!File.Exists(sourcePath)) throw new FileNotFoundException("找不到所选视频文件。", sourcePath);
-            var mediaType = Path.GetExtension(fileName).ToLowerInvariant() switch
+            if (uploaded is null)
             {
-                ".mov" => "video/quicktime",
-                ".mkv" => "video/x-matroska",
-                ".webm" => "video/webm",
-                ".avi" => "video/x-msvideo",
-                _ => "video/mp4"
-            };
-            uploaded = await Service.UploadProjectFileAsync(project.Id, fileName, mediaType, sourcePath, logicalPath);
+                if (uploadCard is not null)
+                {
+                    uploadCard.State = "正在上传";
+                    PersistPendingTransfer(uploadCard);
+                }
+                var mediaType = Path.GetExtension(fileName).ToLowerInvariant() switch
+                {
+                    ".mov" => "video/quicktime",
+                    ".mkv" => "video/x-matroska",
+                    ".webm" => "video/webm",
+                    ".avi" => "video/x-msvideo",
+                    _ => "video/mp4"
+                };
+                uploaded = await Service.UploadProjectFileAsync(project.Id, fileName, mediaType, sourcePath, logicalPath,
+                    operationId: operationId);
+                if (sourceInfo is not null)
+                    _unlinkedVideoTransfers[recoveryKey] =
+                        (sourcePath, sourceInfo.Length, sourceInfo.LastWriteTimeUtc, uploaded);
+                if (uploadCard is not null) uploadCard.FileId = uploaded.FileId;
+                if (uploadCard is not null)
+                {
+                    uploadCard.UploadedVideo = uploaded;
+                    PersistPendingTransfer(uploadCard);
+                }
+            }
+
+            if (uploadCard is not null) uploadCard.State = "正在关联";
 
             if (Document?.File.Id != workbookId || SelectedProject?.Id != project.Id)
                 throw new InvalidOperationException("项目或工作簿在上传期间发生变化；文件已进入项目文件库，但尚未关联，请重新加载核对。");
 
-            var videoItem = new VideoItem(uploaded.FileId, fileName, uploaded.LogicalPath)
-            {
-                FileId = uploaded.FileId
-            };
+            var videoItem = new VideoItem(uploaded.FileId, fileName, uploaded.LogicalPath) { FileId = uploaded.FileId };
             await UpdateSceneVideoCoreAsync(workbookId, item, "add", videoItem);
+            _unlinkedVideoTransfers.TryRemove(recoveryKey, out _);
+            if (uploadCard is not null) uploadCard.State = "已完成";
+            if (operationId is not null) RemovePendingTransfer(operationId);
+            ReportInlineStatus($"视频「{fileName}」已上传并关联到 {episode}/{beatFolder}。");
         }
-        catch (Exception ex)
+        catch (Exception exception)
         {
-            var serverRejected = ex is WorkbookApiException api && api.StatusCode == 409;
+            var serverRejected = exception is WorkbookApiException api && api.StatusCode == 409;
             Error = serverRejected
                 ? "节拍表内容已被其他人修改，本次未关联。请重新加载并核对。"
-                : ex is WorkbookApiException or InvalidDataException or InvalidOperationException or IOException
-                    ? ex.Message
+                : exception is WorkbookApiException or InvalidDataException or InvalidOperationException or IOException
+                    ? exception.Message
                     : "视频关联未完成，请检查连接后重试。";
-            if (uploaded is not null)
+            if (uploadCard is not null)
             {
-                if (serverRejected)
-                {
-                    try { await Service.DeleteProjectFileAsync(uploaded.FileId, uploaded.Version); }
-                    catch { /* Keep the committed file if cleanup cannot be confirmed. */ }
-                }
-                throw new IOException($"视频已上传为项目文件，但节拍关联未完成。请重新加载并核对；文件 ID：{uploaded.FileId}{Environment.NewLine}{ex.Message}", ex);
+                uploadCard.State = uploaded is null ? "上传失败，可重试" : "关联失败，可重试";
+                uploadCard.Error = Error;
+                try { PersistPendingTransfer(uploadCard); }
+                catch (Exception persistError) when (persistError is IOException or InvalidOperationException or InvalidDataException)
+                { ReportInlineStatus($"{Error}；待恢复信息保存失败：{persistError.Message}"); }
             }
+            if (uploaded is not null)
+                throw new IOException($"视频已上传，但节拍关联未完成；文件 ID：{uploaded.FileId}。重试仅会重试关联，不会删除或覆盖该文件。{Environment.NewLine}{exception.Message}", exception);
             throw;
-        }
-        finally
-        {
-            Busy = false;
         }
     }
 
     public Task<string> DownloadVideoAsync(VideoItem video, CancellationToken cancellationToken = default)
     {
         var fileId = video.FileId;
-        if (string.IsNullOrWhiteSpace(fileId) || string.IsNullOrWhiteSpace(video.Path))
+        if (string.IsNullOrWhiteSpace(fileId))
             throw new InvalidOperationException("此视频尚未关联版本化文件 ID，无法从文件服务打开。");
-        return Service.DownloadProjectFileAsync(fileId, null, video.Name, cancellationToken);
+        var projectId = Document?.File.ProjectId ?? SelectedProject?.Id;
+        if (string.IsNullOrWhiteSpace(projectId))
+            throw new InvalidOperationException("无法确定视频所属项目，已停止下载。");
+        return Service.DownloadProjectFileAsync(fileId, null, video.Name, cancellationToken,
+            projectId);
     }
 
     private static string RequirePathSegment(string value, string description)
@@ -1162,8 +1559,92 @@ public sealed class ProjectWorkbooksViewModel(IProjectWorkbookService service, b
 
 public sealed class SceneVideoItem(VideoItem video) : ObservableModel
 {
-    public VideoItem Video { get; } = video;
+    private VideoItem _video = video;
+    private ProjectTransferTaskSnapshot? _transfer;
+    private string _downloadStatus = string.Empty;
+    private string? _downloadError;
+    private string? _localPath;
+    private bool _downloadInProgress;
+    private bool _retryAvailable;
+
+    public VideoItem Video => _video;
     public string Id => Video.Id ?? string.Empty;
     public string Name => Video.Name;
     public string? Path => Video.Path;
+    public string? FileId => Video.FileId;
+    public string? OperationId => _transfer?.OperationId;
+    public string DownloadStatus { get => _downloadStatus; private set { _downloadStatus = value; Changed(); Changed(nameof(HasDownloadStatus)); } }
+    public string? DownloadError { get => _downloadError; private set { _downloadError = value; Changed(); Changed(nameof(HasDownloadError)); } }
+    public bool HasDownloadStatus => !string.IsNullOrWhiteSpace(DownloadStatus);
+    public bool HasDownloadError => !string.IsNullOrWhiteSpace(DownloadError);
+    public bool DownloadInProgress { get => _downloadInProgress; private set { _downloadInProgress = value; Changed(); } }
+    public string? LocalPath { get => _localPath; private set { _localPath = value; Changed(); } }
+    public double Progress => _transfer is { BytesTotal: > 0 } task
+        ? Math.Clamp((double)Math.Max(0, task.BytesDone) / task.BytesTotal.Value * 100, 0, 100)
+        : _transfer?.State == "completed" ? 100 : 0;
+    public bool HasProgress => _transfer?.BytesTotal is > 0;
+    public bool CanCancel => _transfer?.CanCancel == true;
+    public bool CanRetry => _retryAvailable || _transfer?.Retryable == true;
+    public string ProgressLabel => HasProgress
+        ? $"{_transfer!.BytesDone:N0} / {_transfer.BytesTotal:N0} 字节 · {Progress:0}%"
+        : DownloadStatus;
+
+    public void UpdateVideo(VideoItem value)
+    {
+        if (_video == value) return;
+        _video = value;
+        Changed(nameof(Video)); Changed(nameof(Id)); Changed(nameof(Name)); Changed(nameof(Path)); Changed(nameof(FileId));
+    }
+
+    public void BeginDownload()
+    {
+        _transfer = null;
+        _retryAvailable = false;
+        DownloadInProgress = true;
+        DownloadStatus = "正在准备下载";
+        DownloadError = null;
+        Changed(nameof(Progress)); Changed(nameof(HasProgress)); Changed(nameof(CanCancel)); Changed(nameof(CanRetry));
+    }
+
+    public void SetDownloadResult(string status, string? error = null, bool canRetry = false)
+    {
+        DownloadInProgress = false;
+        _retryAvailable = canRetry;
+        DownloadStatus = status;
+        DownloadError = error;
+        Changed(nameof(ProgressLabel)); Changed(nameof(CanRetry));
+    }
+
+    public void ApplyTransfer(ProjectTransferTaskSnapshot snapshot)
+    {
+        if (snapshot.FileId != Video.FileId) return;
+        _transfer = snapshot;
+        _retryAvailable = false;
+        DownloadStatus = snapshot.State switch
+        {
+            "queued" => "排队中",
+            "waiting_stable" => "等待文件稳定",
+            "hashing" => "校验中",
+            "transferring" => "下载中",
+            "verifying" => "校验下载",
+            "staged" or "committing" => "提交中",
+            "paused" => "已暂停",
+            "waiting_network" or "offline" => "等待网络",
+            "completed" => "下载完成，正在打开",
+            "conflict" => "本地路径冲突",
+            "failed" => "下载失败",
+            "cancelled" or "canceled" => "已取消",
+            _ => "等待下载状态"
+        };
+        DownloadInProgress = snapshot.State is "queued" or "waiting_stable" or "hashing" or "transferring"
+            or "verifying" or "staged" or "committing" or "paused" or "waiting_network" or "offline";
+        DownloadError = snapshot.State is "failed" or "conflict" ? snapshot.Message : null;
+        Changed(nameof(Progress)); Changed(nameof(ProgressLabel)); Changed(nameof(HasProgress));
+        Changed(nameof(CanCancel)); Changed(nameof(CanRetry));
+    }
+
+    public void SetLocalPath(string path)
+    {
+        LocalPath = System.IO.Path.GetFullPath(path);
+    }
 }

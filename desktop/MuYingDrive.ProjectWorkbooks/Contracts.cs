@@ -21,6 +21,7 @@ public sealed record ImageAsset(string Id, string Name, string MediaType, int Wi
     public string? ProjectId { get; init; }
     public string? Category { get; init; }
     public string? Variant { get; init; }
+    public string? TransferOperationId { get; init; }
 }
 public sealed record ImageSearchPage(List<ImageAsset> Items, string? NextCursor);
 public sealed record AssetRow(string Id, long Version, string? Category, string? Name, string? Appearance,
@@ -87,6 +88,9 @@ public sealed record LinkedAsset(string Category, string Name, string? Appearanc
 public interface IProjectWorkbookService
 {
     string OperationScope { get; }
+    event Action<ProjectTransferTaskSnapshot>? TransferUpdated;
+    ProjectTransferTaskSnapshot? GetTransferTaskSnapshot(string operationId);
+    IReadOnlyList<ProjectTransferTaskSnapshot> GetTransferTaskSnapshots();
     Task<IReadOnlyList<ProjectInfo>> ListProjectsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<ProjectFile>> ListProjectFilesAsync(string projectId, CancellationToken ct = default);
     IAsyncEnumerable<ProjectChangeEvent> SubscribeProjectEventsAsync(string projectId, long? afterSequence = null, CancellationToken ct = default);
@@ -94,10 +98,12 @@ public interface IProjectWorkbookService
     Task<ImageSearchPage> SearchImagesAsync(string projectId, string? q = null, string? category = null,
         string? cursor = null, int pageSize = 40, CancellationToken ct = default);
     Task<ImageAsset> GetProjectImageAsync(string imageId, CancellationToken ct = default);
-    Task<ImageAsset> UploadProjectImageAsync(string projectId, string fileName, string mediaType, Stream source, string? folderPath = null, CancellationToken ct = default);
+    Task<ImageAsset> UploadProjectImageAsync(string projectId, string fileName, string mediaType, Stream source, string? folderPath = null, CancellationToken ct = default, string? operationId = null);
     Task<ProjectFileTransferResult> UploadProjectFileAsync(string projectId, string fileName, string mediaType,
-        string localPath, string logicalPath, CancellationToken ct = default);
-    Task<string> DownloadProjectFileAsync(string fileId, string? revisionId, string fileName, CancellationToken ct = default);
+        string localPath, string logicalPath, CancellationToken ct = default, string? operationId = null);
+    Task<bool> CancelProjectTransferAsync(string operationId);
+    Task<string> DownloadProjectFileAsync(string fileId, string? revisionId, string fileName,
+        CancellationToken ct = default, string? projectId = null);
     Task DeleteProjectFileAsync(string fileId, long expectedVersion, CancellationToken ct = default);
     Task<ImageAsset> RenameImageAsync(string imageId, long expectedVersion, string displayName, CancellationToken ct = default);
     Task<AddSheetResponse> AddSheetAsync(string fileId, string sheetName, CancellationToken ct = default);
@@ -122,14 +128,26 @@ public interface IProjectWorkbookService
 }
 
 /// <summary>Host-provided bridge from project image metadata to the versioned file service.</summary>
-public sealed record ProjectFileTransferResult(string FileId, string RevisionId, string LogicalPath, long Size, string MediaType, long Version);
+public sealed record ProjectFileTransferResult(string FileId, string RevisionId, string LogicalPath, long Size, string MediaType, long Version)
+{
+    public string? OperationId { get; init; }
+}
+
+/// <summary>Rust agent progress for a workbook image or video transfer.</summary>
+public sealed record ProjectTransferTaskSnapshot(string OperationId, string State, long BytesDone,
+    long? BytesTotal, string? Message, string? FileId, string? RevisionId, string Kind, string? Source,
+    string? ScopeId, string? ProjectId, bool Retryable, bool CanCancel, DateTimeOffset UpdatedAt);
 
 public interface IProjectFileTransfer
 {
+    event Action<ProjectTransferTaskSnapshot>? TaskUpdated;
     Task<ProjectFileTransferResult> UploadAsync(string projectId, string fileName, string mediaType,
-        string localPath, string logicalPath, CancellationToken cancellationToken = default);
+        string localPath, string logicalPath, CancellationToken cancellationToken = default, string? operationId = null);
+    Task<bool> CancelAsync(string operationId);
+    ProjectTransferTaskSnapshot? GetTaskSnapshot(string operationId);
+    IReadOnlyList<ProjectTransferTaskSnapshot> GetTaskSnapshots();
     Task<string> DownloadToLocalAsync(string fileId, string? revisionId, string fileName,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default, string? scopeId = null, string? projectId = null);
     Task DeleteAsync(string fileId, long expectedVersion, CancellationToken cancellationToken = default);
     Task<byte[]> DownloadImageAsync(string fileId, string? revisionId, bool thumbnail,
         CancellationToken cancellationToken = default);
